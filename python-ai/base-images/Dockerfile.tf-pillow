@@ -1,0 +1,14 @@
+FROM python-ai-tf
+
+USER root
+
+RUN --mount=type=bind,source=downloaded_wheels,target=/wheels,readonly \
+    --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-index --find-links=/wheels \
+        pillow \
+        deepface \
+        tf-keras
+        
+USER appuser
+
+CMD ["bash"]

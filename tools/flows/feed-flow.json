@@ -1,0 +1,116 @@
+{
+  "_توضیح": "این فایل دستی و از روی خواندن واقعی سورس کد ساخته شده. آپدیت شده پس از BREAKING CHANGES: رویدادها به PartitionedEvent می‌روند (نه PartitionedEvent). منطق اصلی Feed/Suggestion تغییر نکرده.",
+  "_تاریخ_تولید": "2026-06-22",
+
+  "routes": {
+
+    "GET /feed": {
+      "خلاصه_یک_خطی": "فید شخصی‌سازی‌شده می‌سازد: ترکیبی از کاربران بوست‌شده، VIP، اعتبار بالا، و پیشنهادهای هوشمند (از Suggestion)، به‌علاوه تبلیغات.",
+      "کنترلر": "src/feed/feed.controller.ts → FeedController.getFeed()",
+      "گارد": "JwtAuthGuard (سطح کلاس)",
+      "زنجیره_فراخوانی": "FeedController.getFeed() → FeedAssemblerService.buildFeed() → (FeedCandidateService + FeedScoringService + FeedRelationService + FeedPromotionService + PhaseService + VipService + CreditsService)",
+      "مراحل": [
+        {
+          "شماره": 1,
+          "عنوان": "گرفتن کاربر و فاز به‌صورت موازی",
+          "شرح": "userRepo.findOne (با relations userImages و boost) و phaseService.get(userId) هم‌زمان. اگر کاربر پیدا نشود، آرایه خالی برمی‌گردد."
+        },
+        {
+          "شماره": 2,
+          "عنوان": "گرفتن وضعیت VIP و اعتبار به‌صورت موازی",
+          "شرح": "vipService.hasVip و creditsService.get هم‌زمان → enrichedPhase."
+        },
+        {
+          "شماره": 3,
+          "عنوان": "گرفتن سه نوع کاندیدای ویژه به‌صورت موازی",
+          "فایل": "FeedCandidateService",
+          "شرح": "boosted (حداکثر ۳ از ۱۰)، vip (حداکثر ۲ از ۸)، credit (حداکثر ۲ از ۸) — همه از Redis."
+        },
+        {
+          "شماره": 4,
+          "عنوان": "⚙️ گرفتن کاندیدای پیشنهادی — Feed وارد زنجیره Suggestion می‌شود",
+          "شرح": "candidateService.getSuggestionCandidates مستقیماً suggestionService.getSuggestionsForUser را صدا می‌زند. هر GET /feed یک GET /suggestions کامل (با Qdrant+scoring+MMR) اجرا می‌کند."
+        },
+        {
+          "شماره": 5,
+          "عنوان": "ترکیب و اولویت‌بندی",
+          "شرح": "boost=100, vip=80, credit=60, suggestion=امتیاز خودش. حذف تکراری، مرتب‌سازی نزولی، محدود به limit*2."
+        },
+        {
+          "شماره": 6,
+          "عنوان": "فیلتر بلاک‌شده‌ها",
+          "فایل": "FeedRelationService.filterBlockedUsers → RelationStatusService.getEffectiveRelationsBatch",
+          "شرح": "یک کوئری دسته‌ای — نه N+1."
+        },
+        {
+          "شماره": 7,
+          "عنوان": "تزریق تبلیغات (batch، بدون N+1)",
+          "شرح": "بر اساس فاز و VIP، نوع‌های تبلیغ مجاز و سقف روزانه تعیین می‌شوند. PromotionEngineService.decide با POST به ai_monetization:8015/api/predict-promotion.",
+          "زیرمراحل": [
+            "اگر ai_monetization fail شود → ruleBasedFallback (قوانین ساده هاردکد)",
+            "اگر امتیاز نهایی < 0.3 → تبلیغ نمایش داده نمی‌شود",
+            "✅ لاگ رویداد PROMOTION_SHOWN در PartitionedEvent (نه PartitionedEvent)"
+          ]
+        },
+        {
+          "شماره": 8,
+          "عنوان": "ثبت متریک SEO",
+          "شرح": "seoCollector.collectFeedMetrics به‌صورت fire-and-forget — هنوز TODO، فقط debug log می‌زند."
+        }
+      ],
+      "خروجی_موفق": "{success:true, data: FeedItem[], timestamp}",
+      "خطاهای_ممکن": ["500 — اگر Qdrant در دسترس نباشد (VectorSearchService.findSimilarUsers بدون try/catch)"],
+      "میکروسرویس_پایتون_درگیر": "مستقیم: ai_monetization (با fallback امن). غیرمستقیم (از طریق Suggestion): Qdrant",
+      "جداول_و_سرویس‌های_درگیر": ["users", "user_phase", "vip", "user_credits", "Redis (boost queue + promo limits)", "Qdrant (غیرمستقیم)"]
+    },
+
+    "POST /feed/dismiss/:promotionId": {
+      "خلاصه_یک_خطی": "قرار است بستن یک تبلیغ را ثبت کند — ولی هنوز placeholder است.",
+      "وضعیت": "⚠️ همچنان placeholder — بدنه فقط {success:true} برمی‌گرداند. trackDismiss هنوز wire نشده."
+    },
+
+    "GET /suggestions": {
+      "خلاصه_یک_خطی": "موتور اصلی پیشنهاد: جستجوی برداری در Qdrant، امتیازدهی، MMR.",
+      "کنترلر": "src/suggestion/suggestion.controller.ts → SuggestionController.getSuggestions()",
+      "گارد": "⚠️ ندارد — userId از query string. هر کسی بدون لاگین می‌تواند پیشنهادهای هر userId را ببیند.",
+      "مراحل": [
+        {
+          "شماره": 1,
+          "عنوان": "گرفتن ۲۰۰ کاندیدای اولیه با Qdrant",
+          "فایل": "VectorSearchService.findCandidates()",
+          "شرح": "بردار ویژگی کاربر از feature_store. اگر نبود: fallback از user entity. کش Redis با TTL ۶۰ ثانیه.",
+          "نکته": "⚠️ this.qdrant.search بدون try/catch — اگر Qdrant پایین باشد، 500 به کل زنجیره."
+        },
+        {"شماره": 2, "عنوان": "امتیازدهی درآمد مورد انتظار (بار اول)", "فایل": "RevenueScorerService.scoreBatch()"},
+        {"شماره": 3, "عنوان": "تعیین epsilon بر اساس تعداد تعاملات", "شرح": "<10 تعامل: ε=0.3، >200: ε=0.04"},
+        {"شماره": 4, "عنوان": "Exploration vs Exploitation", "شرح": "با احتمال epsilon، نتایج shuffle می‌شوند (Math.random — نه weighted واقعی)."},
+        {"شماره": 5, "عنوان": "MMR برای تنوع", "فایل": "DiversityOptimizerService.optimizeWithMMR()", "شرح": "λ=0.7، یک کوئری batch برای بردار همه کاندیداها."},
+        {
+          "شماره": 6,
+          "عنوان": "غنی‌سازی نتایج نهایی",
+          "شرح": "RevenueScorerService.scoreBatch دوباره صدا زده می‌شود (تکرار). RelationStatusService.getEffectiveRelationsBatch — بلاک‌شده‌ها حذف می‌شوند.",
+          "نکته": "ناکارآمدی: scoreBatch دو بار با همان ورودی اجرا می‌شود."
+        },
+        {"شماره": 7, "عنوان": "✅ لاگ AI_SUGGESTION_SHOWN در PartitionedEvent (بدون await، fire-and-forget)"}
+      ],
+      "خروجی_موفق": "آرایه کاربران غنی‌شده",
+      "میکروسرویس_پایتون_درگیر": "Qdrant (بدون fallback امن)",
+      "جداول_و_سرویس‌های_درگیر": ["feature_store", "users", "interactions", "Redis (boost + similarity cache)", "Qdrant (user_vectors)"]
+    },
+
+    "POST /suggestions/accept-suggestion": {
+      "خلاصه_یک_خطی": "وقتی کاربر روی پیشنهادی تعامل می‌کند، فقط یک رویداد لاگ می‌کند.",
+      "مراحل": [{"شماره": 1, "عنوان": "✅ لاگ AI_SUGGESTION_ACCEPTED در PartitionedEvent — هیچ تعامل واقعی ثبت نمی‌شود"}],
+      "جداول_درگیر": ["partitioned_events"]
+    }
+  },
+
+  "نکات_کلی": [
+    "✅ همه رویدادهای لاگ‌شده در این دو ماژول حالا به PartitionedEvent می‌روند، نه PartitionedEvent منسوخ.",
+    "🔴 Feed و Suggestion عملاً یک سیستم واحدند — هر GET /feed یک GET /suggestions کامل اجرا می‌کند.",
+    "🔴 VectorSearchService.findSimilarUsers بدون try/catch — اگر Qdrant پایین باشد، هم Feed هم Suggestion با 500 fail می‌کنند.",
+    "🔴 POST /feed/dismiss/:promotionId هنوز placeholder است — trackDismiss آماده است ولی wire نشده.",
+    "RevenueScorerService.scoreBatch دو بار اجرا می‌شود — ناکارآمدی (نه باگ کارکردی).",
+    "GET /suggestions هیچ Guard ندارد — پیشنهادهای هر userId بدون لاگین قابل مشاهده است."
+  ]
+}

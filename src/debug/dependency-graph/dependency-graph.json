@@ -1,0 +1,3847 @@
+{
+  "generatedAt": "2026-06-20T16:38:58.262Z",
+  "modules": {
+    "admin-api": {
+      "module": "admin-api",
+      "controllers": [
+        {
+          "file": "admin-api/controllers/assistant/admin-api-assistant.controller.ts",
+          "prefix": "admin-api/assistant",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/admin-api/assistant/advice/:userId",
+              "handlerService": "aiAssistantService",
+              "handlerMethod": "getAdvice"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/assistant/problems/:userId",
+              "handlerService": "aiAssistantService",
+              "handlerMethod": "getUserProblems"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/assistant/optimization-plan/:userId",
+              "handlerService": "aiAssistantService",
+              "handlerMethod": "getOptimizationPlan"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/assistant/full-analysis/:userId",
+              "handlerService": "aiAssistantService",
+              "handlerMethod": "getAdvice"
+            }
+          ]
+        },
+        {
+          "file": "admin-api/controllers/growth/campaigns.controller.ts",
+          "prefix": "admin-api/growth/campaigns",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/admin-api/growth/campaigns",
+              "handlerService": "campaignSEOService",
+              "handlerMethod": "getAllActivities"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/growth/campaigns",
+              "handlerService": "campaignSEOService",
+              "handlerMethod": "createActivity"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/growth/campaigns/analyze",
+              "handlerService": "campaignSEOService",
+              "handlerMethod": "analyzeCampaigns"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/growth/campaigns/ltv-by-source",
+              "handlerService": "revenueAttribution",
+              "handlerMethod": "calculateLTVBySource"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/growth/campaigns/forecast",
+              "handlerService": "http",
+              "handlerMethod": "post"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/growth/campaigns/feedback",
+              "handlerService": "http",
+              "handlerMethod": "post"
+            }
+          ]
+        },
+        {
+          "file": "admin-api/controllers/growth/monetization.controller.ts",
+          "prefix": "admin-api/growth/monetization",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/admin-api/growth/monetization/predict",
+              "handlerService": "http",
+              "handlerMethod": "post"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/growth/monetization/feedback",
+              "handlerService": "http",
+              "handlerMethod": "post"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/growth/monetization/feedback-count",
+              "handlerService": "http",
+              "handlerMethod": "get"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/growth/monetization/retrain",
+              "handlerService": "http",
+              "handlerMethod": "post"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/growth/monetization/train",
+              "handlerService": "http",
+              "handlerMethod": "post"
+            }
+          ]
+        },
+        {
+          "file": "admin-api/controllers/growth/seo-studio.controller.ts",
+          "prefix": "admin-api/growth/seo-studio",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/admin-api/growth/seo-studio/content-ideas",
+              "handlerService": "contentOpportunity",
+              "handlerMethod": "generateContentIdeas"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/growth/seo-studio/high-intent-content",
+              "handlerService": "contentOpportunity",
+              "handlerMethod": "generateHighIntentContent"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/growth/seo-studio/behavioral-keywords",
+              "handlerService": "seoService",
+              "handlerMethod": "discoverBehavioralKeywords"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/growth/seo-studio/keyword-rankings",
+              "handlerService": "config",
+              "handlerMethod": "get"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/growth/seo-studio/serp-features",
+              "handlerService": "serpHunter",
+              "handlerMethod": "huntFeatures"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/growth/seo-studio/competitor-analysis",
+              "handlerService": "competitorSEO",
+              "handlerMethod": "analyzeCompetitors"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/growth/seo-studio/competitor-changes",
+              "handlerService": "competitorSEO",
+              "handlerMethod": "detectCompetitorChanges"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/growth/seo-studio/ai-recommendations",
+              "handlerService": "http",
+              "handlerMethod": "get"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/growth/seo-studio/google-trends",
+              "handlerService": "externalTools",
+              "handlerMethod": "getGoogleTrends"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/growth/seo-studio/keyword-gap",
+              "handlerService": "externalTools",
+              "handlerMethod": "getKeywordGap"
+            }
+          ]
+        },
+        {
+          "file": "admin-api/controllers/growth/social.controller.ts",
+          "prefix": "admin-api/growth/social",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/admin-api/growth/social/scan-telegram",
+              "handlerService": "socialListener",
+              "handlerMethod": "scanTelegramChannels"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/growth/social/brand-sentiment",
+              "handlerService": "brandSentiment",
+              "handlerMethod": "analyzeBrandMentions"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/growth/social/analyze-texts",
+              "handlerService": "brandSentiment",
+              "handlerMethod": "analyzeSentiment"
+            }
+          ]
+        },
+        {
+          "file": "admin-api/controllers/payments/admin-api-payments.controller.ts",
+          "prefix": "admin-api/payments",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/admin-api/payments/total-revenue",
+              "handlerService": null,
+              "handlerMethod": null
+            }
+          ]
+        },
+        {
+          "file": "admin-api/controllers/phase/admin-api-phase.controller.ts",
+          "prefix": "admin-api/phase",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/admin-api/phase/distribution",
+              "handlerService": null,
+              "handlerMethod": null
+            }
+          ]
+        },
+        {
+          "file": "admin-api/controllers/product/algorithm-tuning.controller.ts",
+          "prefix": "admin-api/product/algorithm-tuning",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/admin-api/product/algorithm-tuning/phase-weights",
+              "handlerService": "phaseService",
+              "handlerMethod": "getAllWeights"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/product/algorithm-tuning/phase-weights",
+              "handlerService": "phaseService",
+              "handlerMethod": "setWeight"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/product/algorithm-tuning/feature-weights",
+              "handlerService": "featureStore",
+              "handlerMethod": "getWeightArray"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/product/algorithm-tuning/feature-weights",
+              "handlerService": "featureStore",
+              "handlerMethod": "learnFeatureWeights"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/product/algorithm-tuning/diversity",
+              "handlerService": "diversityOptimizer",
+              "handlerMethod": "getAdaptiveEpsilon"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/product/algorithm-tuning/diversity",
+              "handlerService": "suggestionService",
+              "handlerMethod": "getSuggestionsForUser"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/product/algorithm-tuning/test-scores",
+              "handlerService": "suggestionService",
+              "handlerMethod": "getSuggestionsForUser"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/product/algorithm-tuning/user-features",
+              "handlerService": "featureStore",
+              "handlerMethod": "getUserFeatures"
+            }
+          ]
+        },
+        {
+          "file": "admin-api/controllers/product/bundles.controller.ts",
+          "prefix": "admin-api/product/bundles",
+          "routes": []
+        },
+        {
+          "file": "admin-api/controllers/product/experiments.controller.ts",
+          "prefix": "admin-api/product/experiments",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/admin-api/product/experiments/run-ab",
+              "handlerService": "http",
+              "handlerMethod": "post"
+            }
+          ]
+        },
+        {
+          "file": "admin-api/controllers/product/feed-simulator.controller.ts",
+          "prefix": "admin-api/product/feed-simulator",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/admin-api/product/feed-simulator",
+              "handlerService": "feedAssembler",
+              "handlerMethod": "buildFeed"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/product/feed-simulator/analyze-image",
+              "handlerService": "http",
+              "handlerMethod": "post"
+            }
+          ]
+        },
+        {
+          "file": "admin-api/controllers/product/feedback.controller.ts",
+          "prefix": "admin-api/product/feedback",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/admin-api/product/feedback/metrics",
+              "handlerService": "http",
+              "handlerMethod": "get"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/product/feedback/conversion-insights",
+              "handlerService": "conversionAnalytics",
+              "handlerMethod": "analyzeConversion"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/product/feedback/top-features",
+              "handlerService": "conversionAnalytics",
+              "handlerMethod": "getTopPerformingFeatures"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/product/feedback/train-incremental",
+              "handlerService": "http",
+              "handlerMethod": "post"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/product/feedback/train-batch",
+              "handlerService": "http",
+              "handlerMethod": "post"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/product/feedback/predict",
+              "handlerService": "http",
+              "handlerMethod": "post"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/product/feedback/list",
+              "handlerService": null,
+              "handlerMethod": null
+            }
+          ]
+        },
+        {
+          "file": "admin-api/controllers/revenue/admin-api-revenue.controller.ts",
+          "prefix": "admin-api/revenue",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/admin-api/revenue/ltv-by-source",
+              "handlerService": "revenueAttribution",
+              "handlerMethod": "calculateLTVBySource"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/revenue/monthly",
+              "handlerService": "revenueIntelligence",
+              "handlerMethod": "monthlyRevenue"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/revenue/historical",
+              "handlerService": "revenueIntelligence",
+              "handlerMethod": "getHistoricalData"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/revenue/forecast",
+              "handlerService": "revenueIntelligence",
+              "handlerMethod": "forecastRevenue"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/revenue/anomalies",
+              "handlerService": "revenueIntelligence",
+              "handlerMethod": "getAnomalies"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/revenue/strategic-decisions",
+              "handlerService": "revenueIntelligence",
+              "handlerMethod": "getStrategicDecisions"
+            }
+          ]
+        },
+        {
+          "file": "admin-api/controllers/safety/safety-moderation.controller.ts",
+          "prefix": "admin-api/safety/moderation",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/admin-api/safety/moderation/flagged-images",
+              "handlerService": "imageRepo",
+              "handlerMethod": "find"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/safety/moderation/flagged-messages",
+              "handlerService": "messageRepo",
+              "handlerMethod": "find"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/safety/moderation/approve/:type/:id",
+              "handlerService": "imageRepo",
+              "handlerMethod": "update"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/safety/moderation/reject/:type/:id",
+              "handlerService": "imageRepo",
+              "handlerMethod": "update"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/safety/moderation/stats",
+              "handlerService": "imageRepo",
+              "handlerMethod": "count"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/safety/moderation/logs/:userId",
+              "handlerService": "modLogRepo",
+              "handlerMethod": "find"
+            }
+          ]
+        },
+        {
+          "file": "admin-api/controllers/safety/safety-reports.controller.ts",
+          "prefix": "admin-api/safety/reports",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/admin-api/safety/reports",
+              "handlerService": "reportRepo",
+              "handlerMethod": "find"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/safety/reports/:id/confirm",
+              "handlerService": "reportRepo",
+              "handlerMethod": "update"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/safety/reports/:id/reject",
+              "handlerService": "reportRepo",
+              "handlerMethod": "update"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/safety/reports/:id/block",
+              "handlerService": "reportRepo",
+              "handlerMethod": "findOne"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/safety/reports/unblock/:userId",
+              "handlerService": "blockRepo",
+              "handlerMethod": "delete"
+            }
+          ]
+        },
+        {
+          "file": "admin-api/controllers/safety/safety-tickets.controller.ts",
+          "prefix": "admin-api/safety/tickets",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/admin-api/safety/tickets",
+              "handlerService": "ticketService",
+              "handlerMethod": "findAll"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/safety/tickets/:id",
+              "handlerService": "ticketService",
+              "handlerMethod": "getTicketDetail"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/safety/tickets/:id/resolve",
+              "handlerService": "ticketService",
+              "handlerMethod": "resolveTicket"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/safety/tickets/:id/messages",
+              "handlerService": "ticketService",
+              "handlerMethod": "addMessage"
+            }
+          ]
+        },
+        {
+          "file": "admin-api/controllers/safety/safety-users.controller.ts",
+          "prefix": "admin-api/safety/users",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/admin-api/safety/users/:id/profile",
+              "handlerService": "userRepo",
+              "handlerMethod": "findOne"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/safety/users/:id/images",
+              "handlerService": "imageRepo",
+              "handlerMethod": "find"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/safety/users/:id/activity",
+              "handlerService": "visitorRepo",
+              "handlerMethod": "find"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/safety/users/:id/financial",
+              "handlerService": "paymentRepo",
+              "handlerMethod": "find"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/safety/users/:id/reports",
+              "handlerService": "reportRepo",
+              "handlerMethod": "find"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/safety/users/:id/moderation-logs",
+              "handlerService": "modLogRepo",
+              "handlerMethod": "find"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/safety/users/:id/ai-advice",
+              "handlerService": "aiAssistantService",
+              "handlerMethod": "getAdvice"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/safety/users/:id/re-analyze",
+              "handlerService": "aiAssistantService",
+              "handlerMethod": "analyzeUser"
+            },
+            {
+              "method": "POST",
+              "path": "/admin-api/safety/users/:id/verify-face",
+              "handlerService": null,
+              "handlerMethod": null
+            }
+          ]
+        },
+        {
+          "file": "admin-api/controllers/seo/admin-api-seo.controller.ts",
+          "prefix": "admin-api/seo",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/admin-api/seo/dashboard",
+              "handlerService": "seoCollector",
+              "handlerMethod": "collectAllMetrics"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/seo/revenue-dashboard",
+              "handlerService": "revenueAttribution",
+              "handlerMethod": "calculateLTVBySource"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/seo/behavioral-keywords",
+              "handlerService": "seoService",
+              "handlerMethod": "discoverBehavioralKeywords"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/seo/admin-dashboard",
+              "handlerService": "seoCollector",
+              "handlerMethod": "collectAllMetrics"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/seo/content-opportunities",
+              "handlerService": "contentOpportunity",
+              "handlerMethod": "generateHighIntentContent"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/seo/competitor-analysis",
+              "handlerService": "logger",
+              "handlerMethod": "error"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/seo/competitor-changes",
+              "handlerService": "logger",
+              "handlerMethod": "error"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/seo/serp-features",
+              "handlerService": "logger",
+              "handlerMethod": "error"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/seo/keywords-ranking",
+              "handlerService": "seoService",
+              "handlerMethod": "discoverBehavioralKeywords"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/seo/keywords-ranking",
+              "handlerService": "seoService",
+              "handlerMethod": "discoverBehavioralKeywords"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/seo/competitor-changes",
+              "handlerService": "logger",
+              "handlerMethod": "error"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/seo/serp-features",
+              "handlerService": "logger",
+              "handlerMethod": "error"
+            }
+          ]
+        },
+        {
+          "file": "admin-api/controllers/users/admin-api.controller.ts",
+          "prefix": "admin-api",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/admin-api/users",
+              "handlerService": "usersService",
+              "handlerMethod": "exploreUsers"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/users/count",
+              "handlerService": "userRepository",
+              "handlerMethod": "count"
+            },
+            {
+              "method": "GET",
+              "path": "/admin-api/users/growth-rate",
+              "handlerService": "userRepository",
+              "handlerMethod": "count"
+            }
+          ]
+        }
+      ],
+      "services": {},
+      "pythonServices": [],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "ai": {
+      "module": "ai",
+      "controllers": [
+        {
+          "file": "ai/ai.controller.ts",
+          "prefix": "ai",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/ai/recommend",
+              "handlerService": "aiService",
+              "handlerMethod": "recommend"
+            },
+            {
+              "method": "POST",
+              "path": "/ai/embed",
+              "handlerService": "aiService",
+              "handlerMethod": "embedText"
+            },
+            {
+              "method": "POST",
+              "path": "/ai/compare",
+              "handlerService": "aiService",
+              "handlerMethod": "compareTexts"
+            },
+            {
+              "method": "POST",
+              "path": "/ai/predict",
+              "handlerService": "aiService",
+              "handlerMethod": "predict"
+            },
+            {
+              "method": "POST",
+              "path": "/ai/train",
+              "handlerService": "aiService",
+              "handlerMethod": "train"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "AiService": {
+          "file": "ai/ai.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "HttpService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": [
+            "ml_service"
+          ]
+        }
+      },
+      "pythonServices": [
+        "ml_service"
+      ],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "ai-assistant": {
+      "module": "ai-assistant",
+      "controllers": [
+        {
+          "file": "ai-assistant/ai-assistant.controller.ts",
+          "prefix": "ai-assistant",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/ai-assistant/advice/:userId",
+              "handlerService": "assistant",
+              "handlerMethod": "getAdvice"
+            },
+            {
+              "method": "POST",
+              "path": "/ai-assistant/start",
+              "handlerService": "assistant",
+              "handlerMethod": "startConversation"
+            },
+            {
+              "method": "POST",
+              "path": "/ai-assistant/message/:convId",
+              "handlerService": "assistant",
+              "handlerMethod": "userSendsMessage"
+            },
+            {
+              "method": "GET",
+              "path": "/ai-assistant/convos/:userId",
+              "handlerService": "assistant",
+              "handlerMethod": "listConversationsForUser"
+            },
+            {
+              "method": "POST",
+              "path": "/ai-assistant/icebreakers",
+              "handlerService": "assistant",
+              "handlerMethod": "getIcebreakers"
+            },
+            {
+              "method": "POST",
+              "path": "/ai-assistant/suggest-reply",
+              "handlerService": "assistant",
+              "handlerMethod": "suggestReply"
+            },
+            {
+              "method": "GET",
+              "path": "/ai-assistant/guidance/:userId",
+              "handlerService": "assistant",
+              "handlerMethod": "getNextGuidance"
+            },
+            {
+              "method": "GET",
+              "path": "/ai-assistant/optimization-plan/:userId",
+              "handlerService": "assistant",
+              "handlerMethod": "getOptimizationPlan"
+            },
+            {
+              "method": "GET",
+              "path": "/ai-assistant/problems/:userId",
+              "handlerService": "assistant",
+              "handlerMethod": "getUserProblems"
+            },
+            {
+              "method": "GET",
+              "path": "/ai-assistant/convo/:convId",
+              "handlerService": "assistant",
+              "handlerMethod": "getConversation"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "AiAssistantService": {
+          "file": "ai-assistant/ai-assistant.service.ts",
+          "entities": [
+            "AssistantConversation",
+            "AssistantMessage",
+            "User"
+          ],
+          "injectsServices": [
+            "PaymentsService",
+            "ProblemDetectorService",
+            "GuidanceGeneratorService",
+            "PhaseOptimizerService",
+            "UserEventService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "ProblemDetectorService": {
+          "file": "ai-assistant/analyzers/problem-detector.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "PhaseService",
+            "AiImageService",
+            "InteractionsService",
+            "ProfileVisitorsService",
+            "UserMetricsService",
+            "PersonalityService",
+            "FeedAssemblerService",
+            "TicketService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "AssistantClientService": {
+          "file": "ai-assistant/assistant-client.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "HttpService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": [
+            "ai_assistant"
+          ]
+        },
+        "GuidanceGeneratorService": {
+          "file": "ai-assistant/guidance/guidance-generator.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "PhaseService",
+            "ProblemDetectorService",
+            "UserEventService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "PhaseOptimizerService": {
+          "file": "ai-assistant/optimizers/phase-optimizer.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "PhaseService",
+            "ProblemDetectorService",
+            "GuidanceGeneratorService",
+            "UserEventService"
+          ],
+          "redisUsed": false,
+          "queues": [
+            "phase-check"
+          ],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [
+        "ai_assistant"
+      ],
+      "dependsOnModules": [
+        "payments",
+        "phase",
+        "user-event",
+        "ai-image",
+        "interaction",
+        "profile-visitors",
+        "user-metrics",
+        "personality",
+        "feed",
+        "ai-support"
+      ],
+      "transitivePythonServices": [
+        "ai_monetization",
+        "personality",
+        "ai_revenue",
+        "ai_support",
+        "ai_seo",
+        "aeo_tracker",
+        "ml_service"
+      ],
+      "transitiveModules": [
+        "feature-store",
+        "revenue",
+        "feature-store-rvenue",
+        "redis",
+        "seo",
+        "social-listener",
+        "report-block",
+        "trust",
+        "suggestion",
+        "users",
+        "relation-status",
+        "auth",
+        "user-phones",
+        "user-device",
+        "ai-feedback"
+      ]
+    },
+    "ai-feedback": {
+      "module": "ai-feedback",
+      "controllers": [
+        {
+          "file": "ai-feedback/ai-feedback.controller.ts",
+          "prefix": "feedback",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/feedback",
+              "handlerService": "service",
+              "handlerMethod": "create"
+            },
+            {
+              "method": "GET",
+              "path": "/feedback",
+              "handlerService": "service",
+              "handlerMethod": "findAll"
+            },
+            {
+              "method": "GET",
+              "path": "/feedback/metrics",
+              "handlerService": "service",
+              "handlerMethod": "getMetrics"
+            },
+            {
+              "method": "GET",
+              "path": "/feedback/conversion-insights",
+              "handlerService": "conversionAnalytics",
+              "handlerMethod": "analyzeConversion"
+            },
+            {
+              "method": "GET",
+              "path": "/feedback/conversion-insights/top-features",
+              "handlerService": "conversionAnalytics",
+              "handlerMethod": "analyzeConversion"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "AiFeedbackProcessor": {
+          "file": "ai-feedback/ai-feedback.processor.ts",
+          "entities": [],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": [
+            "ml_service"
+          ]
+        },
+        "AiFeedbackService": {
+          "file": "ai-feedback/ai-feedback.service.ts",
+          "entities": [
+            "AiFeedback"
+          ],
+          "injectsServices": [
+            "UserEventService",
+            "ConversionAnalyticsService"
+          ],
+          "redisUsed": false,
+          "queues": [
+            "ai-feedback",
+            "conversion-analysis"
+          ],
+          "pythonCalls": []
+        },
+        "ConversionProcessor": {
+          "file": "ai-feedback/processors/conversion.processor.ts",
+          "entities": [
+            "AiFeedback",
+            "User"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "ConversionAnalyticsService": {
+          "file": "ai-feedback/services/conversion-analytics.service.ts",
+          "entities": [
+            "AiFeedback",
+            "Payment"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [
+        "ml_service"
+      ],
+      "dependsOnModules": [
+        "user-event"
+      ],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "ai-image": {
+      "module": "ai-image",
+      "controllers": [
+        {
+          "file": "ai-image/ai-image.controller.ts",
+          "prefix": "ai-image",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/ai-image/upload",
+              "handlerService": "aiImageService",
+              "handlerMethod": "upload"
+            },
+            {
+              "method": "GET",
+              "path": "/ai-image/user/:userId",
+              "handlerService": "aiImageService",
+              "handlerMethod": "findByUser"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "AiImageProcessor": {
+          "file": "ai-image/ai-image.processor.ts",
+          "entities": [],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": [
+            "ml_service"
+          ]
+        },
+        "AiImageService": {
+          "file": "ai-image/ai-image.service.ts",
+          "entities": [
+            "AiImage"
+          ],
+          "injectsServices": [
+            "UserEventService"
+          ],
+          "redisUsed": false,
+          "queues": [
+            "ai-image"
+          ],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [
+        "ml_service"
+      ],
+      "dependsOnModules": [
+        "user-event"
+      ],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "ai-support": {
+      "module": "ai-support",
+      "controllers": [],
+      "services": {
+        "TicketService": {
+          "file": "ai-support/services/ticket.service.ts",
+          "entities": [
+            "SupportTicket",
+            "TicketMessage",
+            "TicketFeedback"
+          ],
+          "injectsServices": [
+            "UserEventService",
+            "HttpService"
+          ],
+          "redisUsed": false,
+          "queues": [
+            "ai-support"
+          ],
+          "pythonCalls": [
+            "ai_support"
+          ]
+        }
+      },
+      "pythonServices": [
+        "ai_support"
+      ],
+      "dependsOnModules": [
+        "user-event"
+      ],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "auth": {
+      "module": "auth",
+      "controllers": [
+        {
+          "file": "auth/auth.controller.ts",
+          "prefix": "auth",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/auth/register/step1",
+              "handlerService": "authService",
+              "handlerMethod": "step1"
+            },
+            {
+              "method": "POST",
+              "path": "/auth/register/completeProfile",
+              "handlerService": "authService",
+              "handlerMethod": "completeProfile"
+            },
+            {
+              "method": "POST",
+              "path": "/auth/login",
+              "handlerService": "authService",
+              "handlerMethod": "login"
+            },
+            {
+              "method": "POST",
+              "path": "/auth/logout",
+              "handlerService": "userEventService",
+              "handlerMethod": "log"
+            },
+            {
+              "method": "GET",
+              "path": "/auth/me",
+              "handlerService": "authService",
+              "handlerMethod": "getProfile"
+            },
+            {
+              "method": "POST",
+              "path": "/auth/change-password",
+              "handlerService": "authService",
+              "handlerMethod": "changePassword"
+            },
+            {
+              "method": "GET",
+              "path": "/auth/mobile/register-status",
+              "handlerService": "authService",
+              "handlerMethod": "getRegisterStatus"
+            },
+            {
+              "method": "POST",
+              "path": "/auth/register/complete-verification",
+              "handlerService": "authService",
+              "handlerMethod": "completeVerification"
+            },
+            {
+              "method": "POST",
+              "path": "/auth/sim-login",
+              "handlerService": "authService",
+              "handlerMethod": "simLogin"
+            }
+          ]
+        },
+        {
+          "file": "auth/channels/telegram/telegram.controller.ts",
+          "prefix": "telegram/webhook",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/telegram/webhook",
+              "handlerService": "telegramService",
+              "handlerMethod": "saveChatId"
+            },
+            {
+              "method": "POST",
+              "path": "/telegram/webhook/verify",
+              "handlerService": "otpService",
+              "handlerMethod": "verify"
+            }
+          ]
+        },
+        {
+          "file": "auth/channels/whatsapp/whatsapp.controller.ts",
+          "prefix": "auth/register/whatsapp",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/auth/register/whatsapp/save-otp",
+              "handlerService": "whatsappService",
+              "handlerMethod": "saveOtp"
+            },
+            {
+              "method": "POST",
+              "path": "/auth/register/whatsapp/webhook",
+              "handlerService": "whatsappService",
+              "handlerMethod": "handleIncomingMessage"
+            },
+            {
+              "method": "POST",
+              "path": "/auth/register/whatsapp/verify",
+              "handlerService": "whatsappService",
+              "handlerMethod": "isVerified"
+            }
+          ]
+        },
+        {
+          "file": "auth/debug-auth.controller.ts",
+          "prefix": "dev",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/dev/set-verified",
+              "handlerService": "redis",
+              "handlerMethod": "set"
+            }
+          ]
+        },
+        {
+          "file": "auth/otp/otp.controller.ts",
+          "prefix": "otp",
+          "routes": []
+        }
+      ],
+      "services": {
+        "AuthService": {
+          "file": "auth/auth.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "AuthRegistrationService",
+            "AuthLoginService",
+            "AuthProfileService",
+            "UsersService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "TelegramService": {
+          "file": "auth/channels/telegram/telegram.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "RedisService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "WhatsAppService": {
+          "file": "auth/channels/whatsapp/whatsapp.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "RedisService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "DevicePhoneService": {
+          "file": "auth/device-phone/device-phone.service.ts",
+          "entities": [
+            "DevicePhone"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "OtpService": {
+          "file": "auth/otp/otp.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "RedisService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "AuthLoginService": {
+          "file": "auth/services/auth-login.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "UsersService",
+            "JwtService",
+            "UserEventService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "AuthProfileService": {
+          "file": "auth/services/auth-profile.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "UsersService",
+            "JwtService",
+            "TelegramService",
+            "WhatsAppService",
+            "UserEventService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "AuthRegistrationService": {
+          "file": "auth/services/auth-registration.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "UsersService",
+            "JwtService",
+            "UserPhonesService",
+            "UserDeviceService",
+            "TelegramService",
+            "WhatsAppService",
+            "RedisService",
+            "DevicePhoneService",
+            "UserEventService",
+            "PhaseService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [
+        "users",
+        "redis",
+        "user-event",
+        "user-phones",
+        "user-device",
+        "phase"
+      ],
+      "transitivePythonServices": [
+        "personality",
+        "ai_revenue",
+        "ai_support",
+        "ai_seo",
+        "aeo_tracker"
+      ],
+      "transitiveModules": [
+        "feature-store",
+        "personality",
+        "relation-status",
+        "user-metrics",
+        "revenue",
+        "feature-store-rvenue",
+        "seo",
+        "social-listener",
+        "interaction",
+        "report-block",
+        "trust",
+        "suggestion"
+      ]
+    },
+    "common": {
+      "module": "common",
+      "controllers": [],
+      "services": {},
+      "pythonServices": [],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "config": {
+      "module": "config",
+      "controllers": [],
+      "services": {},
+      "pythonServices": [],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "current-user": {
+      "module": "current-user",
+      "controllers": [],
+      "services": {},
+      "pythonServices": [],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "debug": {
+      "module": "debug",
+      "controllers": [
+        {
+          "file": "debug/debug.controller.ts",
+          "prefix": "debug",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/debug/suggestions/:userId",
+              "handlerService": "vectorSearch",
+              "handlerMethod": "findCandidates"
+            },
+            {
+              "method": "GET",
+              "path": "/debug/feed/:userId",
+              "handlerService": "feedAssembler",
+              "handlerMethod": "buildFeed"
+            },
+            {
+              "method": "GET",
+              "path": "/debug/relation/:userId/:targetId",
+              "handlerService": "relationStatus",
+              "handlerMethod": "getEffectiveRelation"
+            },
+            {
+              "method": "GET",
+              "path": "/debug/dependency-graph",
+              "handlerService": null,
+              "handlerMethod": null
+            }
+          ]
+        }
+      ],
+      "services": {
+        "DebugService": {
+          "file": "debug/debug.service.ts",
+          "entities": [],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "feature-store": {
+      "module": "feature-store",
+      "controllers": [
+        {
+          "file": "feature-store/feature-store.controller.ts",
+          "prefix": "feature-store",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/feature-store/refresh",
+              "handlerService": "featureStoreService",
+              "handlerMethod": "refreshAllFeatures"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "FeatureStoreService": {
+          "file": "feature-store/feature-store.service.ts",
+          "entities": [
+            "UserFeatureSnapshot",
+            "User"
+          ],
+          "injectsServices": [
+            "PersonalityService",
+            "UserEventService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [
+        "personality",
+        "user-event"
+      ],
+      "transitivePythonServices": [
+        "personality"
+      ],
+      "transitiveModules": []
+    },
+    "feature-store-rvenue": {
+      "module": "feature-store-rvenue",
+      "controllers": [
+        {
+          "file": "feature-store-rvenue/feature-store-rvenue.controller.ts",
+          "prefix": "feature-store-rvenue",
+          "routes": []
+        }
+      ],
+      "services": {
+        "FeatureStoreRevenueService": {
+          "file": "feature-store-rvenue/feature-store-rvenue.service.ts",
+          "entities": [
+            "User",
+            "Payment",
+            "PartitionedEvent",
+            "SEOActivity"
+          ],
+          "injectsServices": [
+            "RedisService",
+            "ExternalSEOToolsService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [
+        "redis",
+        "seo"
+      ],
+      "transitivePythonServices": [
+        "ai_support",
+        "ai_seo",
+        "aeo_tracker",
+        "ai_revenue",
+        "personality"
+      ],
+      "transitiveModules": [
+        "revenue",
+        "feature-store",
+        "personality",
+        "user-event",
+        "social-listener",
+        "user-metrics",
+        "interaction",
+        "phase",
+        "report-block",
+        "trust",
+        "suggestion",
+        "users",
+        "relation-status"
+      ]
+    },
+    "feed": {
+      "module": "feed",
+      "controllers": [
+        {
+          "file": "feed/feed.controller.ts",
+          "prefix": "feed",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/feed/dismiss/:promotionId",
+              "handlerService": "feedAssembler",
+              "handlerMethod": "buildFeed"
+            },
+            {
+              "method": "GET",
+              "path": "/feed",
+              "handlerService": "feedAssembler",
+              "handlerMethod": "buildFeed"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "FeedAssemblerService": {
+          "file": "feed/services/feed-assembler.service.ts",
+          "entities": [
+            "User"
+          ],
+          "injectsServices": [
+            "VipService",
+            "CreditsService",
+            "SEOCollectorService",
+            "FeedCandidateService",
+            "FeedScoringService",
+            "FeedRelationService",
+            "FeedPromotionService",
+            "PhaseService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "FeedCandidateService": {
+          "file": "feed/services/feed-candidate.service.ts",
+          "entities": [
+            "User"
+          ],
+          "injectsServices": [
+            "BoostQueueService",
+            "SuggestionService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "FeedPromotionService": {
+          "file": "feed/services/feed-promotion.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "PromotionEngineService",
+            "PromotionExposureService",
+            "UserEventService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "FeedRelationService": {
+          "file": "feed/services/feed-relation.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "RelationStatusService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "FeedScoringService": {
+          "file": "feed/services/feed-scoring.service.ts",
+          "entities": [],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [
+        "payments",
+        "seo",
+        "phase",
+        "redis",
+        "suggestion",
+        "user-event",
+        "relation-status"
+      ],
+      "transitivePythonServices": [
+        "ai_monetization",
+        "personality",
+        "ai_revenue",
+        "ai_support",
+        "ai_seo",
+        "aeo_tracker",
+        "ml_service"
+      ],
+      "transitiveModules": [
+        "user-metrics",
+        "feature-store",
+        "personality",
+        "revenue",
+        "feature-store-rvenue",
+        "social-listener",
+        "interaction",
+        "report-block",
+        "trust",
+        "users",
+        "auth",
+        "user-phones",
+        "user-device",
+        "ai-feedback"
+      ]
+    },
+    "helpers": {
+      "module": "helpers",
+      "controllers": [],
+      "services": {
+        "AssistantProcessor": {
+          "file": "helpers/assistant.processor.ts",
+          "entities": [
+            "AssistantMessage"
+          ],
+          "injectsServices": [
+            "HttpService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": [
+            "ml_service"
+          ]
+        },
+        "RedisService": {
+          "file": "helpers/redis.service.ts",
+          "entities": [],
+          "injectsServices": [],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [
+        "ml_service"
+      ],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "interaction": {
+      "module": "interaction",
+      "controllers": [
+        {
+          "file": "interaction/interaction.controller.ts",
+          "prefix": "interactions",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/interactions/:targetId/:type",
+              "handlerService": "interactionsService",
+              "handlerMethod": "record"
+            },
+            {
+              "method": "GET",
+              "path": "/interactions/sent",
+              "handlerService": "interactionsService",
+              "handlerMethod": "getUserInteractions"
+            },
+            {
+              "method": "GET",
+              "path": "/interactions/received",
+              "handlerService": "interactionsService",
+              "handlerMethod": "getReceivedInteractions"
+            },
+            {
+              "method": "GET",
+              "path": "/interactions/status/:targetUserId",
+              "handlerService": null,
+              "handlerMethod": null
+            },
+            {
+              "method": "GET",
+              "path": "/interactions/relation/:targetId",
+              "handlerService": "relationStatusService",
+              "handlerMethod": "getEffectiveRelation"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "InteractionsService": {
+          "file": "interaction/interaction.service.ts",
+          "entities": [
+            "Interaction",
+            "User",
+            "Message"
+          ],
+          "injectsServices": [
+            "PhaseService",
+            "ReportBlockService",
+            "UserEventService",
+            "RevenueScorerService",
+            "FeatureStoreService",
+            "PersonalityService",
+            "RedisService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [
+        "phase",
+        "report-block",
+        "user-event",
+        "suggestion",
+        "feature-store",
+        "personality",
+        "redis"
+      ],
+      "transitivePythonServices": [
+        "personality",
+        "ai_revenue",
+        "ai_support",
+        "ai_seo",
+        "aeo_tracker"
+      ],
+      "transitiveModules": [
+        "user-metrics",
+        "revenue",
+        "feature-store-rvenue",
+        "seo",
+        "social-listener",
+        "trust",
+        "users",
+        "relation-status"
+      ]
+    },
+    "message": {
+      "module": "message",
+      "controllers": [
+        {
+          "file": "message/message.controller.ts",
+          "prefix": "messages",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/messages",
+              "handlerService": "messageService",
+              "handlerMethod": "sendMessage"
+            },
+            {
+              "method": "POST",
+              "path": "/messages",
+              "handlerService": "messageService",
+              "handlerMethod": "sendMessage"
+            },
+            {
+              "method": "GET",
+              "path": "/messages/inbox",
+              "handlerService": "messageService",
+              "handlerMethod": "getInbox"
+            },
+            {
+              "method": "GET",
+              "path": "/messages/sent",
+              "handlerService": "messageService",
+              "handlerMethod": "getSent"
+            },
+            {
+              "method": "PATCH",
+              "path": "/messages/read/:id",
+              "handlerService": "messageService",
+              "handlerMethod": "markAsRead"
+            },
+            {
+              "method": "DELETE",
+              "path": "/messages/inbox/:id",
+              "handlerService": "messageService",
+              "handlerMethod": "deleteFromInbox"
+            },
+            {
+              "method": "DELETE",
+              "path": "/messages/sent/:id",
+              "handlerService": "messageService",
+              "handlerMethod": "deleteFromSent"
+            },
+            {
+              "method": "GET",
+              "path": "/messages/inbox/grouped",
+              "handlerService": "messageService",
+              "handlerMethod": "getInboxGroupedByUser"
+            },
+            {
+              "method": "GET",
+              "path": "/messages/sent/grouped",
+              "handlerService": "messageService",
+              "handlerMethod": "getSentGroupedByUser"
+            },
+            {
+              "method": "GET",
+              "path": "/messages/conversation/:targetId",
+              "handlerService": "messageService",
+              "handlerMethod": "getConversation"
+            },
+            {
+              "method": "PATCH",
+              "path": "/messages/:id",
+              "handlerService": "messageService",
+              "handlerMethod": "editMessage"
+            },
+            {
+              "method": "POST",
+              "path": "/messages/:id/report",
+              "handlerService": "messageService",
+              "handlerMethod": "reportMessage"
+            },
+            {
+              "method": "GET",
+              "path": "/messages/unread-count",
+              "handlerService": "messageService",
+              "handlerMethod": "getTotalUnreadCount"
+            },
+            {
+              "method": "DELETE",
+              "path": "/messages/all",
+              "handlerService": "messageService",
+              "handlerMethod": "deleteAllMessages"
+            },
+            {
+              "method": "DELETE",
+              "path": "/messages/conversation/:targetUserId",
+              "handlerService": "messageService",
+              "handlerMethod": "deleteConversation"
+            },
+            {
+              "method": "PATCH",
+              "path": "/messages/read-all/:targetUserId",
+              "handlerService": "messageService",
+              "handlerMethod": "markAllAsRead"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "MessageService": {
+          "file": "message/message.service.ts",
+          "entities": [
+            "Message",
+            "AppNotification",
+            "User"
+          ],
+          "injectsServices": [
+            "NotificationService",
+            "UserEventService",
+            "ModerationService",
+            "CreditsService",
+            "RevenueScorerService",
+            "FeatureStoreService",
+            "RelationStatusService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [
+        "notification",
+        "user-event",
+        "moderation",
+        "payments",
+        "suggestion",
+        "feature-store",
+        "relation-status"
+      ],
+      "transitivePythonServices": [
+        "ai_moderation",
+        "ai_monetization",
+        "personality",
+        "ai_revenue",
+        "ai_support",
+        "ai_seo",
+        "aeo_tracker",
+        "ml_service"
+      ],
+      "transitiveModules": [
+        "phase",
+        "user-metrics",
+        "personality",
+        "revenue",
+        "feature-store-rvenue",
+        "redis",
+        "seo",
+        "social-listener",
+        "interaction",
+        "report-block",
+        "trust",
+        "users",
+        "auth",
+        "user-phones",
+        "user-device",
+        "ai-feedback"
+      ]
+    },
+    "migrations": {
+      "module": "migrations",
+      "controllers": [],
+      "services": {},
+      "pythonServices": [],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "moderation": {
+      "module": "moderation",
+      "controllers": [
+        {
+          "file": "moderation/moderation.controller.ts",
+          "prefix": "moderation",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/moderation/check",
+              "handlerService": "moderationService",
+              "handlerMethod": "moderateMessage"
+            },
+            {
+              "method": "POST",
+              "path": "/moderation/check-async",
+              "handlerService": "moderationService",
+              "handlerMethod": "moderateMessageAsync"
+            },
+            {
+              "method": "GET",
+              "path": "/moderation/user/:userId/risk",
+              "handlerService": "moderationService",
+              "handlerMethod": "getUserRiskProfile"
+            },
+            {
+              "method": "GET",
+              "path": "/moderation/stats/daily",
+              "handlerService": "moderationService",
+              "handlerMethod": "getDailyStats"
+            },
+            {
+              "method": "GET",
+              "path": "/moderation/high-risk-users",
+              "handlerService": "moderationService",
+              "handlerMethod": "getHighRiskUsers"
+            },
+            {
+              "method": "POST",
+              "path": "/moderation/user/:userId/unblock",
+              "handlerService": "moderationService",
+              "handlerMethod": "unblockUser"
+            },
+            {
+              "method": "GET",
+              "path": "/moderation/reports/export",
+              "handlerService": "moderationService",
+              "handlerMethod": "exportReportsToCsv"
+            },
+            {
+              "method": "GET",
+              "path": "/moderation/health",
+              "handlerService": "moderationService",
+              "handlerMethod": "healthCheck"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "ModerationProcessor": {
+          "file": "moderation/moderation.processor.ts",
+          "entities": [
+            "ModerationLog",
+            "User"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": [
+            "ai_moderation"
+          ]
+        },
+        "ModerationService": {
+          "file": "moderation/moderation.service.ts",
+          "entities": [
+            "User",
+            "Message",
+            "ModerationLog"
+          ],
+          "injectsServices": [
+            "UserEventService",
+            "HttpService"
+          ],
+          "redisUsed": false,
+          "queues": [
+            "moderation"
+          ],
+          "pythonCalls": [
+            "ai_moderation"
+          ]
+        }
+      },
+      "pythonServices": [
+        "ai_moderation"
+      ],
+      "dependsOnModules": [
+        "user-event"
+      ],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "notification": {
+      "module": "notification",
+      "controllers": [
+        {
+          "file": "notification/notification.controller.ts",
+          "prefix": "notifications",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/notifications",
+              "handlerService": "notificationService",
+              "handlerMethod": "getUserNotifications"
+            },
+            {
+              "method": "PATCH",
+              "path": "/notifications/read/:id",
+              "handlerService": "notificationService",
+              "handlerMethod": "markAsRead"
+            },
+            {
+              "method": "GET",
+              "path": "/notifications/unread/count",
+              "handlerService": "notificationService",
+              "handlerMethod": "countUnread"
+            },
+            {
+              "method": "POST",
+              "path": "/notifications",
+              "handlerService": "notificationService",
+              "handlerMethod": "createNotification"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "NotificationService": {
+          "file": "notification/notification.service.ts",
+          "entities": [
+            "AppNotification"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "payments": {
+      "module": "payments",
+      "controllers": [
+        {
+          "file": "payments/payments.controller.ts",
+          "prefix": "payments",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/payments/grant-bundle/:userId/:bundleCode",
+              "handlerService": "paymentsService",
+              "handlerMethod": "grantBundle"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "BoostService": {
+          "file": "payments/boosts/boosts.service.ts",
+          "entities": [
+            "UserBoost"
+          ],
+          "injectsServices": [
+            "PhaseService",
+            "UserEventService",
+            "BoostQueueService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "CreditsService": {
+          "file": "payments/credits/credits.service.ts",
+          "entities": [
+            "UserCredits"
+          ],
+          "injectsServices": [
+            "UserEventService",
+            "BoostQueueService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "PaymentsService": {
+          "file": "payments/payments.service.ts",
+          "entities": [
+            "ProductBundle",
+            "UserVip"
+          ],
+          "injectsServices": [
+            "CreditsService",
+            "BoostService",
+            "PhaseService",
+            "UserEventService",
+            "FeatureStoreService",
+            "ConfigService",
+            "VipService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "PaywallService": {
+          "file": "payments/paywall/paywall.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "PhaseService",
+            "DevicePhoneService",
+            "VipService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "PromotionEngineService": {
+          "file": "payments/promotion-engine.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "FeatureService",
+            "PromotionExposureService",
+            "HttpService",
+            "ConfigService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": [
+            "ai_monetization"
+          ]
+        },
+        "PromotionExposureService": {
+          "file": "payments/promotion-exposure.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "AiFeedbackService",
+            "PaywallService",
+            "HttpService",
+            "ConfigService",
+            "FeatureService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": [
+            "ai_monetization"
+          ]
+        },
+        "VipService": {
+          "file": "payments/vip/vip.service.ts",
+          "entities": [
+            "UserVip"
+          ],
+          "injectsServices": [
+            "UserEventService",
+            "BoostQueueService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [
+        "ai_monetization"
+      ],
+      "dependsOnModules": [
+        "phase",
+        "user-event",
+        "redis",
+        "feature-store",
+        "auth",
+        "user-metrics",
+        "ai-feedback"
+      ],
+      "transitivePythonServices": [
+        "personality",
+        "ai_revenue",
+        "ai_support",
+        "ai_seo",
+        "aeo_tracker",
+        "ml_service"
+      ],
+      "transitiveModules": [
+        "personality",
+        "revenue",
+        "feature-store-rvenue",
+        "seo",
+        "social-listener",
+        "interaction",
+        "report-block",
+        "trust",
+        "suggestion",
+        "users",
+        "relation-status",
+        "user-phones",
+        "user-device"
+      ]
+    },
+    "personality": {
+      "module": "personality",
+      "controllers": [
+        {
+          "file": "personality/personality.controller.ts",
+          "prefix": "personality",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/personality/sentiment",
+              "handlerService": "personalityService",
+              "handlerMethod": "analyzeSentiment"
+            },
+            {
+              "method": "POST",
+              "path": "/personality/emotion",
+              "handlerService": "personalityService",
+              "handlerMethod": "analyzeEmotion"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "PersonalityService": {
+          "file": "personality/personality.service.ts",
+          "entities": [
+            "Personality"
+          ],
+          "injectsServices": [
+            "PersonalityWeightService",
+            "PersonalityLearningService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "PersonalityAIClient": {
+          "file": "personality/services/personality-ai-client.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "HttpService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": [
+            "personality"
+          ]
+        },
+        "PersonalityLearningService": {
+          "file": "personality/services/personality-learning.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "PersonalityWeightService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "PersonalityWeightService": {
+          "file": "personality/services/personality-weight.service.ts",
+          "entities": [
+            "Personality",
+            "Payment"
+          ],
+          "injectsServices": [],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [
+        "personality"
+      ],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "phase": {
+      "module": "phase",
+      "controllers": [
+        {
+          "file": "phase/phase.controller.ts",
+          "prefix": "phase",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/phase/:userId",
+              "handlerService": "phaseService",
+              "handlerMethod": "getPhaseMetrics"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "PhaseOptimizerService": {
+          "file": "phase/phase-optimizer.service.ts",
+          "entities": [
+            "UserPhase",
+            "Payment"
+          ],
+          "injectsServices": [],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "PhaseRecalcService": {
+          "file": "phase/phase-recalc.service.ts",
+          "entities": [
+            "User",
+            "UserPhase"
+          ],
+          "injectsServices": [
+            "PhaseService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "PhaseService": {
+          "file": "phase/phase.service.ts",
+          "entities": [
+            "UserPhase",
+            "User",
+            "PartitionedEvent",
+            "Interaction",
+            "Message"
+          ],
+          "injectsServices": [
+            "UserMetricsService",
+            "FeatureStoreService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "PhaseLearningService": {
+          "file": "phase/services/phase-learning.service.ts",
+          "entities": [
+            "User"
+          ],
+          "injectsServices": [
+            "PhaseWeightService",
+            "FeatureStoreService",
+            "RevenueAttributionService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "PhaseMetricsService": {
+          "file": "phase/services/phase-metrics.service.ts",
+          "entities": [
+            "UserPhase"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "PhaseWeightService": {
+          "file": "phase/services/phase-weight.service.ts",
+          "entities": [],
+          "injectsServices": [],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [
+        "user-metrics",
+        "feature-store",
+        "revenue"
+      ],
+      "transitivePythonServices": [
+        "personality",
+        "ai_revenue",
+        "ai_support",
+        "ai_seo",
+        "aeo_tracker"
+      ],
+      "transitiveModules": [
+        "personality",
+        "user-event",
+        "feature-store-rvenue",
+        "redis",
+        "seo",
+        "social-listener",
+        "interaction",
+        "report-block",
+        "trust",
+        "suggestion",
+        "users",
+        "relation-status"
+      ]
+    },
+    "product": {
+      "module": "product",
+      "controllers": [
+        {
+          "file": "product/product.controller.ts",
+          "prefix": "product",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/product/public",
+              "handlerService": null,
+              "handlerMethod": null
+            },
+            {
+              "method": "POST",
+              "path": "/product/payments/start",
+              "handlerService": null,
+              "handlerMethod": null
+            }
+          ]
+        }
+      ],
+      "services": {
+        "ProductService": {
+          "file": "product/product.service.ts",
+          "entities": [],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "profile-visitors": {
+      "module": "profile-visitors",
+      "controllers": [
+        {
+          "file": "profile-visitors/profile-visitors.controller.ts",
+          "prefix": "profile-visitors",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/profile-visitors",
+              "handlerService": "profileVisitorsService",
+              "handlerMethod": "createVisitor"
+            },
+            {
+              "method": "GET",
+              "path": "/profile-visitors/:profileId",
+              "handlerService": "profileVisitorsService",
+              "handlerMethod": "getProfileVisitors"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "ProfileVisitorsService": {
+          "file": "profile-visitors/profile-visitors.service.ts",
+          "entities": [
+            "ProfileVisitor",
+            "User"
+          ],
+          "injectsServices": [
+            "UserEventService",
+            "RedisService",
+            "RelationStatusService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [
+        "user-event",
+        "redis",
+        "relation-status"
+      ],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "qdrant": {
+      "module": "qdrant",
+      "controllers": [],
+      "services": {},
+      "pythonServices": [],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "queues": {
+      "module": "queues",
+      "controllers": [
+        {
+          "file": "queues/queues.controller.ts",
+          "prefix": "queues",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/queues/train",
+              "handlerService": "mlTrainingQueue",
+              "handlerMethod": "add"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "AiJobProcessor": {
+          "file": "queues/workers/ai-job.processor.ts",
+          "entities": [],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "OpsAlertsProcessor": {
+          "file": "queues/workers/ops-alerts.processor.ts",
+          "entities": [],
+          "injectsServices": [
+            "NotificationService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [
+        "notification"
+      ],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "recaptcha": {
+      "module": "recaptcha",
+      "controllers": [],
+      "services": {
+        "RecaptchaService": {
+          "file": "recaptcha/recaptcha.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "ConfigService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "redis": {
+      "module": "redis",
+      "controllers": [],
+      "services": {
+        "BoostQueueService": {
+          "file": "redis/boost-queue.service.ts",
+          "entities": [],
+          "injectsServices": [],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "RedisService": {
+          "file": "redis/redis.service.ts",
+          "entities": [],
+          "injectsServices": [],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "relation-status": {
+      "module": "relation-status",
+      "controllers": [
+        {
+          "file": "relation-status/relation-status.controller.ts",
+          "prefix": "relation-status",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/relation-status/:targetId",
+              "handlerService": "relationStatusService",
+              "handlerMethod": "getEffectiveRelation"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "RelationStatusService": {
+          "file": "relation-status/relation-status.service.ts",
+          "entities": [
+            "Interaction",
+            "Report",
+            "Block"
+          ],
+          "injectsServices": [
+            "RedisService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [
+        "redis"
+      ],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "report-block": {
+      "module": "report-block",
+      "controllers": [
+        {
+          "file": "report-block/report-block.controller.ts",
+          "prefix": "report-block",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/report-block/report",
+              "handlerService": "reportBlockService",
+              "handlerMethod": "reportUser"
+            },
+            {
+              "method": "POST",
+              "path": "/report-block/block",
+              "handlerService": "reportBlockService",
+              "handlerMethod": "blockUser"
+            },
+            {
+              "method": "GET",
+              "path": "/report-block/reports",
+              "handlerService": "reportBlockService",
+              "handlerMethod": "getReports"
+            },
+            {
+              "method": "POST",
+              "path": "/report-block/unblock",
+              "handlerService": "reportBlockService",
+              "handlerMethod": "unblockUser"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "ReportBlockService": {
+          "file": "report-block/report-block.service.ts",
+          "entities": [
+            "Block",
+            "Report",
+            "User"
+          ],
+          "injectsServices": [
+            "UserEventService",
+            "FeatureStoreService",
+            "TrustScoreService",
+            "RedisService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [
+        "user-event",
+        "feature-store",
+        "trust",
+        "redis"
+      ],
+      "transitivePythonServices": [
+        "personality"
+      ],
+      "transitiveModules": [
+        "personality"
+      ]
+    },
+    "revenue": {
+      "module": "revenue",
+      "controllers": [],
+      "services": {
+        "DecisionEngineService": {
+          "file": "revenue/decision-engine.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "RevenueIntelligenceService",
+            "FeatureStoreRevenueService"
+          ],
+          "redisUsed": false,
+          "queues": [
+            "ml-predictions"
+          ],
+          "pythonCalls": []
+        },
+        "RevenueAttributionService": {
+          "file": "revenue/revenue-attribution.service.ts",
+          "entities": [
+            "User",
+            "Payment",
+            "SEOActivity",
+            "PartitionedEvent"
+          ],
+          "injectsServices": [
+            "HttpService",
+            "FeatureStoreService",
+            "ConfigService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": [
+            "ai_revenue"
+          ]
+        },
+        "RevenueIntelligenceProcessor": {
+          "file": "revenue/revenue-intelligence.processor.ts",
+          "entities": [],
+          "injectsServices": [
+            "RevenueIntelligenceService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "RevenueIntelligenceService": {
+          "file": "revenue/revenue-intelligence.service.ts",
+          "entities": [
+            "User",
+            "Payment",
+            "SEOActivity",
+            "PartitionedEvent"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [
+            "revenue-intelligence"
+          ],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [
+        "ai_revenue"
+      ],
+      "dependsOnModules": [
+        "feature-store-rvenue",
+        "feature-store"
+      ],
+      "transitivePythonServices": [
+        "ai_support",
+        "ai_seo",
+        "aeo_tracker",
+        "personality"
+      ],
+      "transitiveModules": [
+        "redis",
+        "seo",
+        "social-listener",
+        "user-event",
+        "user-metrics",
+        "interaction",
+        "phase",
+        "personality",
+        "report-block",
+        "trust",
+        "suggestion",
+        "users",
+        "relation-status"
+      ]
+    },
+    "seo": {
+      "module": "seo",
+      "controllers": [
+        {
+          "file": "seo/seo.controller.ts",
+          "prefix": "seo",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/seo/dashboard",
+              "handlerService": "seoCollector",
+              "handlerMethod": "collectAllMetrics"
+            },
+            {
+              "method": "GET",
+              "path": "/seo/revenue-dashboard",
+              "handlerService": "seoCollector",
+              "handlerMethod": "collectAllMetrics"
+            },
+            {
+              "method": "POST",
+              "path": "/seo/activity",
+              "handlerService": "campaignService",
+              "handlerMethod": "createActivity"
+            },
+            {
+              "method": "GET",
+              "path": "/seo/recommendations",
+              "handlerService": null,
+              "handlerMethod": null
+            },
+            {
+              "method": "GET",
+              "path": "/seo/admin/dashboard",
+              "handlerService": "seoCollector",
+              "handlerMethod": "collectAllMetrics"
+            },
+            {
+              "method": "POST",
+              "path": "/seo/execute-recommendation/:id",
+              "handlerService": "seoRecommendationRepo",
+              "handlerMethod": "findOne"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "SEOAnalyticsService": {
+          "file": "seo/services/analytics/seo-analytics.service.ts",
+          "entities": [
+            "PartitionedEvent",
+            "SEOMetrics"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "SEORetentionService": {
+          "file": "seo/services/analytics/seo-retention.service.ts",
+          "entities": [],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "BrandSentimentService": {
+          "file": "seo/services/brand-sentiment.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "HttpService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": [
+            "ai_support"
+          ]
+        },
+        "CampaignSEOService": {
+          "file": "seo/services/campaign-seo.service.ts",
+          "entities": [
+            "SEOActivity",
+            "SEOMetrics"
+          ],
+          "injectsServices": [
+            "HttpService",
+            "ConfigService",
+            "FeatureStoreRevenueService",
+            "ExternalSEOToolsService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": [
+            "ai_seo"
+          ]
+        },
+        "CompetitorSEOService": {
+          "file": "seo/services/competitor-seo.service.ts",
+          "entities": [
+            "CompetitorData"
+          ],
+          "injectsServices": [
+            "HttpService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "ExternalSEOToolsService": {
+          "file": "seo/services/external-seo-tools.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "HttpService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "AEOTrackerService": {
+          "file": "seo/services/intelligence/aeo-tracker.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "HttpService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": [
+            "aeo_tracker"
+          ]
+        },
+        "AutoExecutorService": {
+          "file": "seo/services/intelligence/auto-executor.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "HttpService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "AutoScalingService": {
+          "file": "seo/services/intelligence/auto-scaling.service.ts",
+          "entities": [],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "ContentOpportunityService": {
+          "file": "seo/services/intelligence/content-opportunity.service.ts",
+          "entities": [
+            "User",
+            "Interaction",
+            "PartitionedEvent"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "SEOMonitoringService": {
+          "file": "seo/services/monitoring/seo-monitoring.service.ts",
+          "entities": [
+            "SEOMetrics"
+          ],
+          "injectsServices": [
+            "RevenueIntelligenceService",
+            "SocialListenerService"
+          ],
+          "redisUsed": false,
+          "queues": [
+            "seo-analysis"
+          ],
+          "pythonCalls": []
+        },
+        "SEOCollectorService": {
+          "file": "seo/services/seo-collector.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "TechnicalSEOService",
+            "UserSEOSignalsService",
+            "CampaignSEOService",
+            "CompetitorSEOService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "SEOScoreEngine": {
+          "file": "seo/services/seo-score-engine.service.ts",
+          "entities": [],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "SEOService": {
+          "file": "seo/services/seo.service.ts",
+          "entities": [
+            "PartitionedEvent",
+            "User"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "SERPFeatureHunterService": {
+          "file": "seo/services/serp-feature-hunter.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "ExternalSEOToolsService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "TechnicalSEOService": {
+          "file": "seo/services/technical-seo.service.ts",
+          "entities": [
+            "SEOMetrics"
+          ],
+          "injectsServices": [
+            "HttpService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "UserSEOSignalsService": {
+          "file": "seo/services/user-seo-signals.service.ts",
+          "entities": [
+            "SEOMetrics"
+          ],
+          "injectsServices": [
+            "UserEventService",
+            "UserMetricsService",
+            "InteractionsService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [
+        "ai_support",
+        "ai_seo",
+        "aeo_tracker"
+      ],
+      "dependsOnModules": [
+        "feature-store-rvenue",
+        "revenue",
+        "social-listener",
+        "user-event",
+        "user-metrics",
+        "interaction"
+      ],
+      "transitivePythonServices": [
+        "ai_revenue",
+        "personality"
+      ],
+      "transitiveModules": [
+        "redis",
+        "feature-store",
+        "personality",
+        "phase",
+        "report-block",
+        "trust",
+        "suggestion",
+        "users",
+        "relation-status"
+      ]
+    },
+    "social-listener": {
+      "module": "social-listener",
+      "controllers": [
+        {
+          "file": "social-listener/social-listener.controller.ts",
+          "prefix": "social-listener",
+          "routes": []
+        }
+      ],
+      "services": {
+        "SocialListenerService": {
+          "file": "social-listener/social-listener.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "HttpService",
+            "ConfigService"
+          ],
+          "redisUsed": false,
+          "queues": [
+            "seo-analysis"
+          ],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "suggestion": {
+      "module": "suggestion",
+      "controllers": [
+        {
+          "file": "suggestion/suggestion.controller.ts",
+          "prefix": "suggestions",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/suggestions",
+              "handlerService": "suggestionService",
+              "handlerMethod": "getSuggestionsForUser"
+            },
+            {
+              "method": "POST",
+              "path": "/suggestions/accept-suggestion",
+              "handlerService": "userEventService",
+              "handlerMethod": "log"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "DiversityOptimizerService": {
+          "file": "suggestion/optimization/diversity-optimizer.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "FeatureStoreService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "VectorSearchService": {
+          "file": "suggestion/retrieval/vector-search.service.ts",
+          "entities": [
+            "UserFeatureSnapshot",
+            "User"
+          ],
+          "injectsServices": [
+            "BoostQueueService",
+            "FeatureStoreService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "RevenueScorerService": {
+          "file": "suggestion/scoring/revenue-scorer.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "FeatureStoreService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "SuggestionService": {
+          "file": "suggestion/suggestion.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "UsersService",
+            "InteractionsService",
+            "UserEventService",
+            "VectorSearchService",
+            "RevenueScorerService",
+            "DiversityOptimizerService",
+            "RelationStatusService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [
+        "feature-store",
+        "redis",
+        "users",
+        "interaction",
+        "user-event",
+        "relation-status"
+      ],
+      "transitivePythonServices": [
+        "personality",
+        "ai_revenue",
+        "ai_support",
+        "ai_seo",
+        "aeo_tracker"
+      ],
+      "transitiveModules": [
+        "personality",
+        "phase",
+        "user-metrics",
+        "revenue",
+        "feature-store-rvenue",
+        "seo",
+        "social-listener",
+        "report-block",
+        "trust"
+      ]
+    },
+    "trust": {
+      "module": "trust",
+      "controllers": [],
+      "services": {
+        "TrustScoreService": {
+          "file": "trust/trust-score.service.ts",
+          "entities": [
+            "User",
+            "Report"
+          ],
+          "injectsServices": [
+            "UserEventService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [
+        "user-event"
+      ],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "types": {
+      "module": "types",
+      "controllers": [],
+      "services": {},
+      "pythonServices": [],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "user-device": {
+      "module": "user-device",
+      "controllers": [
+        {
+          "file": "user-device/user-device.controller.ts",
+          "prefix": "user-device",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/user-device",
+              "handlerService": "userDeviceService",
+              "handlerMethod": "createOrUpdateToken"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "UserDeviceService": {
+          "file": "user-device/user-device.service.ts",
+          "entities": [
+            "UserDevice",
+            "User"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "user-event": {
+      "module": "user-event",
+      "controllers": [
+        {
+          "file": "user-event/user-event.controller.ts",
+          "prefix": "admin/archive",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/admin/archive/report",
+              "handlerService": "advisor",
+              "handlerMethod": "generateWeeklyReport"
+            },
+            {
+              "method": "GET",
+              "path": "/admin/archive/requests",
+              "handlerService": "advisor",
+              "handlerMethod": "getArchiveRequests"
+            },
+            {
+              "method": "POST",
+              "path": "/admin/archive/request",
+              "handlerService": "advisor",
+              "handlerMethod": "createArchiveRequest"
+            },
+            {
+              "method": "POST",
+              "path": "/admin/archive/request/:id/approve",
+              "handlerService": "advisor",
+              "handlerMethod": "approveArchive"
+            },
+            {
+              "method": "POST",
+              "path": "/admin/archive/request/:id/reject",
+              "handlerService": "advisor",
+              "handlerMethod": "rejectArchive"
+            },
+            {
+              "method": "POST",
+              "path": "/admin/archive/request/:id/execute",
+              "handlerService": "advisor",
+              "handlerMethod": "executeArchive"
+            },
+            {
+              "method": "GET",
+              "path": "/admin/archive/dashboard",
+              "handlerService": "advisor",
+              "handlerMethod": "generateWeeklyReport"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "ChurnPredictorService": {
+          "file": "user-event/analytics/churn-predictor.service.ts",
+          "entities": [
+            "PartitionedEvent"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "RevenueAnalyzerService": {
+          "file": "user-event/analytics/revenue-analyzer.service.ts",
+          "entities": [
+            "DailyEventAggregate",
+            "UserCohort"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "CohortCalculatorProcessor": {
+          "file": "user-event/processors/cohort-calculator.processor.ts",
+          "entities": [
+            "PartitionedEvent",
+            "UserCohort"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "EventAggregatorProcessor": {
+          "file": "user-event/processors/event-aggregator.processor.ts",
+          "entities": [
+            "PartitionedEvent",
+            "DailyEventAggregate"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "ArchiveAdvisorService": {
+          "file": "user-event/services/archive-advisor.service.ts",
+          "entities": [
+            "PartitionedEvent",
+            "ArchiveRequest",
+            "AiFeedback"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "UserEventService": {
+          "file": "user-event/user-event.service.ts",
+          "entities": [
+            "PartitionedEvent"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [
+            "event-ingestion",
+            "event-aggregation",
+            "cohort-calculation"
+          ],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "user-metrics": {
+      "module": "user-metrics",
+      "controllers": [],
+      "services": {
+        "DailyMetricsService": {
+          "file": "user-metrics/daily-metrics.service.ts",
+          "entities": [],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "FeatureService": {
+          "file": "user-metrics/feature.service.ts",
+          "entities": [
+            "PartitionedEvent",
+            "User"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "MetricsRefreshService": {
+          "file": "user-metrics/metrics-refresh.service.ts",
+          "entities": [],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "UserMetricsService": {
+          "file": "user-metrics/user-metrics.service.ts",
+          "entities": [
+            "PartitionedEvent",
+            "Payment"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    },
+    "user-phones": {
+      "module": "user-phones",
+      "controllers": [
+        {
+          "file": "user-phones/user-phones.controller.ts",
+          "prefix": "user-phones",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/user-phones/change",
+              "handlerService": "userPhonesService",
+              "handlerMethod": "addNewPhone"
+            },
+            {
+              "method": "POST",
+              "path": "/user-phones/verify",
+              "handlerService": "userPhonesService",
+              "handlerMethod": "verifyCode"
+            },
+            {
+              "method": "GET",
+              "path": "/user-phones/list",
+              "handlerService": "userPhonesService",
+              "handlerMethod": "getAllPhones"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "UserPhonesService": {
+          "file": "user-phones/user-phones.service.ts",
+          "entities": [
+            "UserPhone",
+            "User"
+          ],
+          "injectsServices": [
+            "RedisService",
+            "WhatsAppService",
+            "TelegramService",
+            "UserEventService"
+          ],
+          "redisUsed": true,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [
+        "redis",
+        "auth",
+        "user-event"
+      ],
+      "transitivePythonServices": [
+        "personality",
+        "ai_revenue",
+        "ai_support",
+        "ai_seo",
+        "aeo_tracker"
+      ],
+      "transitiveModules": [
+        "users",
+        "feature-store",
+        "personality",
+        "relation-status",
+        "user-device",
+        "phase",
+        "user-metrics",
+        "revenue",
+        "feature-store-rvenue",
+        "seo",
+        "social-listener",
+        "interaction",
+        "report-block",
+        "trust",
+        "suggestion"
+      ]
+    },
+    "user_images": {
+      "module": "user_images",
+      "controllers": [
+        {
+          "file": "user_images/user_images.controller.ts",
+          "prefix": "user-image",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/user-image/upload",
+              "handlerService": "userImageService",
+              "handlerMethod": "findUserByPhone"
+            },
+            {
+              "method": "DELETE",
+              "path": "/user-image/:filename",
+              "handlerService": "userImageService",
+              "handlerMethod": "findByFilename"
+            },
+            {
+              "method": "POST",
+              "path": "/user-image/set-main",
+              "handlerService": "userImageService",
+              "handlerMethod": "findUserByPhone"
+            },
+            {
+              "method": "GET",
+              "path": "/user-image/:userId",
+              "handlerService": "userImageService",
+              "handlerMethod": "getImagesByUserId"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "PhotoRankingService": {
+          "file": "user_images/ranking/photo-ranking.service.ts",
+          "entities": [
+            "UserImage"
+          ],
+          "injectsServices": [
+            "UserEventService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "UserImageService": {
+          "file": "user_images/user_images.service.ts",
+          "entities": [
+            "UserImage",
+            "User"
+          ],
+          "injectsServices": [
+            "AiImageService",
+            "UserEventService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [
+        "user-event",
+        "ai-image"
+      ],
+      "transitivePythonServices": [
+        "ml_service"
+      ],
+      "transitiveModules": []
+    },
+    "users": {
+      "module": "users",
+      "controllers": [
+        {
+          "file": "users/users.controller.ts",
+          "prefix": "users",
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/users",
+              "handlerService": "usersService",
+              "handlerMethod": "create"
+            },
+            {
+              "method": "GET",
+              "path": "/users/all",
+              "handlerService": "usersService",
+              "handlerMethod": "findAllUsersExceptMe"
+            },
+            {
+              "method": "PATCH",
+              "path": "/users/:id",
+              "handlerService": "usersService",
+              "handlerMethod": "update"
+            },
+            {
+              "method": "POST",
+              "path": "/users/filter",
+              "handlerService": "usersService",
+              "handlerMethod": "filterUsers"
+            },
+            {
+              "method": "POST",
+              "path": "/users/filter/count",
+              "handlerService": "usersService",
+              "handlerMethod": "filterUsers"
+            },
+            {
+              "method": "GET",
+              "path": "/users/explore",
+              "handlerService": "usersService",
+              "handlerMethod": "exploreUsers"
+            },
+            {
+              "method": "GET",
+              "path": "/users/recent-similar",
+              "handlerService": "usersService",
+              "handlerMethod": "findRecentSimilarUsers"
+            },
+            {
+              "method": "GET",
+              "path": "/users/profile/:id",
+              "handlerService": "usersService",
+              "handlerMethod": "findFullProfile"
+            },
+            {
+              "method": "PATCH",
+              "path": "/users/:id/suspend",
+              "handlerService": "usersService",
+              "handlerMethod": "suspendAccount"
+            },
+            {
+              "method": "PATCH",
+              "path": "/users/:id/resign",
+              "handlerService": "usersService",
+              "handlerMethod": "resignAccount"
+            }
+          ]
+        }
+      ],
+      "services": {
+        "UserAccountService": {
+          "file": "users/account/user-account.service.ts",
+          "entities": [
+            "User"
+          ],
+          "injectsServices": [
+            "UserEventService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "UserCrudService": {
+          "file": "users/crud/user-crud.service.ts",
+          "entities": [
+            "User"
+          ],
+          "injectsServices": [
+            "UserEventService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "UserDiscoveryService": {
+          "file": "users/discovery/user-discovery.service.ts",
+          "entities": [
+            "User"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "UserFilterService": {
+          "file": "users/filter/user-filter.service.ts",
+          "entities": [
+            "User"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "UserSimilarityService": {
+          "file": "users/similarity/user-similarity.service.ts",
+          "entities": [
+            "User"
+          ],
+          "injectsServices": [
+            "FeatureStoreService",
+            "RelationStatusService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "UserQueryService": {
+          "file": "users/user-query.service.ts",
+          "entities": [
+            "User"
+          ],
+          "injectsServices": [],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        },
+        "UsersService": {
+          "file": "users/users.service.ts",
+          "entities": [],
+          "injectsServices": [
+            "UserFilterService",
+            "UserAccountService",
+            "UserDiscoveryService",
+            "UserSimilarityService",
+            "UserCrudService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": []
+        }
+      },
+      "pythonServices": [],
+      "dependsOnModules": [
+        "user-event",
+        "feature-store",
+        "relation-status"
+      ],
+      "transitivePythonServices": [
+        "personality"
+      ],
+      "transitiveModules": [
+        "personality",
+        "redis"
+      ]
+    },
+    "verification": {
+      "module": "verification",
+      "controllers": [],
+      "services": {
+        "VerificationService": {
+          "file": "verification/verification.service.ts",
+          "entities": [
+            "User"
+          ],
+          "injectsServices": [
+            "HttpService"
+          ],
+          "redisUsed": false,
+          "queues": [],
+          "pythonCalls": [
+            "ai_verification"
+          ]
+        }
+      },
+      "pythonServices": [
+        "ai_verification"
+      ],
+      "dependsOnModules": [],
+      "transitivePythonServices": [],
+      "transitiveModules": []
+    }
+  }
+}

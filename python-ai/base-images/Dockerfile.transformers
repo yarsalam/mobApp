@@ -1,0 +1,18 @@
+FROM python-ai-core
+
+USER root
+
+RUN --mount=type=bind,source=downloaded_wheels,target=/wheels,readonly \
+    --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-index --find-links=/wheels \
+        torch==2.6.0+cpu \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        transformers \
+        tokenizers \
+        safetensors \
+        accelerate \
+        httpx \
+        pandas
+
+USER appuser
+CMD ["bash"]

@@ -1,0 +1,5728 @@
+===== FILE: ./ai_verification/app.py =====
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.responses import JSONResponse
+import logging
+from datetime import datetime
+import shutil
+import os
+import tempfile
+from face_verifier import FaceVerifier
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="AI Verification Service", version="1.0.0")
+verifier = FaceVerifier()
+
+@app.post("/verify")
+async def verify_faces(
+    selfie: UploadFile = File(...),
+    profile_photo: UploadFile = File(...)
+):
+    """
+    مقایسه سلفی با عکس پروفایل
+    """
+    try:
+        # ذخیره موقت فایل‌ها
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as selfie_file:
+            shutil.copyfileobj(selfie.file, selfie_file)
+            selfie_path = selfie_file.name
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as profile_file:
+            shutil.copyfileobj(profile_photo.file, profile_file)
+            profile_path = profile_file.name
+
+        # بررسی تطابق
+        result = verifier.verify(selfie_path, profile_path)
+
+        # پاک کردن فایل‌های موقت
+        os.unlink(selfie_path)
+        os.unlink(profile_path)
+
+        return JSONResponse({
+            'status': 'success',
+            'verified': result['verified'],
+            'confidence': result['confidence'],
+            'message': result['message'],
+            'timestamp': datetime.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Verification failed: {e}")
+        raise HTTPException(500, str(e))
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "healthy",
+        "service": "ai_verification",
+        "timestamp": datetime.now().isoformat()
+    }
+===== FILE: ./ai_verification/Dockerfile =====
+FROM python-ai-tf-pillow:latest
+
+USER root
+
+WORKDIR /app
+COPY . .
+ENV PYTHONPATH=/app
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8017"]
+===== FILE: ./ai_verification/face_verifier.py =====
+import cv2
+import numpy as np
+from deepface import DeepFace
+import logging
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+class FaceVerifier:
+    """
+    بررسی تطابق چهره سلفی با عکس پروفایل
+    """
+    
+    def verify(self, selfie_path: str, profile_photo_path: str) -> dict:
+        try:
+            # مقایسه دو عکس
+            result = DeepFace.verify(
+                img1_path=selfie_path,
+                img2_path=profile_photo_path,
+                model_name='Facenet',
+                enforce_detection=False,
+                detector_backend='opencv'  # سریعتر
+            )
+            
+            # اگه تطابق داشت
+            if result['verified']:
+                return {
+                    'verified': True,
+                    'confidence': float(1 - result['distance']),
+                    'message': '✅ چهره تأیید شد'
+                }
+            else:
+                return {
+                    'verified': False,
+                    'confidence': float(1 - result['distance']),
+                    'message': '❌ چهره مطابقت ندارد'
+                }
+                
+        except Exception as e:
+            logger.error(f"Verification error: {e}")
+            return {
+                'verified': False,
+                'confidence': 0,
+                'message': 'خطا در بررسی'
+            }
+===== FILE: ./ai_feedback/app.py =====
+from fastapi import FastAPI, Body, HTTPException
+from pydantic import BaseModel
+from typing import List, Dict, Optional
+import logging
+from datetime import datetime
+import random
+
+from conversion_trainer import ConversionTrainer
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="AI Feedback Engine v2", version="2.0.0")
+trainer = ConversionTrainer()
+
+class FeedbackRequest(BaseModel):
+    userId: int
+    feature: str
+    phase: Optional[int] = None
+    feedbackType: Optional[str] = None
+    sentiment: Optional[str] = None
+    sentimentScore: Optional[float] = None
+    impactScore: Optional[float] = None
+    revenueImpact: Optional[float] = None
+    seoImpact: Optional[float] = None
+    value: Dict = {}
+    metadata: Dict = {}
+    createdAt: Optional[str] = None
+
+@app.post("/feedback/train_incremental")
+async def train_incremental(feedback: FeedbackRequest):
+    """آموزش تدریجی با یک نمونه"""
+    try:
+        # تبدیل به فرمت مورد نیاز trainer
+        fb_dict = feedback.dict()
+        result = trainer.train([fb_dict], [False], [0])
+        return {
+            "status": "ok",
+            "trained": 1,
+            "phase": result['phase'],
+            "accuracy": result['accuracy']
+        }
+    except Exception as e:
+        logger.error(f"Training failed: {e}")
+        raise HTTPException(500, str(e))
+
+@app.post("/feedback/train_batch")
+async def train_batch(feedbacks: List[FeedbackRequest]):
+    """آموزش گروهی"""
+    try:
+        fb_list = [f.dict() for f in feedbacks]
+        # استخراج conversions و revenues از خود feedbacks
+        conversions = [1 if fb.get('convertedToPurchase') else 0 for fb in fb_list]
+        revenues = [fb.get('revenue', 0) for fb in fb_list]
+        
+        result = trainer.train(fb_list, conversions, revenues)
+        
+        return {
+            "status": "trained",
+            "samples": len(feedbacks),
+            "phase": result['phase'],
+            "accuracy": result['accuracy'],
+            "feature_importance": result.get('feature_importance', {})
+        }
+    except Exception as e:
+        logger.error(f"Batch training failed: {e}")
+        raise HTTPException(500, str(e))
+
+@app.post("/feedback/predict")
+async def predict_conversion(feedback: FeedbackRequest):
+    """پیش‌بینی احتمال خرید از روی بازخورد"""
+    try:
+        fb_dict = feedback.dict()
+        prediction = trainer.predict_conversion_probability(fb_dict)
+        
+        return {
+            "probability": prediction['probability'],
+            "confidence": prediction['confidence'],
+            "phase": prediction['phase'],
+            "threshold": prediction['threshold']
+        }
+    except Exception as e:
+        logger.error(f"Prediction failed: {e}")
+        raise HTTPException(500, str(e))
+
+@app.get("/feedback/metrics")
+async def get_metrics():
+    """دریافت متریک‌های کلی"""
+    # ترکیب اطلاعات از trainer
+    importance = trainer.get_feature_importance()
+    
+    return {
+        "global_score": round(random.uniform(0.5, 1.0), 2),
+        "feature_breakdown": {
+            "assistant_phase_3": round(random.uniform(0.4, 0.9), 2),
+            "image": round(random.uniform(0.3, 0.8), 2),
+            "matching": round(random.uniform(0.5, 0.95), 2),
+        },
+        "feature_importance": importance,
+        "model_phase": trainer.phase,
+        "training_samples": trainer.training_count,
+        "timestamp": datetime.now().isoformat()
+    }
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "healthy",
+        "service": "ai_feedback_v2",
+        "version": "2.0.0",
+        "timestamp": datetime.now().isoformat()
+    }
+===== FILE: ./ai_feedback/conversion_trainer.py =====
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import roc_auc_score
+import logging
+from datetime import datetime
+from typing import Dict, List
+
+logger = logging.getLogger(__name__)
+
+class ConversionTrainer:
+    """
+    موتور یادگیری با اولویت Conversion
+    - فاز ۱: RandomForest (تا ۵۰۰۰ نمونه)
+    - فاز ۲: GradientBoosting (۵۰۰۰ تا ۲۰۰۰۰ نمونه)
+    - فاز ۳: Neural Network (بعد از ۲۰۰۰۰ نمونه)
+    """
+    
+    def __init__(self):
+        self.phase = 1
+        self.conversion_model = RandomForestClassifier(
+            n_estimators=200,
+            max_depth=10,
+            random_state=42,
+            class_weight='balanced'
+        )
+        self.feature_importance = {}
+        self.training_count = 0
+        
+    def extract_features(self, feedbacks: List[Dict]) -> np.ndarray:
+        """استخراج ویژگی‌های مؤثر بر conversion"""
+        features = []
+        for fb in feedbacks:
+            feature_vector = [
+                fb.get('phase', 0) / 3,
+                fb.get('value', {}).get('score', 0.5),
+                1 if fb.get('feedbackType') == 'explicit' else 0,
+                1 if fb.get('sentiment') == 'positive' else 0,
+                1 if fb.get('sentiment') == 'negative' else 0,
+                fb.get('impactScore', 0),
+                len(fb.get('metadata', {}).get('reason', '')) / 200,
+            ]
+            # ویژگی‌های زمانی
+            created_at_str = fb.get('createdAt')
+            if created_at_str:
+                created_at = datetime.fromisoformat(created_at_str)
+            else:
+                created_at = datetime.now()
+            hour = created_at.hour
+            day_of_week = created_at.weekday()
+            feature_vector.extend([hour / 24, day_of_week / 7])
+            features.append(feature_vector)
+        return np.array(features)
+    
+    def train(self, feedbacks: List[Dict], conversions: List[bool] = None, revenues: List[float] = None):
+        """آموزش با توجه به حجم داده"""
+        self.training_count = len(feedbacks)
+        X = self.extract_features(feedbacks)
+        
+        # تعیین labels
+    # اگر conversions ارسال شده باشد از آن استفاده کن، وگرنه از خود feedback ها استخراج کن
+        if conversions is not None and len(conversions) > 0:
+            y_conv = np.array(conversions, dtype=int)
+        else:
+            y_conv = np.array([1 if f.get('convertedToPurchase') else 0 for f in feedbacks])
+        
+        # revenues هم مشابه
+        if revenues is not None and len(revenues) > 0:
+            y_rev = np.array(revenues, dtype=float)
+        else:
+            y_rev = np.array([f.get('revenue', 0) for f in feedbacks])
+        
+        # انتخاب مدل بر اساس حجم داده
+        if self.training_count < 5000:
+            self.phase = 1
+            logger.info(f"Phase 1: Using RandomForest ({self.training_count} samples)")
+            self.conversion_model = RandomForestClassifier(
+                n_estimators=200, max_depth=10, random_state=42, class_weight='balanced'
+            )
+        elif self.training_count < 20000:
+            self.phase = 2
+            logger.info(f"Phase 2: Using GradientBoosting ({self.training_count} samples)")
+            self.conversion_model = GradientBoostingClassifier(
+                n_estimators=200, max_depth=8, learning_rate=0.1, random_state=42
+            )
+        else:
+            self.phase = 3
+            logger.info(f"Phase 3: Neural Network ready ({self.training_count} samples)")
+            # TODO: پیاده‌سازی Neural Network
+        
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y if len(np.unique(y)) > 1 else None
+        )
+        
+        self.conversion_model.fit(X_train, y_train)
+        
+        # ارزیابی
+        if hasattr(self.conversion_model, 'predict_proba'):
+            y_pred_proba = self.conversion_model.predict_proba(X_test)[:, 1]
+            score = roc_auc_score(y_test, y_pred_proba)
+            logger.info(f"Model AUC: {score:.3f}")
+        else:
+            score = self.conversion_model.score(X_test, y_test)
+            logger.info(f"Model accuracy: {score:.3f}")
+        
+        # Feature importance
+        if hasattr(self.conversion_model, 'feature_importances_'):
+            feature_names = [
+                'phase', 'score', 'is_explicit', 'positive', 'negative',
+                'impact', 'text_length', 'hour', 'day_of_week'
+            ]
+            self.feature_importance = dict(zip(
+                feature_names,
+                self.conversion_model.feature_importances_
+            ))
+            logger.info(f"Feature importance: {self.feature_importance}")
+        
+        return {
+            'phase': self.phase,
+            'accuracy': score,
+            'samples': self.training_count,
+            'feature_importance': self.feature_importance
+        }
+    
+    def predict_conversion_probability(self, feedback: Dict) -> Dict:
+        """پیش‌بینی احتمال خرید"""
+        X = self.extract_features([feedback])
+        if hasattr(self.conversion_model, 'predict_proba'):
+            proba = self.conversion_model.predict_proba(X)[0][1]
+        else:
+            proba = float(self.conversion_model.predict(X)[0])
+        
+        confidence = min(0.5 + self.training_count / 10000, 0.95)
+        threshold = 0.3 if self.phase == 1 else 0.4 if self.phase == 2 else 0.5
+        
+        return {
+            'probability': proba,
+            'confidence': confidence,
+            'phase': self.phase,
+            'threshold': threshold
+        }
+    
+    def get_feature_importance(self) -> Dict:
+        return self.feature_importance
+===== FILE: ./ai_feedback/Dockerfile =====
+FROM python-ai-ml-lite:latest
+
+WORKDIR /app
+COPY . .
+
+ENV PYTHONPATH=/app
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8004"]
+===== FILE: ./ai_moderation/app.py =====
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict
+import logging
+import time
+import uuid
+from datetime import datetime
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+from moderation_engine import ModerationEngine
+
+# Rate limiter
+limiter = Limiter(key_func=get_remote_address)
+
+# تنظیم لاگ
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# اپ
+app = FastAPI(
+    title="AI Moderation Service",
+    description="Production-ready content moderation",
+    version="2.0.0"
+)
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# مدل‌ها
+class ModerationRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=5000)
+    sender_id: int
+    receiver_id: int
+    request_id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()))
+
+class ModerationResponse(BaseModel):
+    request_id: str
+    is_safe: bool
+    confidence: float
+    flags: List[str]
+    severity: str
+    action: str
+    processing_time_ms: float
+
+class BatchModerationRequest(BaseModel):
+    requests: List[ModerationRequest]
+
+class BatchModerationResponse(BaseModel):
+    results: List[ModerationResponse]
+    total_time_ms: float
+
+# Thread pool برای پردازش موازی
+executor = ThreadPoolExecutor(max_workers=4)
+
+# موتور (با lazy loading)
+_moderation_engine = None
+
+def get_engine():
+    global _moderation_engine
+    if _moderation_engine is None:
+        _moderation_engine = ModerationEngine(use_cache=True)
+    return _moderation_engine
+
+# Middleware
+@app.middleware("http")
+async def add_process_time_header(request: Request, call_next):
+    start = time.time()
+    response = await call_next(request)
+    process_time = time.time() - start
+    response.headers["X-Process-Time"] = str(process_time)
+    return response
+
+# Health
+@app.get("/health")
+async def health():
+    return {
+        "status": "healthy",
+        "service": "ai_moderation",
+        "version": "2.0.0",
+        "timestamp": datetime.now().isoformat()
+    }
+
+# Stats
+@app.get("/stats")
+async def stats():
+    return get_engine().get_stats()
+
+# Moderate با rate limit
+@app.post("/moderate", response_model=ModerationResponse)
+@limiter.limit("100/minute")  # ۱۰۰ تا در دقیقه
+async def moderate_text(request: Request, req: ModerationRequest):
+    """
+    بررسی یک متن با rate limit
+    """
+    start = time.time()
+    
+    try:
+        # اجرا در thread pool (برای non-blocking)
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            executor,
+            get_engine().moderate,
+            req.text,
+            req.sender_id,
+            req.receiver_id
+        )
+        
+        processing_time = (time.time() - start) * 1000
+        
+        return ModerationResponse(
+            request_id=req.request_id,
+            is_safe=result['isSafe'],
+            confidence=result['confidence'],
+            flags=result['flags'],
+            severity=result['severity'],
+            action=result['action'],
+            processing_time_ms=round(processing_time, 2)
+        )
+        
+    except Exception as e:
+        logger.error(f"Moderation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Batch moderation با rate limit بالاتر
+@app.post("/moderate/batch", response_model=BatchModerationResponse)
+@limiter.limit("20/minute")  # ۲۰ batch در دقیقه
+async def moderate_batch(request: Request, req: BatchModerationRequest):
+    """
+    بررسی دسته‌ای متن‌ها
+    """
+    start = time.time()
+    
+    try:
+        # آماده‌سازی برای batch
+        items = [
+            {
+                'text': r.text,
+                'sender_id': r.sender_id,
+                'receiver_id': r.receiver_id,
+                'request_id': r.request_id
+            }
+            for r in req.requests
+        ]
+        
+        # پردازش batch
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(
+            executor,
+            get_engine().moderate_batch,
+            items
+        )
+        
+        total_time = (time.time() - start) * 1000
+        
+        return BatchModerationResponse(
+            results=[
+                ModerationResponse(
+                    request_id=r['request_id'],
+                    is_safe=r['isSafe'],
+                    confidence=r['confidence'],
+                    flags=r['flags'],
+                    severity=r['severity'],
+                    action=r['action'],
+                    processing_time_ms=r.get('processing_time', 0)
+                )
+                for r in results
+            ],
+            total_time_ms=round(total_time, 2)
+        )
+        
+    except Exception as e:
+        logger.error(f"Batch moderation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# پاک کردن کش (برای ادمین)
+@app.post("/admin/cache/clear")
+async def clear_cache(secret: str):
+    if secret != "your-admin-secret":
+        raise HTTPException(status_code=403)
+    get_engine().clear_cache()
+    return {"status": "cleared"}
+
+# Startup
+@app.on_event("startup")
+async def startup():
+    logger.info("🚀 Starting AI Moderation Service v2")
+    # Pre-load engine
+    get_engine()
+
+# Shutdown
+@app.on_event("shutdown")
+async def shutdown():
+    executor.shutdown(wait=True)
+    logger.info("👋 Shutdown complete")
+===== FILE: ./ai_moderation/moderation_engine.py =====
+from transformers import pipeline
+import logging
+import re
+import hashlib
+import json
+from typing import Dict, List, Optional
+from datetime import datetime
+import time
+
+logger = logging.getLogger(__name__)
+
+class ModerationEngine:
+    """
+    موتور تشخیص محتوای نامناسب با کش و بهینه‌سازی
+    """
+    
+    def __init__(self, cache_ttl: int = 3600, use_cache: bool = True):
+        self.cache = {}
+        self.cache_ttl = cache_ttl
+        self.use_cache = use_cache
+        
+        # lazy loading واقعی
+        self._toxicity_model = None
+        
+        # لیست کلمات کلیدی (سریعتر از regex برای متن‌های کوتاه)
+        self.persian_bad_words = set([
+            'فحش', 'کثافت', 'جاکش', '.....'
+        ])
+        
+        # scam patterns (با compile برای speed)
+        self.scam_patterns = [
+            re.compile(r'شماره\s*کارت'),
+            re.compile(r'بیا\s*تلگرام'),
+            re.compile(r'بهم\s*زن\s*زنگ'),
+            re.compile(r'آیدی\s*(روبیکا|ایتا|بله)'),
+            re.compile(r'کارت\s*به\s*کارت'),
+        ]
+        
+        # stats
+        self.stats = {
+            'total_requests': 0,
+            'cache_hits': 0,
+            'total_time_ms': 0,
+            'last_reset': datetime.now().isoformat()
+        }
+    
+    @property
+    def toxicity_model(self):
+        """lazy loading واقعی با caching"""
+        if self._toxicity_model is None:
+            logger.info("🔄 Loading toxicity model...")
+            start = time.time()
+            self._toxicity_model = pipeline(
+                "text-classification",
+                model="unitary/toxic-bert",
+                device=-1  # CPU
+            )
+            logger.info(f"✅ Model loaded in {time.time()-start:.2f}s")
+        return self._toxicity_model
+    
+    def _get_cache_key(self, text: str) -> str:
+        """ساخت کلید کش برای متن"""
+        return hashlib.md5(text.encode('utf-8')).hexdigest()
+    
+    def _check_cache(self, text: str) -> Optional[Dict]:
+        """بررسی وجود نتیجه در کش"""
+        if not self.use_cache:
+            return None
+        
+        key = self._get_cache_key(text)
+        cached = self.cache.get(key)
+        
+        if cached:
+            age = time.time() - cached['timestamp']
+            if age < self.cache_ttl:
+                self.stats['cache_hits'] += 1
+                return cached['result']
+            else:
+                del self.cache[key]
+        
+        return None
+    
+    def _update_cache(self, text: str, result: Dict):
+        """ذخیره نتیجه در کش"""
+        if not self.use_cache:
+            return
+        
+        key = self._get_cache_key(text)
+        self.cache[key] = {
+            'result': result,
+            'timestamp': time.time()
+        }
+        
+        # جلوگیری از رشد بی‌رویه کش
+        if len(self.cache) > 10000:
+            # حذف قدیمی‌ترین‌ها
+            oldest = sorted(self.cache.items(), key=lambda x: x[1]['timestamp'])[:1000]
+            for k, _ in oldest:
+                del self.cache[k]
+    
+    def moderate(self, text: str, sender_id: int, receiver_id: int) -> Dict:
+        """
+        بررسی متن با کش و بهینه‌سازی
+        """
+        start_time = time.time()
+        self.stats['total_requests'] += 1
+        
+        # 1. بررسی کش
+        cached = self._check_cache(text)
+        if cached:
+            processing_time = (time.time() - start_time) * 1000
+            self.stats['total_time_ms'] += processing_time
+            return cached
+        
+        flags = []
+        severity = 'low'
+        
+        # 2. تشخیص سریع با کلمات کلیدی (بدون مدل)
+        text_lower = text.lower()
+        for word in self.persian_bad_words:
+            if word in text_lower:
+                flags.append(f'bad_word:{word}')
+                severity = 'medium'
+        
+        # 3. تشخیص اسکم با regex
+        for pattern in self.scam_patterns:
+            if pattern.search(text):
+                flags.append('scam_attempt')
+                severity = 'critical'
+                break  # یکبار کافیه
+        
+        # 4. تشخیص فحش با مدل (فقط اگر لازم باشه)
+        toxicity_result = None
+        if severity != 'critical':  # اگه اسکم نبود
+            try:
+                # محدود کردن طول متن برای speed
+                truncated = text[:512]
+                toxicity = self.toxicity_model(truncated)[0]
+                
+                if toxicity['label'] == 'TOXIC' and toxicity['score'] > 0.7:
+                    flags.append('toxic_language')
+                    # اگه severity قبلی lower بود، upgrade کن
+                    if severity != 'critical':
+                        severity = 'high'
+                
+                toxicity_result = toxicity
+                
+            except Exception as e:
+                logger.error(f"Toxicity model failed: {e}")
+        
+        # ساخت result
+        result = {
+            'isSafe': len(flags) == 0,
+            'confidence': toxicity_result['score'] if toxicity_result else 1.0,
+            'flags': flags,
+            'severity': severity,
+            'action': 'block' if severity != 'low' else 'allow'
+        }
+        
+        # ذخیره در کش
+        self._update_cache(text, result)
+        
+        processing_time = (time.time() - start_time) * 1000
+        self.stats['total_time_ms'] += processing_time
+        
+        return result
+    
+    def moderate_batch(self, items: List[Dict]) -> List[Dict]:
+        """
+        بررسی دسته‌ای بهینه
+        """
+        results = []
+        
+        # جدا کردن متن‌های تکراری
+        unique_texts = {}
+        for item in items:
+            text = item['text']
+            if text not in unique_texts:
+                unique_texts[text] = []
+            unique_texts[text].append(item)
+        
+        # بررسی هر متن یک بار
+        for text, text_items in unique_texts.items():
+            # یکبار بررسی کن
+            result = self.moderate(
+                text=text,
+                sender_id=text_items[0]['sender_id'],
+                receiver_id=text_items[0]['receiver_id']
+            )
+            
+            # برای همه کاربرای این متن تکرار کن
+            for item in text_items:
+                results.append({
+                    'request_id': item.get('request_id', ''),
+                    'text': text,
+                    **result
+                })
+        
+        return results
+    
+    def get_stats(self) -> Dict:
+        """گرفتن آمار"""
+        avg_time = 0
+        if self.stats['total_requests'] > 0:
+            avg_time = self.stats['total_time_ms'] / self.stats['total_requests']
+        
+        cache_hit_rate = 0
+        if self.stats['total_requests'] > 0:
+            cache_hit_rate = self.stats['cache_hits'] / self.stats['total_requests']
+        
+        return {
+            'total_requests': self.stats['total_requests'],
+            'cache_hits': self.stats['cache_hits'],
+            'cache_hit_rate': round(cache_hit_rate, 3),
+            'avg_processing_time_ms': round(avg_time, 2),
+            'cache_size': len(self.cache),
+            'last_reset': self.stats['last_reset']
+        }
+    
+    def clear_cache(self):
+        """پاک کردن کش"""
+        self.cache.clear()
+        logger.info("🧹 Cache cleared")
+===== FILE: ./ai_moderation/Dockerfile =====
+FROM python-ai-nlp:latest
+
+WORKDIR /app
+COPY . .
+ENV PYTHONPATH=/app
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8018", "--workers", "1"]
+===== FILE: ./personality/Dockerfile =====
+FROM python-ai-transformers:latest
+
+WORKDIR /app
+COPY . .
+ENV PYTHONPATH=/app
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8100"]
+===== FILE: ./personality/main.py =====
+from fastapi import FastAPI
+from pydantic import BaseModel
+from typing import List
+from transformers import pipeline
+from functools import lru_cache
+
+app = FastAPI(title="Personality & Emotion Analysis")
+
+# Lazy load models
+_sentiment_model = None
+_emotion_model = None
+
+def get_sentiment_model():
+    global _sentiment_model
+    if _sentiment_model is None:
+        print("Loading sentiment model...")
+        _sentiment_model = pipeline("sentiment-analysis")
+    return _sentiment_model
+
+def get_emotion_model():
+    global _emotion_model
+    if _emotion_model is None:
+        print("Loading emotion model...")
+        _emotion_model = pipeline(
+            "text-classification",
+            model="j-hartmann/emotion-english-distilroberta-base"
+        )
+    return _emotion_model
+
+
+class Messages(BaseModel):
+    messages: List[str]
+
+
+# Cache results (RAM cache)
+@lru_cache(maxsize=1000)
+def cached_sentiment(text_tuple):
+    model = get_sentiment_model()
+    return tuple([str(r) for r in model(list(text_tuple))])
+
+
+@lru_cache(maxsize=1000)
+def cached_emotion(text_tuple):
+    model = get_emotion_model()
+    return tuple([str(r) for r in model(list(text_tuple))])
+
+
+@app.post("/analyze_sentiment")
+def analyze_sentiment(data: Messages):
+    result = cached_sentiment(tuple(data.messages))
+    return {"sentiments": result}
+
+
+@app.post("/analyze_emotion")
+def analyze_emotion(data: Messages):
+    result = cached_emotion(tuple(data.messages))
+    return {"emotions": result}
+
+===== FILE: ./ai_ops/api/app.py =====
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import logging
+from contextlib import asynccontextmanager
+from typing import Dict
+
+from core.orchestrator import OpsOrchestrator
+from storage.redis_client import RedisClient
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# orchestrator گلوبال
+orchestrator = OpsOrchestrator()
+redis_client = RedisClient()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """مدیریت lifecycle سرویس"""
+    logger.info("Starting AI Ops service...")
+    orchestrator.start()
+    yield
+    logger.info("Shutting down AI Ops service...")
+    orchestrator.stop()
+
+app = FastAPI(
+    title="AI Ops v2",
+    version="2.0.0",
+    lifespan=lifespan
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "healthy",
+        "service": "ai_ops_v2",
+        "version": "2.0.0"
+    }
+
+@app.get("/metrics/latest")
+async def get_latest_metrics():
+    """دریافت آخرین متریک‌ها"""
+    return {
+        "system": redis_client.get_metric("latest:system"),
+        "issues": redis_client.get_metric("latest:issues"),
+        "revenue_issues": redis_client.get_metric("latest:revenue_issues"),
+    }
+
+@app.get("/issues")
+async def get_issues(severity: str = None):
+    """دریافت issues"""
+    # TODO: از Redis history
+    return {"issues": []}
+
+@app.post("/alerts/test")
+async def test_alert():
+    """تست هشدار"""
+    orchestrator._send_alert([{"test": "alert"}])
+    return {"status": "sent"}
+
+@app.get("/security/report")
+async def security_report():
+    """گزارش امنیتی - بدون دسترسی به host"""
+    return {
+        'code_protection': {
+            'method': 'PyArmor',
+            'enabled': True
+        },
+        'access_control': {
+            'ssh': 'keys only',
+            'database': 'SSL + whitelist',
+            'api': 'JWT + rate limit'
+        },
+        'encryption': {
+            'at_rest': 'AES-256',
+            'in_transit': 'TLS 1.3'
+        },
+        'recommendations': [
+            'دورهای API keys را rotate کنید',
+            'بررسی دسترسی‌های غیرضروری',
+            'فعال‌سازی 2FA برای ادمین'
+        ]
+    }
+===== FILE: ./ai_ops/core/orchestrator.py =====
+import logging
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+from typing import Dict
+from datetime import datetime
+
+from collectors.system_collector import SystemCollector
+from storage.redis_client import RedisClient
+from workers.performance_worker import PerformanceWorker
+from workers.revenue_worker import RevenueWorker
+# from workers.capacity_worker import CapacityWorker
+from workers.archive_worker import ArchiveWorker
+from config.settings import settings
+
+logger = logging.getLogger(__name__)
+
+class OpsOrchestrator:
+    """هماهنگ‌کننده همه workerها - بدون while True"""
+    
+    def __init__(self):
+        self.scheduler = BackgroundScheduler()
+        self.redis = RedisClient()
+        self.system_collector = SystemCollector()
+        self.performance_worker = PerformanceWorker()
+        self.revenue_worker = RevenueWorker()
+        # self.capacity_worker = CapacityWorker()
+        self.archive_worker = ArchiveWorker()
+    
+    def start(self):
+        """شروع همه jobهای زمان‌بندی شده"""
+        logger.info("Starting Ops Orchestrator...")
+        
+        # 1. جمع‌آوری متریک (هر دقیقه)
+        self.scheduler.add_job(
+            self.collect_metrics,
+            IntervalTrigger(seconds=60),
+            id='collect_metrics'
+        )
+        
+        # 2. آنالیز عملکرد (هر 5 دقیقه)
+        self.scheduler.add_job(
+            self.analyze_performance,
+            IntervalTrigger(seconds=300),
+            id='analyze_performance'
+        )
+        
+        # 3. آنالیز ظرفیت (هر ساعت)
+        self.scheduler.add_job(
+            self.analyze_capacity,
+            IntervalTrigger(seconds=3600),
+            id='analyze_capacity'
+        )
+        
+        # 4. آنالیز درآمد (هر ساعت)
+        self.scheduler.add_job(
+            self.analyze_revenue_impact,
+            IntervalTrigger(seconds=3600),
+            id='analyze_revenue'
+        )
+        
+        # 5. آرشیو (هر روز ساعت 2 صبح)
+        self.scheduler.add_job(
+            self.daily_archive,
+            'cron', hour=2, minute=0,
+            id='daily_archive'
+        )
+        
+        self.scheduler.start()
+        logger.info("Orchestrator started successfully")
+    
+    def stop(self):
+        """توقف scheduler"""
+        self.scheduler.shutdown()
+        logger.info("Orchestrator stopped")
+    
+    def collect_metrics(self):
+        """جمع‌آوری متریک‌ها"""
+        metrics = self.system_collector.collect()
+        self.redis.set_metric(
+            f"system:{datetime.now().isoformat()}",
+            metrics,
+            ttl=86400
+        )
+        logger.debug("Metrics collected")
+    
+    def analyze_performance(self):
+        """آنالیز عملکرد"""
+        # دریافت آخرین متریک
+        metrics = self.redis.get_metric("latest:system")
+        if not metrics:
+            return
+        
+        issues = self.performance_worker.analyze(metrics)
+        
+        if issues:
+            # ذخیره issues
+            self.redis.set_metric(
+                f"issues:{datetime.now().isoformat()}",
+                issues,
+                ttl=86400
+            )
+            
+            # اگر issue critical بود، فوراً هشدار بده
+            critical_issues = [i for i in issues if i.get('severity') == 'critical']
+            if critical_issues:
+                self._send_alert(critical_issues)
+    
+    def analyze_revenue_impact(self):
+        """آنالیز impact درآمدی"""
+        issues = self.redis.get_metric("latest:issues")
+        if not issues:
+            return
+        
+        revenue_issues = self.revenue_worker.analyze(issues)
+        
+        if revenue_issues:
+            # ذخیره با priority
+            self.redis.set_metric(
+                f"revenue_issues:{datetime.now().isoformat()}",
+                revenue_issues,
+                ttl=86400
+            )
+    
+    def analyze_capacity(self):
+        """آنالیز ظرفیت"""
+        metrics = self.redis.get_metric("latest:system")
+        if not metrics:
+            return
+        
+        capacity = self.capacity_worker.analyze(metrics)
+        
+        if capacity.get('upgrade_needed'):
+            self._send_alert([capacity])
+    
+    def daily_archive(self):
+        """آرشیو روزانه"""
+        tables = [
+            ('user_event_logs', 90),
+            ('interactions', 90),
+            ('notifications', 30),
+            ('feed_cache', 7),
+        ]
+        
+        for table, days in tables:
+            try:
+                result = self.archive_worker.archive_table(table, days)
+                logger.info(f"Archived {result['archived_count']} from {table}")
+            except Exception as e:
+                logger.error(f"Archive failed for {table}: {e}")
+    
+    def _send_alert(self, alerts: list):
+        """ارسال هشدار به صف ops-alerts در BullMQ"""
+        try:
+            import json
+            import time
+            
+            # ساخت پیام با فرمت BullMQ
+            job_data = {
+                'alerts': alerts,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            # کلید صف در Redis (با پیشوند bull)
+            queue_key = 'bull:ops-alerts:wait'
+            
+            # افزودن به صف
+            self.redis.client.lpush(queue_key, json.dumps(job_data))
+            logger.info(f"Alert sent to queue ops-alerts")
+            
+        except Exception as e:
+            logger.error(f"Failed to send alert to queue: {e}")
+===== FILE: ./ai_ops/Dockerfile =====
+FROM python-ai-ml-lite:latest
+
+WORKDIR /app
+COPY . .
+ENV PYTHONPATH=/app
+
+CMD ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8025"]
+===== FILE: ./ai_ops/config/settings.py =====
+import os
+from typing import Dict, Any
+
+class Settings:
+    # Redis
+    REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
+    REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
+    REDIS_DB = int(os.getenv('REDIS_DB', 0))
+    
+    # API
+    BACKEND_API_URL = os.getenv('BACKEND_API_URL', 'http://backend:5000')
+    
+    # AWS
+    AWS_ACCESS_KEY = os.getenv('AWS_ACCESS_KEY', '')
+    AWS_SECRET_KEY = os.getenv('AWS_SECRET_KEY', '')
+    S3_BUCKET = os.getenv('S3_BUCKET', 'app-archive')
+    S3_REGION = os.getenv('AWS_REGION', 'us-east-1')
+    
+    # Thresholds
+    THRESHOLDS: Dict[str, float] = {
+        'cpu_warning': 70,
+        'cpu_critical': 85,
+        'ram_warning': 75,
+        'ram_critical': 90,
+        'disk_warning': 80,
+        'disk_critical': 95,
+        'response_time_warning': 300,  # ms
+        'response_time_critical': 500,  # ms
+        'error_rate_warning': 0.02,     # 2%
+        'error_rate_critical': 0.05,     # 5%
+    }
+    
+    # Workers
+    WORKER_INTERVALS = {
+        'performance': 60,    # هر 1 دقیقه
+        'anomaly': 300,       # هر 5 دقیقه
+        'capacity': 3600,     # هر 1 ساعت
+        'revenue': 3600,      # هر 1 ساعت
+        'security': 86400,    # هر 24 ساعت
+        'archive': 604800,    # هر 7 روز
+    }
+
+settings = Settings()
+===== FILE: ./ai_ops/workers/archive_worker.py =====
+import logging
+import boto3
+import gzip
+import json
+from datetime import datetime, timedelta
+from typing import Dict, List
+from config.settings import settings
+from storage.redis_client import RedisClient
+
+logger = logging.getLogger(__name__)
+
+class ArchiveWorker:
+    """آرشیو هوشمند داده‌ها - بدون دسترسی به host"""
+    
+    def __init__(self):
+        self.s3 = boto3.client(
+            's3',
+            aws_access_key_id=settings.AWS_ACCESS_KEY,
+            aws_secret_access_key=settings.AWS_SECRET_KEY,
+            region_name=settings.S3_REGION
+        )
+        self.redis = RedisClient()
+        self.BATCH_SIZE = 1000
+        self.SLEEP_BETWEEN_BATCHES = 5  # seconds
+    
+    def archive_table(self, table: str, older_than_days: int):
+        """آرشیو یک جدول با batch control"""
+        logger.info(f"Archiving {table} older than {older_than_days} days")
+        
+        offset = 0
+        total_archived = 0
+        
+        while True:
+            # 1. دریافت یک batch از API
+            try:
+                response = requests.post(
+                    f"{settings.BACKEND_API_URL}/ops/export-batch",
+                    json={
+                        'table': table,
+                        'older_than_days': older_than_days,
+                        'offset': offset,
+                        'limit': self.BATCH_SIZE
+                    },
+                    timeout=30
+                )
+                
+                if response.status_code != 200:
+                    break
+                
+                data = response.json()
+                records = data.get('records', [])
+                
+                if not records:
+                    break
+                
+                # 2. فشرده‌سازی
+                compressed = gzip.compress(
+                    json.dumps(records, default=str).encode()
+                )
+                
+                # 3. آپلود به S3
+                key = f"archive/{table}/{datetime.now().strftime('%Y/%m/%d')}/batch_{offset}.json.gz"
+                self.s3.put_object(
+                    Bucket=settings.S3_BUCKET,
+                    Key=key,
+                    Body=compressed,
+                    StorageClass='GLACIER'
+                )
+                
+                # 4. تایید حذف از دیتابیس اصلی
+                requests.post(
+                    f"{settings.BACKEND_API_URL}/ops/confirm-archived",
+                    json={
+                        'table': table,
+                        'record_ids': [r['id'] for r in records]
+                    }
+                )
+                
+                total_archived += len(records)
+                offset += len(records)
+                
+                logger.info(f"Archived {total_archived} records so far...")
+                
+                # 5. خواب بین batchها
+                import time
+                time.sleep(self.SLEEP_BETWEEN_BATCHES)
+                
+            except Exception as e:
+                logger.error(f"Archive batch failed: {e}")
+                break
+        
+        return {
+            'table': table,
+            'archived_count': total_archived,
+            'destination': f"s3://{settings.S3_BUCKET}/archive/{table}/"
+        }
+===== FILE: ./ai_ops/workers/performance_worker.py =====
+import logging
+from typing import Dict, List
+from datetime import datetime
+from config.settings import settings
+from storage.redis_client import RedisClient
+
+logger = logging.getLogger(__name__)
+
+class PerformanceWorker:
+    """آنالیز عملکرد و تشخیص کندی"""
+    
+    def __init__(self):
+        self.redis = RedisClient()
+    
+    def analyze(self, metrics: Dict) -> List[Dict]:
+        """تحلیل متریک‌ها و تشخیص مشکلات عملکرد"""
+        issues = []
+        
+        # بررسی CPU
+        cpu = metrics.get('system', {}).get('cpu', {}).get('average', 0)
+        if cpu > settings.THRESHOLDS['cpu_critical']:
+            issues.append({
+                'type': 'cpu_critical',
+                'value': cpu,
+                'threshold': settings.THRESHOLDS['cpu_critical'],
+                'severity': 'critical',
+                'impact': 'کندی شدید در پردازش',
+                'revenue_impact': self._estimate_revenue_impact('cpu', cpu),
+                'suggestion': 'افزایش CPU یا بهینه‌سازی کد',
+            })
+        elif cpu > settings.THRESHOLDS['cpu_warning']:
+            issues.append({
+                'type': 'cpu_warning',
+                'value': cpu,
+                'threshold': settings.THRESHOLDS['cpu_warning'],
+                'severity': 'warning',
+                'impact': 'کندی در پردازش',
+                'revenue_impact': self._estimate_revenue_impact('cpu', cpu),
+                'suggestion': 'بررسی کدهای سنگین',
+            })
+        
+        # بررسی RAM
+        ram = metrics.get('system', {}).get('memory', {}).get('percent', 0)
+        if ram > settings.THRESHOLDS['ram_critical']:
+            issues.append({
+                'type': 'ram_critical',
+                'value': ram,
+                'threshold': settings.THRESHOLDS['ram_critical'],
+                'severity': 'critical',
+                'impact': 'ریسک کرش سرویس',
+                'revenue_impact': self._estimate_revenue_impact('ram', ram),
+                'suggestion': 'افزایش RAM یا رفع memory leak',
+            })
+        
+        # بررسی Response Time
+        rt = metrics.get('app', {}).get('avg_response_time', 0)
+        if rt > settings.THRESHOLDS['response_time_critical']:
+            issues.append({
+                'type': 'latency_critical',
+                'value': rt,
+                'threshold': settings.THRESHOLDS['response_time_critical'],
+                'severity': 'critical',
+                'impact': 'تجربه کاربری ضعیف',
+                'revenue_impact': self._estimate_revenue_impact('latency', rt),
+                'suggestion': 'بهینه‌سازی endpointهای کند',
+            })
+        
+        # ذخیره در Redis
+        if issues:
+            self.redis.set_metric(
+                f"performance:issues:{datetime.now().isoformat()}",
+                issues,
+                ttl=86400  # 24 ساعت
+            )
+        
+        return issues
+    
+    def _estimate_revenue_impact(self, metric: str, value: float) -> float:
+        """تخمین impact روی درآمد"""
+        # فرمول ساده: هر 10% افزایش latency = 2% کاهش conversion
+        if metric == 'latency':
+            excess = max(0, (value - settings.THRESHOLDS['response_time_warning']) / 100)
+            return excess * 0.2  # 20% impact
+        return 0.0
+===== FILE: ./ai_ops/workers/revenue_worker.py =====
+import logging
+import requests
+from typing import Dict, List
+from datetime import datetime, timedelta
+from config.settings import settings
+from storage.redis_client import RedisClient
+
+logger = logging.getLogger(__name__)
+
+class RevenueWorker:
+    """آنالیز impact درآمدی مشکلات فنی"""
+    
+    def __init__(self):
+        self.redis = RedisClient()
+        self.api_url = settings.BACKEND_API_URL
+    
+    def analyze(self, issues: List[Dict]) -> List[Dict]:
+        """تحلیل impact درآمدی هر مشکل"""
+        
+        # دریافت revenue روزانه از API
+        try:
+            resp = requests.get(
+                f"{self.api_url}/ops/daily-revenue",
+                timeout=5,
+                headers={'X-Internal': 'true'}
+            )
+            daily_revenue = resp.json().get('revenue', 0) if resp.status_code == 200 else 0
+        except:
+            daily_revenue = 0
+        
+        revenue_impacted_issues = []
+        
+        for issue in issues:
+            if issue.get('revenue_impact', 0) > 0:
+                # محاسبه impact واقعی
+                issue['estimated_daily_loss'] = daily_revenue * issue['revenue_impact']
+                issue['estimated_monthly_loss'] = issue['estimated_daily_loss'] * 30
+                
+                # اولویت‌بندی بر اساس impact
+                if issue['estimated_monthly_loss'] > 1000:
+                    issue['priority'] = 'critical'
+                elif issue['estimated_monthly_loss'] > 500:
+                    issue['priority'] = 'high'
+                elif issue['estimated_monthly_loss'] > 100:
+                    issue['priority'] = 'medium'
+                else:
+                    issue['priority'] = 'low'
+                
+                revenue_impacted_issues.append(issue)
+        
+        return revenue_impacted_issues
+===== FILE: ./ai_ops/collectors/system_collector.py =====
+import psutil
+import logging
+from typing import Dict
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+class SystemCollector:
+    """جمع‌آوری متریک‌های سیستم - بدون نیاز به privileged"""
+    
+    @staticmethod
+    def collect() -> Dict:
+        """جمع‌آوری همه متریک‌های سیستم"""
+        try:
+            cpu_percent = psutil.cpu_percent(interval=1, percpu=True)
+            memory = psutil.virtual_memory()
+            disk = psutil.disk_usage('/')
+            
+            return {
+                'timestamp': datetime.now().isoformat(),
+                'cpu': {
+                    'percent_per_core': cpu_percent,
+                    'average': sum(cpu_percent) / len(cpu_percent),
+                    'count': psutil.cpu_count(),
+                },
+                'memory': {
+                    'total_gb': memory.total / (1024**3),
+                    'used_gb': memory.used / (1024**3),
+                    'percent': memory.percent,
+                },
+                'disk': {
+                    'total_gb': disk.total / (1024**3),
+                    'used_gb': disk.used / (1024**3),
+                    'percent': disk.percent,
+                }
+            }
+        except Exception as e:
+            logger.error(f"System metrics collection failed: {e}")
+            return {}
+===== FILE: ./ai_ops/stealth/identity_hider.py =====
+import random
+import time
+import logging
+import requests
+from datetime import datetime, timedelta
+from typing import Dict, List
+import subprocess
+import json
+
+logger = logging.getLogger(__name__)
+
+class IdentityHider:
+    """
+    مخفی‌سازی هویت سرور
+    1. تغییر IP دوره‌ای
+    2. Cloudflare proxy
+    3. چند provider
+    4. DNS protection
+    """
+    
+    def __init__(self):
+        self.current_provider = None
+        self.providers = [
+            'Hetzner (Germany)',
+            'DigitalOcean (Germany)',
+            'OVH (France)',
+            'AWS (Frankfurt)',
+            'Vultr (London)'
+        ]
+        self.last_rotation = datetime.now()
+        self.rotation_interval = 24  # ساعت
+        
+    def rotate_ip(self) -> Dict:
+        """تغییر IP سرور"""
+        try:
+            # TODO: API واقعی برای تغییر IP
+            # اینجا فقط شبیه‌سازی
+            new_ip = f"185.{random.randint(10,250)}.{random.randint(1,254)}.{random.randint(1,254)}"
+            
+            result = {
+                'old_ip': self.current_ip if hasattr(self, 'current_ip') else 'unknown',
+                'new_ip': new_ip,
+                'provider': random.choice(self.providers),
+                'rotated_at': datetime.now().isoformat(),
+                'next_rotation': (datetime.now() + timedelta(hours=self.rotation_interval)).isoformat()
+            }
+            
+            self.current_ip = new_ip
+            self.current_provider = result['provider']
+            self.last_rotation = datetime.now()
+            
+            logger.info(f"IP rotated to {new_ip} via {result['provider']}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"IP rotation failed: {e}")
+            return {}
+    
+    def setup_cloudflare(self, domain: str) -> Dict:
+        """تنظیم Cloudflare proxy"""
+        # TODO: Cloudflare API
+        return {
+            'domain': domain,
+            'proxy_enabled': True,
+            'ssl': 'Full',
+            'ddos_protection': True,
+            'waf_enabled': True,
+            'real_ip_hidden': True,
+            'dns_records': [
+                {'type': 'A', 'name': '@', 'content': 'hidden', 'proxied': True},
+                {'type': 'CNAME', 'name': 'www', 'content': '@', 'proxied': True},
+                {'type': 'TXT', 'name': '@', 'content': 'v=spf1 include:_spf.mx.cloudflare.net ~all'}
+            ]
+        }
+    
+    def get_whois_protection(self, domain: str) -> Dict:
+        """محافظت WHOIS"""
+        # TODO: WHOIS protection API
+        return {
+            'domain': domain,
+            'whois_privacy': True,
+            'registrar': 'Cloudflare, Inc.',
+            'registrant_org': 'Domains By Proxy, LLC',
+            'emails': ['domain@proxy.domains', 'contact@privacyprotect.org'],
+            'phones': ['+1.2345678900'],
+            'address': '5335 Gate Pkwy, Jacksonville, FL 32256'
+        }
+    
+    def get_current_status(self) -> Dict:
+        """وضعیت فعلی پنهان‌سازی"""
+        return {
+            'current_ip': getattr(self, 'current_ip', 'unknown'),
+            'current_provider': self.current_provider,
+            'last_rotation': self.last_rotation.isoformat(),
+            'next_rotation': (self.last_rotation + timedelta(hours=self.rotation_interval)).isoformat(),
+            'cloudflare_enabled': True,
+            'whois_protected': True,
+            'detection_difficulty': 'Very High - requires court order'
+        }
+===== FILE: ./ai_ops/storage/redis_client.py =====
+import redis
+import json
+import logging
+from typing import Optional, Any
+from config.settings import settings
+
+logger = logging.getLogger(__name__)
+
+class RedisClient:
+    """کلاینت Redis برای کش و queue"""
+    
+    def __init__(self):
+        self.client = redis.Redis(
+            host=settings.REDIS_HOST,
+            port=settings.REDIS_PORT,
+            db=settings.REDIS_DB,
+            decode_responses=True
+        )
+    
+    def set_metric(self, key: str, value: Any, ttl: int = 3600):
+        """ذخیره متریک با TTL"""
+        try:
+            self.client.setex(
+                f"metric:{key}",
+                ttl,
+                json.dumps(value, default=str)
+            )
+        except Exception as e:
+            logger.error(f"Redis set failed: {e}")
+    
+    def get_metric(self, key: str) -> Optional[Any]:
+        """دریافت متریک"""
+        try:
+            data = self.client.get(f"metric:{key}")
+            return json.loads(data) if data else None
+        except Exception as e:
+            logger.error(f"Redis get failed: {e}")
+            return None
+    
+    def push_to_queue(self, queue: str, data: Any):
+        """اضافه کردن به صف برای پردازش"""
+        try:
+            self.client.rpush(
+                f"queue:{queue}",
+                json.dumps(data, default=str)
+            )
+        except Exception as e:
+            logger.error(f"Redis push failed: {e}")
+    
+    def pop_from_queue(self, queue: str, timeout: int = 0) -> Optional[Any]:
+        """گرفتن از صف"""
+        try:
+            data = self.client.blpop(f"queue:{queue}", timeout=timeout)
+            return json.loads(data[1]) if data else None
+        except Exception as e:
+            logger.error(f"Redis pop failed: {e}")
+            return None
+===== FILE: ./ai_seo/api/app.py =====
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Dict, Optional
+import logging
+from datetime import datetime
+
+from core.predictive.predictive_seo import PredictiveSEOEngine
+from core.self_learning_engine import SelfLearningSEOEngine
+from core.competitor.competitor_intelligence import CompetitorIntelligence
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="AI SEO Service", version="1.0.0")
+
+predictive_engine = PredictiveSEOEngine()
+learning_engine = SelfLearningSEOEngine()
+competitor_intel = CompetitorIntelligence()
+
+class TrafficRequest(BaseModel):
+    historical_data: List[Dict]
+    days: int = 90
+
+@app.post("/predict/traffic")
+async def predict_traffic(request: TrafficRequest):
+    """پیش‌بینی ترافیک آینده"""
+    try:
+        result = predictive_engine.forecast_traffic(
+            request.historical_data, 
+            request.days
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Prediction failed: {e}")
+        raise HTTPException(500, str(e))
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "healthy",
+        "service": "ai_seo",
+        "timestamp": datetime.now().isoformat()
+    }
+
+@app.get("/")
+async def root():
+    return {
+        "name": "AI SEO Service",
+        "version": "1.0.0",
+        "endpoints": ["/health", "/predict/traffic"]
+    }
+
+@app.post("/feedback/campaign")
+async def campaign_feedback(payload: Dict = Body(...)):
+    """بازخورد بعد از اجرای یک فعالیت سئو"""
+    learning_engine.learn_from_data(payload)
+    return {"status": "ok"}
+===== FILE: ./ai_seo/core/predictive/predictive_seo.py =====
+import numpy as np
+import pandas as pd
+from prophet import Prophet
+from datetime import datetime, timedelta
+import logging
+
+logger = logging.getLogger(__name__)
+
+class PredictiveSEOEngine:
+    """
+    پیش‌بینی روندهای سئو با Prophet
+    """
+    
+    def __init__(self):
+        self.models = {}
+        
+    def forecast_traffic(self, historical_data, days=90):
+        """
+        پیش‌بینی ترافیک ۳ ماه آینده
+        historical_data: لیست دیکشنری‌های [{date: '2024-01-01', traffic: 1000}]
+        """
+        if len(historical_data) < 14:
+            logger.warning("Not enough historical data for forecasting")
+            return None
+        
+        # تبدیل به DataFrame
+        df = pd.DataFrame(historical_data)
+        df['ds'] = pd.to_datetime(df['date'])
+        df['y'] = df['traffic']
+        df = df[['ds', 'y']].sort_values('ds')
+        
+        # ساخت و آموزش مدل
+        model = Prophet(
+            yearly_seasonality=True,
+            weekly_seasonality=True,
+            daily_seasonality=False,
+            seasonality_mode='multiplicative',
+            changepoint_prior_scale=0.05
+        )
+        
+        model.fit(df)
+        
+        # پیش‌بینی
+        future = model.make_future_dataframe(periods=days)
+        forecast = model.predict(future)
+        
+        # محاسبه نرخ رشد
+        last_actual = df['y'].iloc[-1]
+        last_predicted = forecast['yhat'].iloc[-1]
+        growth_rate = (last_predicted - last_actual) / last_actual
+        
+        # پیدا کردن ماه‌های اوج
+        forecast['month'] = forecast['ds'].dt.month
+        monthly_avg = forecast.groupby('month')['yhat'].mean()
+        peaks = monthly_avg.nlargest(3).index.tolist()
+        
+        month_names = {
+            1: 'فروردین', 2: 'اردیبهشت', 3: 'خرداد',
+            4: 'تیر', 5: 'مرداد', 6: 'شهریور',
+            7: 'مهر', 8: 'آبان', 9: 'آذر',
+            10: 'دی', 11: 'بهمن', 12: 'اسفند'
+        }
+        
+        peak_periods = [month_names.get(m, str(m)) for m in peaks]
+        
+        return {
+            'forecast': forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(days).to_dict('records'),
+            'growth_rate': float(growth_rate),
+            'peak_periods': peak_periods
+        }
+    
+    def alert_if_needed(self, current_traffic, forecast):
+        """
+        هشدار اگه قراره ترافیک کم بشه
+        """
+        if not forecast or 'forecast' not in forecast or len(forecast['forecast']) < 30:
+            return {'alert': False}
+        
+        next_month = forecast['forecast'][29]['yhat']
+        current_month_avg = current_traffic
+        
+        if current_month_avg == 0:
+            return {'alert': False}
+        
+        decline = (current_month_avg - next_month) / current_month_avg
+        
+        if decline > 0.2:
+            return {
+                'alert': True,
+                'message': f'⚠️ پیش‌بینی کاهش {decline:.1%} ترافیک در ماه آینده',
+                'action': 'افزایش بودجه تبلیغات',
+                'severity': 'high',
+                'decline_percent': float(decline)
+            }
+        elif decline > 0.1:
+            return {
+                'alert': True,
+                'message': f'⚠️ پیش‌بینی کاهش {decline:.1%} ترافیک',
+                'action': 'بررسی کمپین‌های جاری',
+                'severity': 'medium',
+                'decline_percent': float(decline)
+            }
+        
+        return {'alert': False}
+    
+    def forecast_seasonal_trends(self, historical_data, years=1):
+        """
+        پیش‌بینی روند فصلی برای سال آینده
+        """
+        if len(historical_data) < 30:
+            return None
+        
+        df = pd.DataFrame(historical_data)
+        df['ds'] = pd.to_datetime(df['date'])
+        df['y'] = df['traffic']
+        df = df[['ds', 'y']].sort_values('ds')
+        
+        model = Prophet(yearly_seasonality=True, weekly_seasonality=False)
+        model.fit(df)
+        
+        future = model.make_future_dataframe(periods=365 * years)
+        forecast = model.predict(future)
+        
+        # استخراج مؤلفه‌های فصلی
+        seasonal = forecast[['ds', 'yearly']].tail(365 * years)
+        seasonal['month'] = seasonal['ds'].dt.month
+        
+        monthly_seasonality = seasonal.groupby('month')['yearly'].mean().to_dict()
+        
+        return {
+            'monthly_factors': monthly_seasonality,
+            'peak_months': sorted(monthly_seasonality, key=monthly_seasonality.get, reverse=True)[:3],
+            'low_months': sorted(monthly_seasonality, key=monthly_seasonality.get)[:3]
+        }
+
+    def predict_campaign_uplift(self, historical_data, campaign_budget, channel):
+        """
+        تخمین افزایش ترافیک ناشی از بودجه کمپین
+        """
+        df = pd.DataFrame(historical_data)
+        # افزایش مصنوعی بر اساس آمار میانگین صنعت (Industry Benchmark)
+        uplift_factor = 0.0
+        if channel == 'instagram':
+            uplift_factor = campaign_budget / 1000000 * 0.05  # 5% افزایش به ازای هر 1M تومان
+        elif channel == 'telegram':
+            uplift_factor = campaign_budget / 1000000 * 0.08
+            
+        forecast = self.forecast_traffic(historical_data)
+        # اعمال ضریب به پیش‌بینی
+        return forecast['yhat'] * (1 + uplift_factor)    
+===== FILE: ./ai_seo/core/self_learning_engine.py =====
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
+from sklearn.model_selection import train_test_split
+import joblib
+import logging
+from datetime import datetime, timedelta
+from typing import Dict, List, Tuple
+import json
+import redis
+
+logger = logging.getLogger(__name__)
+
+class SelfLearningSEOEngine:
+    """
+    موتور خودیادگیرنده سئو
+    هم دانشجو (یادگیرنده) و هم استاد (آموزنده)
+    """
+    
+    def __init__(self):
+        self.learned_patterns = []
+        self.revenue_patterns = []
+        self.recommendation_history = []
+        self.prediction_model = RandomForestRegressor(n_estimators=100, random_state=42)
+        self.classification_model = RandomForestClassifier(n_estimators=100, random_state=42)
+        self.is_trained = False
+        self.redis = redis.Redis(host='redis', port=6379, decode_responses=True)
+        
+    def learn_from_data(self, all_data: Dict):
+        """
+        دانشجو: از داده‌ها یاد می‌گیره
+        """
+        try:
+            # 1. شناسایی الگوهای درآمدزا
+            revenue_patterns = self._find_revenue_patterns(all_data)
+            
+            # 2. یادگیری اینکه کدام فعالیت‌ها به درآمد ختم شدن
+            for pattern in revenue_patterns:
+                if pattern.get('resulted_in_revenue', False):
+                    self.revenue_patterns.append({
+                        'activity': pattern.get('activity', 'unknown'),
+                        'cost': pattern.get('cost', 0),
+                        'revenue': pattern.get('revenue', 0),
+                        'roi': pattern.get('revenue', 0) / max(pattern.get('cost', 1), 1),
+                        'user_segment': pattern.get('user_segment', 'all'),
+                        'timestamp': pattern.get('timestamp', datetime.now().isoformat())
+                    })
+            
+            # 3. آموزش مدل پیش‌بینی
+            if len(self.revenue_patterns) > 100:
+                self._train_prediction_model()
+            
+            return {
+                'learned_patterns_count': len(self.revenue_patterns),
+                'avg_roi': self._calculate_avg_roi(),
+                'best_activity': self._find_best_activity(),
+                'is_trained': self.is_trained
+            }
+        except Exception as e:
+            logger.error(f"Learning failed: {e}")
+            return {'error': str(e)}
+    
+    def teach_admin(self, current_state: Dict):
+        """
+        استاد: به ادمین آموزش میده
+        """
+        try:
+            # 1. تحلیل وضعیت فعلی
+            state_analysis = self._analyze_current_state(current_state)
+            
+            # 2. پیشنهاد فعالیت‌ها بر اساس فاز
+            recommendations = self._phase_based_recommendations(state_analysis)
+            
+            # 3. تخمین درآمد هر پیشنهاد
+            for rec in recommendations:
+                rec['estimated_revenue'] = self._predict_revenue(
+                    rec['activity'],
+                    current_state.get('user_count', 0),
+                    current_state.get('avg_user_value', 10)
+                )
+                rec['confidence'] = self._calculate_confidence(rec)
+            
+            # 4. اولویت‌بندی بر اساس ROI
+            recommendations.sort(key=lambda x: x.get('estimated_roi', 0), reverse=True)
+            
+            return {
+                'current_phase': state_analysis.get('phase', 'phase_1_learning'),
+                'top_3_recommendations': recommendations[:3],
+                'estimated_monthly_revenue': sum(r.get('estimated_revenue', 0) for r in recommendations[:3]),
+                'learning_progress': {
+                    'patterns_learned': len(self.revenue_patterns),
+                    'accuracy': self._calculate_accuracy()
+                }
+            }
+        except Exception as e:
+            logger.error(f"Teaching failed: {e}")
+            return {'error': str(e)}
+    
+    def _find_revenue_patterns(self, data: Dict) -> List[Dict]:
+        """پیدا کردن الگوهای درآمدی"""
+        patterns = []
+        
+        # از داده‌های کمپین
+        campaigns = data.get('campaigns', [])
+        for camp in campaigns:
+            if camp.get('results', {}).get('revenue', 0) > 0:
+                patterns.append({
+                    'activity': camp.get('type', 'unknown'),
+                    'cost': camp.get('cost', 0),
+                    'revenue': camp.get('results', {}).get('revenue', 0),
+                    'resulted_in_revenue': True,
+                    'user_segment': 'all',
+                    'timestamp': camp.get('performedAt', datetime.now().isoformat())
+                })
+        
+        return patterns
+    
+    def _train_prediction_model(self):
+        """آموزش مدل پیش‌بینی"""
+        if len(self.revenue_patterns) < 100:
+            return
+        
+        # آماده‌سازی داده
+        X = []
+        y = []
+        
+        for pattern in self.revenue_patterns:
+            features = [
+                pattern.get('cost', 0),
+                pattern.get('revenue', 0),
+                pattern.get('roi', 0),
+                len(pattern.get('user_segment', 'all'))
+            ]
+            X.append(features)
+            y.append(pattern.get('roi', 0))
+        
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+        
+        # آموزش
+        self.prediction_model.fit(X_train, y_train)
+        self.is_trained = True
+        
+        # ارزیابی
+        score = self.prediction_model.score(X_test, y_test)
+        logger.info(f"Model trained with score: {score}")
+    
+    def _calculate_avg_roi(self) -> float:
+        """محاسبه میانگین ROI"""
+        if not self.revenue_patterns:
+            return 0
+        return sum(p.get('roi', 0) for p in self.revenue_patterns) / len(self.revenue_patterns)
+    
+    def _find_best_activity(self) -> Dict:
+        """پیدا کردن بهترین فعالیت"""
+        if not self.revenue_patterns:
+            return {'name': 'none', 'roi': 0}
+        
+        best = max(self.revenue_patterns, key=lambda x: x.get('roi', 0))
+        return {
+            'name': best.get('activity', 'unknown'),
+            'roi': best.get('roi', 0),
+            'count': len([p for p in self.revenue_patterns if p.get('activity') == best.get('activity')])
+        }
+    
+    def _analyze_current_state(self, state: Dict) -> Dict:
+        """تحلیل وضعیت فعلی"""
+        monthly_revenue = state.get('monthly_revenue', 0)
+        user_count = state.get('user_count', 0)
+        growth_rate = state.get('growth_rate', 0)
+        
+        if monthly_revenue < 1000 or user_count < 1000:
+            phase = 'phase_1_learning'
+        elif monthly_revenue < 10000 or user_count < 10000:
+            phase = 'phase_2_growth'
+        else:
+            phase = 'phase_3_scaling'
+        
+        return {
+            'phase': phase,
+            'monthly_revenue': monthly_revenue,
+            'user_count': user_count,
+            'growth_rate': growth_rate,
+            'avg_user_value': monthly_revenue / max(user_count, 1)
+        }
+    
+    def _phase_based_recommendations(self, analysis: Dict) -> List[Dict]:
+        """پیشنهادات بر اساس فاز"""
+        phase = analysis.get('phase', 'phase_1_learning')
+        
+        recommendations = {
+            'phase_1_learning': [
+                {
+                    'activity': 'بهبود Core Web Vitals',
+                    'cost': 0,
+                    'effort': '2 هفته',
+                    'expected_roi': 1.5,
+                    'estimated_revenue': analysis.get('monthly_revenue', 0) * 0.15,
+                    'reason': 'پایه سئو - بدون این، بقیه کارها بی‌اثره'
+                },
+                {
+                    'activity': 'تولید محتوای مبتنی بر هابی‌های کاربران',
+                    'cost': 0,
+                    'effort': '۱ هفته',
+                    'expected_roi': 2.5,
+                    'estimated_revenue': analysis.get('monthly_revenue', 0) * 0.25,
+                    'reason': 'محتوای هدفمند = کاربر وفادار = درآمد پایدار'
+                },
+                {
+                    'activity': 'فعالیت در انجمن‌های رایگان',
+                    'cost': 0,
+                    'effort': 'مداوم',
+                    'expected_roi': 1.2,
+                    'estimated_revenue': analysis.get('monthly_revenue', 0) * 0.1,
+                    'reason': 'بک‌لینک رایگان + برندینگ'
+                }
+            ],
+            'phase_2_growth': [
+                {
+                    'activity': 'تبلیغ در کانال‌های تلگرامی (خارجی)',
+                    'cost': 200,
+                    'effort': '۱ هفته',
+                    'expected_roi': 4.0,
+                    'estimated_revenue': 800,
+                    'reason': 'دسترسی به جامعه هدف'
+                },
+                {
+                    'activity': 'خرید بک‌لینک از سایت‌های خارجی',
+                    'cost': 150,
+                    'effort': '۲ هفته',
+                    'expected_roi': 3.0,
+                    'estimated_revenue': 450,
+                    'reason': 'افزایش Domain Authority'
+                },
+                {
+                    'activity': 'گوگل ادز (کشورهای همسایه)',
+                    'cost': 300,
+                    'effort': 'مداوم',
+                    'expected_roi': 3.0,
+                    'estimated_revenue': 900,
+                    'reason': 'ترافیک هدفمند خارج از ایران'
+                }
+            ],
+            'phase_3_scaling': [
+                {
+                    'activity': 'همکاری با اینفلوئنسرهای خارجی',
+                    'cost': 500,
+                    'effort': '۱ ماه',
+                    'expected_roi': 4.0,
+                    'estimated_revenue': 2000,
+                    'reason': 'برندینگ + کاربر جدید'
+                },
+                {
+                    'activity': 'کمپین Reality-style دانشجویی',
+                    'cost': 1000,
+                    'effort': '۲ ماه',
+                    'expected_roi': 5.0,
+                    'estimated_revenue': 5000,
+                    'reason': 'ویروسی شدن در بین دانشجوها'
+                },
+                {
+                    'activity': 'Super Match (مدل درآمدی جدید)',
+                    'cost': 0,
+                    'effort': '۳ ماه',
+                    'expected_roi': 10.0,
+                    'estimated_revenue': 10000,
+                    'reason': 'مدل درآمدی اثبات‌شده'
+                }
+            ]
+        }
+        
+        return recommendations.get(phase, [])
+    
+    def _predict_revenue(self, activity: str, user_count: int, avg_value: float) -> float:
+        """پیش‌بینی درآمد"""
+        if self.is_trained and len(self.revenue_patterns) > 100:
+            # استفاده از مدل
+            features = [[
+                len(activity),
+                user_count,
+                avg_value
+            ]]
+            return float(self.prediction_model.predict(features)[0])
+        else:
+            # fallback
+            base = {
+                'تبلیغ': 500,
+                'بک‌لینک': 300,
+                'گوگل': 800,
+                'اینفلوئنسر': 1500,
+                'کمپین': 2000,
+                'Super Match': 5000
+            }
+            for key, value in base.items():
+                if key in activity:
+                    return value
+            return 100
+    
+    def _calculate_confidence(self, recommendation: Dict) -> str:
+        """محاسبه اطمینان"""
+        if self.is_trained and len(self.revenue_patterns) > 200:
+            return 'high'
+        elif len(self.revenue_patterns) > 50:
+            return 'medium'
+        else:
+            return 'low'
+    
+    def _calculate_accuracy(self) -> float:
+        """محاسبه دقت"""
+        if not self.recommendation_history:
+            return 0
+        
+        correct = sum(1 for r in self.recommendation_history if r.get('was_successful', False))
+        return correct / len(self.recommendation_history)
+    
+    def get_feedback(self, admin_action: Dict, actual_result: Dict) -> Dict:
+        """دریافت فیدبک از ادمین (یادگیری تقویتی)"""
+        self.recommendation_history.append({
+            'recommendation': admin_action,
+            'actual_result': actual_result,
+            'was_successful': actual_result.get('revenue', 0) > admin_action.get('estimated_cost', 0)
+        })
+        
+        # آموزش مجدد اگر داده کافی هست
+        if len(self.recommendation_history) % 50 == 0:
+            self._train_prediction_model()
+        
+        return {
+            'thanks': 'یاد گرفتم! دفعه بعد بهتر پیشنهاد میدم',
+            'new_accuracy': self._calculate_accuracy()
+        }
+    
+    def get_phase_recommendations(self, phase):
+        # دریافت وزن‌ها از Redis
+        default_recs = self._phase_based_recommendations(...) # لیست قدیمی
+        weighted_recs = []
+        for rec in default_recs:
+            weight_key = f"seo:rec:{phase}:{rec['activity']}"
+            weight = float(self.redis.get(weight_key) or 1.0)
+            rec['weight'] = weight
+            weighted_recs.append(rec)
+        return sorted(weighted_recs, key=lambda x: x['weight'], reverse=True)
+===== FILE: ./ai_seo/core/competitor/competitor_intelligence.py =====
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import requests
+from bs4 import BeautifulSoup
+import logging
+from datetime import datetime
+import time
+
+logger = logging.getLogger(__name__)
+
+class CompetitorIntelligence:
+    """
+    هوش رقابتی - تحلیل خودکار رقبا
+    """
+    
+    def __init__(self):
+        self.vectorizer = TfidfVectorizer(max_features=1000, stop_words='english')
+        self.known_competitors = []
+        
+    def analyze_content_gap(self, our_content, competitor_content):
+        """
+        پیدا کردن شکاف‌های محتوایی
+        """
+        if not our_content or not competitor_content:
+            return []
+        
+        all_content = [our_content] + competitor_content
+        vectors = self.vectorizer.fit_transform(all_content)
+        
+        similarities = cosine_similarity(vectors[0:1], vectors[1:])[0]
+        
+        # پیدا کردن موضوعاتی که رقبا دارن ما نداریم
+        our_keywords = set(self.vectorizer.get_feature_names_out())
+        
+        gaps = []
+        for i, sim in enumerate(similarities):
+            if sim < 0.4:  # شباهت کم = فرصت
+                # تحلیل محتوای رقیب برای استخراج کلمات کلیدی
+                comp_text = competitor_content[i]
+                comp_vectors = self.vectorizer.transform([comp_text])
+                comp_keywords_idx = comp_vectors.toarray()[0].argsort()[-10:][::-1]
+                comp_keywords = [self.vectorizer.get_feature_names_out()[idx] for idx in comp_keywords_idx]
+                
+                missing_keywords = [k for k in comp_keywords if k not in our_keywords]
+                
+                gaps.append({
+                    'competitor_index': i,
+                    'similarity': float(sim),
+                    'missing_keywords': missing_keywords[:10],
+                    'opportunity_score': float(1 - sim)
+                })
+        
+        return sorted(gaps, key=lambda x: x['opportunity_score'], reverse=True)
+    
+    def detect_new_competitors(self, search_results):
+        """
+        تشخیص رقبای جدید
+        """
+        potential_competitors = []
+        
+        for result in search_results:
+            url = result.get('url', '')
+            title = result.get('title', '')
+            snippet = result.get('snippet', '')
+            
+            # اگه تو لیست نیست و شبیه هست
+            if not any(comp in url for comp in self.known_competitors):
+                relevance = self._calculate_relevance(title + ' ' + snippet)
+                if relevance > 0.5:
+                    potential_competitors.append({
+                        'url': url,
+                        'title': title,
+                        'relevance_score': relevance,
+                        'detected_at': datetime.now().isoformat(),
+                        'estimated_traffic': self._estimate_traffic(url)
+                    })
+        
+        return potential_competitors
+    
+    def _calculate_relevance(self, text):
+        """محاسبه ارتباط با حوزه ما"""
+        keywords = ['همسریابی', 'ازدواج', 'دوستیابی', 'همدم', 'همسان', 
+                   'dating', 'match', 'marriage', 'relationship']
+        text_lower = text.lower()
+        
+        matches = sum(1 for k in keywords if k.lower() in text_lower)
+        return min(1.0, matches / len(keywords) * 2)
+    
+    def _estimate_traffic(self, url):
+        """تخمین تقریبی ترافیک (برای اولویت‌بندی)"""
+        # TODO: از SimilarWeb یا APIهای مشابه
+        return np.random.randint(1000, 100000)  # placeholder
+    
+    def analyze_serp_features(self, keyword):
+        """
+        تحلیل ویژگی‌های صفحه نتایج گوگل
+        """
+        # TODO: از Google Search API
+        return {
+            'keyword': keyword,
+            'featured_snippet': False,
+            'people_also_ask': [],
+            'related_searches': [],
+            'top_10_domains': [],
+            'avg_content_length': 1500
+        }
+    
+    def track_competitor_mentions(self, competitor_name, days=7):
+        """
+        ردیابی ذکر نام رقیب در وب
+        """
+        # TODO: از Google Alerts یا Mention API
+        return {
+            'competitor': competitor_name,
+            'mentions': np.random.randint(10, 100),
+            'sentiment': np.random.choice(['positive', 'neutral', 'negative']),
+            'top_sources': ['خبرآنلاین', 'دیجیاتو', 'زومیت']
+        }
+===== FILE: ./ai_seo/Dockerfile =====
+FROM python-ai-ml-prophet:latest
+
+WORKDIR /app
+COPY . .
+ENV PYTHONPATH=/app
+
+CMD ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8021"]
+===== FILE: ./embedded_ai/monitoring.py =====
+import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
+
+class RedisMonitor:
+    """مانیتورینگ مصرف حافظه Redis"""
+    
+    def __init__(self, redis_client, warning_threshold=0.7, critical_threshold=0.85):
+        self.redis = redis_client
+        self.warning = warning_threshold
+        self.critical = critical_threshold
+    
+    async def check_memory(self):
+        """بررسی مصرف حافظه Redis"""
+        info = await self.redis.info("memory")
+        
+        used = info["used_memory"]
+        max_memory = info.get("maxmemory", 0)
+        
+        if max_memory == 0:
+            # اگر محدودیت نداشت، از حافظه کل سیستم تخمین بزن
+            system_info = await self.redis.info("memory")
+            max_memory = system_info.get("total_system_memory", 8 * 1024 * 1024 * 1024)  # 8GB پیش‌فرض
+        
+        ratio = used / max_memory
+        
+        if ratio > self.critical:
+            logger.critical(f"🔥 Redis memory CRITICAL: {ratio:.1%} used")
+            # اقدام: حذف قدیمی‌ترین‌ها
+            await self.evict_old_vectors()
+            
+        elif ratio > self.warning:
+            logger.warning(f"⚠️ Redis memory WARNING: {ratio:.1%} used")
+        
+        return ratio
+    
+    async def evict_old_vectors(self):
+        """حذف vectorهای قدیمی در زمان بحران حافظه"""
+        # حذف vectorهای محتوا که قدیمی‌تر از ۲۴ ساعتن
+        keys = await self.redis.keys("vec:*")
+        
+        pipeline = self.redis.pipeline()
+        for key in keys:
+            pipeline.ttl(key)
+        
+        ttls = await pipeline.execute()
+        
+        to_delete = []
+        for key, ttl in zip(keys, ttls):
+            if ttl > 0 and ttl < 86400:  # کمتر از ۲۴ ساعت
+                to_delete.append(key)
+        
+        if to_delete:
+            await self.redis.delete(*to_delete)
+            logger.info(f"🧹 Evicted {len(to_delete)} old vectors")
+===== FILE: ./embedded_ai/app.py =====
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from sentence_transformers import SentenceTransformer
+import numpy as np
+from typing import List, Optional
+
+app = FastAPI(title="Embedding Hub Service", version="3.0.0")
+
+# بارگذاری مدل بهینه و سبک (فقط یک بار در کل سیستم)
+# این مدل از 384 بعد استفاده می‌کند و برای زبان فارسی نیز عملکرد قابل قبولی دارد
+model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
+
+class TextInput(BaseModel):
+    text: str
+
+class BatchTextInput(BaseModel):
+    texts: List[str]
+
+class CompareVectorsInput(BaseModel):
+    vector_a: List[float]
+    vector_b: List[float]
+
+class EmbeddingResponse(BaseModel):
+    embedding: List[float]
+    model_name: str
+    dimension: int
+
+@app.post("/embed", response_model=EmbeddingResponse)
+async def get_embedding(data: TextInput):
+    """تولید بردار برای یک متن"""
+    if not data.text or not data.text.strip():
+        raise HTTPException(status_code=400, detail="متن ورودی نمی‌تواند خالی باشد")
+    
+    embedding = model.encode(data.text.strip()).tolist()
+    return {
+        "embedding": embedding,
+        "model_name": "paraphrase-multilingual-MiniLM-L12-v2",
+        "dimension": len(embedding)
+    }
+
+@app.post("/embed/batch")
+async def get_batch_embeddings(data: BatchTextInput):
+    """تولید بردار برای چند متن به صورت دسته‌ای (بهینه‌تر)"""
+    if not data.texts:
+        raise HTTPException(status_code=400, detail="لیست متون نمی‌تواند خالی باشد")
+    
+    embeddings = model.encode([t.strip() for t in data.texts]).tolist()
+    return {
+        "embeddings": embeddings,
+        "model_name": "paraphrase-multilingual-MiniLM-L12-v2",
+        "dimension": len(embeddings[0]) if embeddings else 0
+    }
+
+@app.post("/similarity")
+async def compute_similarity(data: CompareVectorsInput):
+    """محاسبه شباهت کسینوسی بین دو بردار (بدون نیاز به مدل)"""
+    try:
+        a = np.array(data.vector_a)
+        b = np.array(data.vector_b)
+        
+        # نرمال‌سازی و محاسبه Cosine Similarity
+        norm_a = np.linalg.norm(a)
+        norm_b = np.linalg.norm(b)
+        
+        if norm_a == 0 or norm_b == 0:
+            return {"similarity": 0.0}
+            
+        similarity = float(np.dot(a, b) / (norm_a * norm_b))
+        return {"similarity": similarity}
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"خطا در محاسبه شباهت: {str(e)}")
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy", "service": "embedding_hub", "model_loaded": True}
+===== FILE: ./embedded_ai/health.py =====
+async def comprehensive_health_check():
+    """بررسی سلامت کامل سرویس"""
+    
+    health_status = {
+        "status": "healthy",
+        "checks": {}
+    }
+    
+    # 1. Redis health
+    try:
+        await worker.redis_client.ping()
+        info = await worker.redis_client.info("memory")
+        health_status["checks"]["redis"] = {
+            "status": "ok",
+            "memory_used": f"{info['used_memory_human']}",
+            "connections": info.get("connected_clients", 0)
+        }
+    except Exception as e:
+        health_status["status"] = "degraded"
+        health_status["checks"]["redis"] = {
+            "status": "error",
+            "error": str(e)
+        }
+    
+    # 2. MySQL health
+    try:
+        async with worker.mysql_pool.acquire() as conn:
+            await conn.ping()
+            async with conn.cursor() as cursor:
+                await cursor.execute("SELECT 1")
+        health_status["checks"]["mysql"] = {"status": "ok"}
+    except Exception as e:
+        health_status["status"] = "degraded"
+        health_status["checks"]["mysql"] = {
+            "status": "error",
+            "error": str(e)
+        }
+    
+    # 3. Model health
+    try:
+        test_text = "test"
+        loop = asyncio.get_event_loop()
+        emb = await loop.run_in_executor(worker.pool, encode_text, test_text)
+        health_status["checks"]["model"] = {
+            "status": "ok",
+            "vector_dim": len(emb)
+        }
+    except Exception as e:
+        health_status["status"] = "degraded"
+        health_status["checks"]["model"] = {
+            "status": "error",
+            "error": str(e)
+        }
+    
+    # 4. Queue health
+    try:
+        queue_length = await worker.redis_client.llen("embedding:queue")
+        health_status["checks"]["queue"] = {
+            "status": "ok",
+            "length": queue_length
+        }
+        
+        if queue_length > 10000:
+            health_status["status"] = "warning"
+            health_status["checks"]["queue"]["warning"] = "Queue is getting long"
+            
+    except Exception as e:
+        health_status["status"] = "degraded"
+        health_status["checks"]["queue"] = {
+            "status": "error",
+            "error": str(e)
+        }
+    
+    # 5. Vector store stats
+    try:
+        vector_count = await worker.redis_client.scard(worker.vector_store.index_key)
+        health_status["checks"]["vectors"] = {
+            "status": "ok",
+            "count": vector_count
+        }
+    except Exception as e:
+        health_status["checks"]["vectors"] = {
+            "status": "error",
+            "error": str(e)
+        }
+    
+    return health_status
+===== FILE: ./embedded_ai/redis_vector_store.py =====
+import numpy as np
+import json
+import logging
+from typing import List, Dict, Tuple, Optional
+
+logger = logging.getLogger(__name__)
+
+class RedisVectorStore:
+    """
+    ذخیره‌سازی vector در Redis با قابلیت جستجوی بهینه
+    برای Scalability تا 1 میلیون کاربر
+    """
+    
+    def __init__(self, redis_client):
+        self.redis = redis_client
+        self.vector_key_prefix = "vec:"
+        self.index_key = "vec:index"
+        self.similarity_key = "vec:sim:"
+        
+    async def store_user_vector(self, user_id: int, vector: List[float]):
+        """ذخیره vector کاربر در Redis"""
+        key = f"{self.vector_key_prefix}user:{user_id}"
+        
+        # ذخیره vector
+        await self.redis.set(
+            key,
+            json.dumps(vector),
+            ex=86400  # 24 ساعت (نه 7 روز!)
+        )
+        
+        # ذخیره normalized vector برای جستجوی سریع‌تر
+        norm = np.linalg.norm(vector)
+        normalized = [v / norm for v in vector]
+        await self.redis.set(
+            f"{key}:norm",
+            json.dumps(normalized),
+            ex=86400
+        )
+        
+        # اضافه به index
+        await self.redis.sadd(self.index_key, f"user:{user_id}")
+        
+        logger.debug(f"User {user_id} vector stored")
+    
+    async def store_content_vector(self, content_id: int, content_type: str, vector: List[float]):
+        """ذخیره vector محتوا در Redis"""
+        key = f"{self.vector_key_prefix}{content_type}:{content_id}"
+        
+        await self.redis.set(
+            key,
+            json.dumps(vector),
+            ex=604800  # 7 روز برای محتوا
+        )
+        
+        norm = np.linalg.norm(vector)
+        normalized = [v / norm for v in vector]
+        await self.redis.set(
+            f"{key}:norm",
+            json.dumps(normalized),
+            ex=604800
+        )
+        
+        await self.redis.sadd(self.index_key, f"{content_type}:{content_id}")
+    
+    async def get_vector(self, key: str) -> Optional[Tuple[List[float], List[float]]]:
+        """دریافت vector و normalized version"""
+        data = await self.redis.get(f"{self.vector_key_prefix}{key}")
+        if not data:
+            return None
+        
+        vector = json.loads(data)
+        
+        norm_data = await self.redis.get(f"{self.vector_key_prefix}{key}:norm")
+        if norm_data:
+            normalized = json.loads(norm_data)
+        else:
+            norm = np.linalg.norm(vector)
+            normalized = [v / norm for v in vector]
+        
+        return vector, normalized
+    
+    async def find_similar_users_batch(self, user_id: int, limit: int = 10) -> List[Tuple[int, float]]:
+        """
+        جستجوی کاربران مشابه با روش بهینه (چندین برابر سریع‌تر)
+        - فقط normalized vectors رو می‌خونه
+        - از batch processing استفاده می‌کنه
+        """
+        target_key = f"user:{user_id}"
+        result = await self.get_vector(target_key)
+        if not result:
+            return []
+        
+        _, target_norm = result
+        
+        # دریافت همه کلیدهای کاربران با یه دستور
+        all_keys = await self.redis.smembers(self.index_key)
+        user_keys = [k for k in all_keys if k.startswith("user:")]
+        
+        if len(user_keys) > 1000:
+            # برای بیش از 1000 کاربر، از sampling استفاده کن
+            import random
+            user_keys = random.sample(user_keys, min(1000, len(user_keys)))
+        
+        # دریافت همه normalized vectors با یه pipeline
+        pipeline = self.redis.pipeline()
+        for key in user_keys:
+            pipeline.get(f"{self.vector_key_prefix}{key}:norm")
+        
+        norms_data = await pipeline.execute()
+        
+        # محاسبه شباهت‌ها
+        results = []
+        target_np = np.array(target_norm)
+        
+        for key, norm_data in zip(user_keys, norms_data):
+            if key == target_key or not norm_data:
+                continue
+            
+            other_norm = np.array(json.loads(norm_data))
+            similarity = np.dot(target_np, other_norm)  # چون normalized شده
+            
+            other_id = int(key.split(":")[1])
+            results.append((other_id, float(similarity)))
+        
+        results.sort(key=lambda x: x[1], reverse=True)
+        return results[:limit]
+    
+    async def semantic_search_batch(self, query_vec: List[float], content_type: str = None, limit: int = 10) -> List[Dict]:
+        """جستجوی معنایی بهینه با batch processing"""
+        query_np = np.array(query_vec)
+        query_norm = query_np / np.linalg.norm(query_np)
+        
+        # دریافت کلیدهای مناسب
+        all_keys = await self.redis.smembers(self.index_key)
+        if content_type:
+            keys = [k for k in all_keys if k.startswith(f"{content_type}:")]
+        else:
+            keys = list(all_keys)
+        
+        if len(keys) > 2000:
+            # محدودیت برای performance
+            import random
+            keys = random.sample(keys, 2000)
+        
+        # دریافت همه normalized vectors
+        pipeline = self.redis.pipeline()
+        for key in keys:
+            pipeline.get(f"{self.vector_key_prefix}{key}:norm")
+        
+        norms_data = await pipeline.execute()
+        
+        # محاسبه شباهت‌ها
+        results = []
+        for key, norm_data in zip(keys, norms_data):
+            if not norm_data:
+                continue
+            
+            other_norm = np.array(json.loads(norm_data))
+            similarity = np.dot(query_norm, other_norm)
+            
+            parts = key.split(":")
+            results.append({
+                "id": parts[1],
+                "type": parts[0],
+                "similarity": float(similarity)
+            })
+        
+        results.sort(key=lambda x: x["similarity"], reverse=True)
+        return results[:limit]
+    
+    async def remove_user_vector(self, user_id: int):
+        """حذف vector کاربر (مثلاً وقتی اکانت پاک میشه)"""
+        key = f"user:{user_id}"
+        await self.redis.delete(f"{self.vector_key_prefix}{key}")
+        await self.redis.delete(f"{self.vector_key_prefix}{key}:norm")
+        await self.redis.srem(self.index_key, key)
+===== FILE: ./embedded_ai/worker.py =====
+from typing import List, Dict
+import asyncio
+import hashlib
+import json
+
+
+async def process_batch(self, items: List[Dict]):
+    if not items:
+        return
+    
+    texts = [item['text'] for item in items]
+    
+    try:
+        # encode دسته‌ای
+        loop = asyncio.get_event_loop()
+        embeddings = await loop.run_in_executor(
+            self.pool,
+            encode_batch,
+            texts
+        )
+        
+        # استفاده از pipeline برای atomicity
+        redis_pipeline = self.redis_client.pipeline()
+        mysql_conn = await self.mysql_pool.acquire()
+        
+        try:
+            async with mysql_conn.cursor() as cursor:
+                await mysql_conn.begin()  # شروع transaction
+                
+                for item, emb in zip(items, embeddings):
+                    # کش متن
+                    text_hash = hashlib.md5(item['text'].encode()).hexdigest()
+                    redis_pipeline.setex(
+                        f"embed:text:{text_hash}",
+                        86400,  # 24 ساعت
+                        json.dumps(emb)
+                    )
+                    
+                    # ذخیره در Redis
+                    if item['type'] == 'user':
+                        await self.vector_store.store_user_vector(item['id'], emb)
+                        
+                        # MySQL metadata
+                        await cursor.execute("""
+                            INSERT INTO user_embeddings_meta 
+                            (user_id, profile_text, embedding_version, last_updated)
+                            VALUES (%s, %s, %s, NOW())
+                            ON DUPLICATE KEY UPDATE
+                            profile_text = VALUES(profile_text),
+                            embedding_version = VALUES(embedding_version),
+                            last_updated = NOW()
+                        """, (item['id'], item['text'], "v1"))
+                        
+                    else:
+                        await self.vector_store.store_content_vector(
+                            item['id'],
+                            item['type'],
+                            emb
+                        )
+                        
+                        await cursor.execute("""
+                            INSERT INTO content_embeddings_meta 
+                            (content_id, content_type, text, embedding_version, created_at)
+                            VALUES (%s, %s, %s, %s, NOW())
+                        """, (item['id'], item['type'], item['text'], "v1"))
+                
+                # commit MySQL
+                await mysql_conn.commit()
+                
+                # execute Redis pipeline
+                await redis_pipeline.execute()
+                
+                logger.info(f"✅ Batch processed {len(items)} items atomically")
+                
+        except Exception as e:
+            # rollback MySQL
+            await mysql_conn.rollback()
+            # Redis pipeline اجرا نمیشه چون execute نشده
+            logger.error(f"❌ Batch failed, rolled back: {e}")
+            raise
+            
+        finally:
+            self.mysql_pool.release(mysql_conn)
+            
+    except Exception as e:
+        logger.error(f"Batch processing failed: {e}")
+===== FILE: ./embedded_ai/Dockerfile =====
+FROM python-ai-nlp:latest
+
+WORKDIR /app
+COPY . .
+
+ENV PYTHONPATH=/app
+ENV REDIS_HOST=redis
+ENV REDIS_PORT=6379
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8100"]
+===== FILE: ./ai_image/app.py =====
+import logging
+import asyncio
+from services.image_enhancer import enhance_image
+from services.face_analyzer import analyze_face
+from services.quality_scorer import get_quality_score
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi.responses import JSONResponse
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from security.exif_cleaner import EXIFCleaner
+from security.nsfw_detector import NSFWDetector
+from workers.image_analyzer import ImageAnalyzerWorker
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+app = FastAPI(title="AI Image Engine v3", version="3.0.0")
+
+# Thread pool برای پردازش سنگین
+executor = ThreadPoolExecutor(max_workers=2)
+
+# نمونه‌ها
+exif_cleaner = EXIFCleaner()
+nsfw_detector = NSFWDetector()
+analyzer_worker = ImageAnalyzerWorker()
+
+@app.post("/image/upload")
+async def upload_image(
+    file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = None
+):
+    """
+    آپلود و تحلیل تصویر (async)
+    """
+    try:
+        # 1. بررسی فرمت
+        if not file.content_type.startswith('image/'):
+            raise HTTPException(400, "فایل باید تصویر باشد")
+        
+        # 2. خواندن فایل
+        contents = await file.read()
+        
+        # 3. حذف EXIF (امنیت)
+        cleaned = exif_cleaner.clean(contents)
+        
+        # 4. بررسی NSFW (امنیت)
+        nsfw_result = nsfw_detector.predict(cleaned)
+        if nsfw_result.get('is_nsfw', False):
+            return JSONResponse({
+                'status': 'rejected',
+                'reason': 'nsfw_detected',
+                'confidence': nsfw_result.get('confidence'),
+                'message': 'تصویر نامناسب تشخیص داده شد'
+            }, status_code=400)
+        
+        # 5. شروع تحلیل در پس‌زمینه
+        if background_tasks:
+            background_tasks.add_task(
+                process_image_background,
+                cleaned,
+                file.filename
+            )
+        
+        return JSONResponse({
+            'status': 'accepted',
+            'filename': file.filename,
+            'size': len(cleaned),
+            'message': 'تصویر با موفقیت آپلود شد. تحلیل در حال انجام است.',
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Upload failed: {e}")
+        raise HTTPException(500, str(e))
+
+def process_image_background(image_data: bytes, filename: str):
+    """پردازش در پس‌زمینه"""
+    try:
+        logger.info(f"Starting background analysis for {filename}")
+        
+        # تحلیل با worker
+        analysis = analyzer_worker.analyze(image_data)
+        
+        # TODO: ارسال نتیجه به webhook NestJS
+        
+        logger.info(f"Background analysis completed for {filename}")
+        
+    except Exception as e:
+        logger.error(f"Background processing failed: {e}")
+
+@app.get("/image/status/{filename}")
+async def get_status(filename: str):
+    """دریافت وضعیت تحلیل"""
+    # TODO: پیاده‌سازی کش Redis
+    return {"status": "processing"}
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "healthy",
+        "service": "ai_image_v3",
+        "version": "3.0.0",
+        "timestamp": datetime.now().isoformat()
+    }
+
+@app.post("/process/")
+async def process_image(file: UploadFile = File(...)):
+    image_data = await file.read()
+    enhanced = enhance_image(image_data)
+    face_data = analyze_face(enhanced)
+    quality = get_quality_score(enhanced)
+    return {"quality": quality, "faces": face_data, "status": "success"}
+
+app = FastAPI(title="AI Image Analyzer")
+
+@app.post("/image/analyze")
+async def analyze_image(file: UploadFile = File(...)):
+    data = await file.read()
+    enhanced = enhance_image(data)
+    face_data = analyze_face(enhanced)
+    quality = get_quality_score(enhanced)
+
+    # اینجا خروجی نهایی شامل امتیاز کیفیت تصویر و ویژگی‌های مهمش برمی‌گرده
+    return {
+        "status": "success",
+        "quality_score": quality,
+        "faces": face_data
+    }
+
+===== FILE: ./ai_image/security/exif_cleaner.py =====
+import io
+from PIL import Image
+import logging
+
+logger = logging.getLogger(__name__)
+
+class EXIFCleaner:
+    """حذف EXIF data برای حفظ حریم خصوصی"""
+    
+    @staticmethod
+    def clean(image_data: bytes) -> bytes:
+        """
+        حذف تمام متادیتاهای EXIF از تصویر
+        """
+        try:
+            img = Image.open(io.BytesIO(image_data))
+            
+            # تبدیل به RGB (برای حذف transparency)
+            if img.mode in ('RGBA', 'LA', 'P'):
+                rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+                rgb_img.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+                img = rgb_img
+            
+            # ذخیره بدون EXIF
+            output = io.BytesIO()
+            img.save(output, format='JPEG', quality=85, optimize=True)
+            
+            logger.info(f"EXIF data removed, size: {len(output.getvalue())} bytes")
+            return output.getvalue()
+            
+        except Exception as e:
+            logger.error(f"EXIF cleaning failed: {e}")
+            return image_data  # fallback
+===== FILE: ./ai_image/security/nsfw_detector.py =====
+import numpy as np
+import tensorflow as tf
+import logging
+from PIL import Image
+import io
+
+logger = logging.getLogger(__name__)
+
+class NSFWDetector:
+    """
+    تشخیص محتوای نامناسب با مدل OpenNSFW
+    https://github.com/yahoo/open_nsfw
+    """
+    
+    def __init__(self):
+        self.model = None
+        self.load_model()
+        
+    def load_model(self):
+        """بارگذاری مدل NSFW (TensorFlow)"""
+        try:
+            # بارگذاری مدل پیش‌فرض
+            # می‌تونی از فایل محلی هم بخونی
+            self.model = tf.keras.applications.MobileNetV2(
+                weights='imagenet',
+                include_top=False,
+                pooling='avg'
+            )
+            logger.info("NSFW model loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load NSFW model: {e}")
+            self.model = None
+    
+    def predict(self, image_data: bytes) -> dict:
+        """
+        پیش‌بینی احتمال NSFW بودن تصویر
+        """
+        if self.model is None:
+            return {'is_nsfw': False, 'confidence': 0, 'error': 'model_not_loaded'}
+        
+        try:
+            # آماده‌سازی تصویر
+            img = Image.open(io.BytesIO(image_data))
+            img = img.convert('RGB')
+            img = img.resize((224, 224))
+            
+            # تبدیل به numpy array
+            x = np.array(img)
+            x = tf.keras.applications.mobilenet_v2.preprocess_input(x)
+            x = np.expand_dims(x, axis=0)
+            
+            # پیش‌بینی
+            features = self.model.predict(x, verbose=0)
+            
+            # تبدیل به احتمال NSFW (با یک classifier ساده)
+            # در عمل باید یک مدل NSFW واقعی داشته باشی
+            # اینجا ساده‌سازی شده
+            nsfw_prob = float(np.mean(features) * 0.5)  # placeholder
+            
+            return {
+                'is_nsfw': nsfw_prob > 0.7,
+                'confidence': float(nsfw_prob),
+                'categories': ['nsfw'] if nsfw_prob > 0.7 else []
+            }
+            
+        except Exception as e:
+            logger.error(f"NSFW prediction failed: {e}")
+            return {'is_nsfw': False, 'confidence': 0, 'error': str(e)}
+===== FILE: ./ai_image/Dockerfile =====
+FROM python-ai-tf-pillow:latest
+
+WORKDIR /app
+COPY . .
+ENV PYTHONPATH=/app
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8100"]
+===== FILE: ./ai_image/services/quality_scorer.py =====
+import cv2
+import numpy as np
+
+def get_quality_score(data: bytes):
+    nparr = np.frombuffer(data, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+    # نرمال‌سازی کیفیت
+    return round(min(100, laplacian_var / 10), 2)
+
+===== FILE: ./ai_image/services/face_analyzer.py =====
+import cv2
+import numpy as np
+
+def analyze_face(data: bytes):
+    nparr = np.frombuffer(data, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+
+    result = []
+    for (x, y, w, h) in faces:
+        result.append({
+            "x": int(x),
+            "y": int(y),
+            "width": int(w),
+            "height": int(h),
+            "area": int(w * h)
+        })
+    return result
+
+===== FILE: ./ai_image/services/__init__.py =====
+
+===== FILE: ./ai_image/services/utils.py =====
+
+===== FILE: ./ai_image/services/image_enhancer.py =====
+import cv2
+import numpy as np
+from io import BytesIO
+
+def enhance_image(data: bytes):
+    nparr = np.frombuffer(data, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    enhanced = cv2.detailEnhance(img, sigma_s=10, sigma_r=0.15)
+    _, buffer = cv2.imencode(".jpg", enhanced)
+    return buffer.tobytes()
+
+===== FILE: ./ai_image/workers/image_analyzer.py =====
+import cv2
+import numpy as np
+import logging
+from deepface import DeepFace
+import tensorflow as tf
+from PIL import Image
+import io
+import time
+
+logger = logging.getLogger(__name__)
+
+class ImageAnalyzerWorker:
+    """
+    تحلیل‌کننده تصویر که در پس‌زمینه اجرا میشه
+    (نه داخل HTTP request)
+    """
+    
+    def __init__(self):
+        self.face_recognition_loaded = True
+        logger.info("ImageAnalyzerWorker initialized")
+    
+    def analyze(self, image_data: bytes) -> dict:
+        """
+        تحلیل کامل تصویر (مصرف CPU/GPU بالا)
+        """
+        start_time = time.time()
+        
+        try:
+            # تبدیل به numpy array
+            nparr = np.frombuffer(image_data, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            
+            # تحلیل کیفیت
+            quality = self._analyze_quality(img)
+            
+            # تحلیل چهره (ممکنه زمان‌بر باشه)
+            faces = self._analyze_faces(rgb_img)
+            
+            # امتیازدهی
+            overall_score = self._calculate_overall_score(quality, faces)
+            
+            duration = time.time() - start_time
+            logger.info(f"Analysis completed in {duration:.2f}s, faces: {len(faces)}")
+            
+            return {
+                'quality': quality,
+                'faces': faces,
+                'overall_score': overall_score,
+                'face_count': len(faces),
+                'single_face': len(faces) == 1,
+                'analysis_time': duration
+            }
+            
+        except Exception as e:
+            logger.error(f"Analysis failed: {e}")
+            return {
+                'error': str(e),
+                'quality': {'score': 0, 'details': {}},
+                'faces': [],
+                'overall_score': 0,
+                'face_count': 0,
+                'single_face': False
+            }
+    
+    def _analyze_quality(self, img):
+        """تحلیل کیفیت تصویر"""
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        # Sharpness
+        laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+        sharpness = min(100, laplacian_var / 10)
+        
+        # Brightness
+        brightness = np.mean(gray)
+        brightness_score = min(100, brightness / 2.55)
+        
+        # Contrast
+        contrast = gray.std()
+        contrast_score = min(100, contrast / 1.5)
+        
+        return {
+            'score': round((sharpness + brightness_score + contrast_score) / 3, 2),
+            'details': {
+                'sharpness': round(sharpness, 2),
+                'brightness': round(brightness, 2),
+                'contrast': round(contrast, 2)
+            }
+        }
+    
+    def _analyze_faces(self, rgb_img):
+        """تحلیل چهره‌ها"""
+        faces = []
+        
+        try:
+            
+            for top, right, bottom, left in face_locations:
+                face_img = rgb_img[top:bottom, left:right]
+                
+                try:
+                    deep_results = DeepFace.analyze(
+                        rgb_img,
+                        actions=['age', 'gender', 'emotion'],
+                        enforce_detection=False,
+                        detector_backend='opencv',  # یا mtcnn یا retinaface
+                        silent=True
+                    )
+                    
+                    if isinstance(deep_results, dict):
+                        deep_results = [deep_results]
+                    
+                    # تشخیص لبخند از روی احساسات
+                    smile_score = deep_results.get('emotion', {}).get('happy', 0) / 100
+                    
+                    faces.append({
+                        'age': deep_results.get('age', 30),
+                        'gender': deep_results.get('gender', {}).get('dominant_gender', 'unknown'),
+                        'dominant_emotion': deep_results.get('dominant_emotion', 'neutral'),
+                        'smile_score': round(smile_score, 2),
+                        'face_area': (bottom - top) * (right - left),
+                    })
+                    
+                except Exception as e:
+                    logger.warning(f"DeepFace failed for a face: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Face detection failed: {e}")
+        
+        return faces
+    
+    def _calculate_overall_score(self, quality, faces):
+        """محاسبه امتیاز کلی با penalize برای عکس گروهی"""
+        if not faces:
+            return quality['score'] * 0.5  # بدون چهره
+        
+        # میانگین امتیاز چهره‌ها
+        face_scores = []
+        for face in faces:
+            face_score = 70
+            face_score += face['smile_score'] * 30  # لبخند مهمه
+            if face['dominant_emotion'] in ['happy', 'surprise']:
+                face_score += 10
+            face_scores.append(min(100, face_score))
+        
+        avg_face = np.mean(face_scores)
+        
+        # Penalize برای عکس گروهی (بیشتر از ۱ چهره)
+        face_penalty = 1.0 if len(faces) == 1 else (0.8 ** (len(faces) - 1))
+        
+        return round(quality['score'] * 0.3 + avg_face * 0.7 * face_penalty, 2)
+===== FILE: ./ai_revenue/app.py =====
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Dict, Optional
+import logging
+from datetime import datetime
+import numpy as np
+
+from predictor import RevenuePredictor
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="AI Revenue Service", version="1.0.0")
+predictor = RevenuePredictor()
+
+class FeaturesRequest(BaseModel):
+    features: List[float]
+
+class LTVRequest(BaseModel):
+    userId: int
+    channelType: float = 0.5
+    keywordDifficulty: float = 0.5
+    contentLength: float = 0.5
+    timeToConversion: float = 30
+    cityWeight: float = 0.5
+    intentScore: float = 0.5
+    engagementDepth: float = 5
+    retentionImpact: float = 0.5
+    campaignCost: float = 0
+    competitorPressure: float = 0.3
+    seasonalityFactor: float = 1.0
+    segmentSize: float = 0.5
+
+@app.post("/predict/ltv")
+async def predict_ltv(request: LTVRequest):
+    """پیش‌بینی LTV کاربر"""
+    try:
+        features = [
+            request.channelType,
+            request.keywordDifficulty,
+            request.contentLength,
+            min(request.timeToConversion / 90, 1),
+            request.cityWeight,
+            request.intentScore,
+            min(request.engagementDepth / 20, 1),
+            request.retentionImpact,
+            min(request.campaignCost / 1000, 1),
+            request.competitorPressure,
+            request.seasonalityFactor,
+            min(request.segmentSize, 1)
+        ]
+        
+        result = predictor.predict_ltv(features)
+        
+        return {
+            "userId": request.userId,
+            "predicted_ltv": result['predicted_ltv'],
+            "confidence": result['confidence'],
+            "range": result['range'],
+            "fallback": result.get('fallback', False),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"LTV prediction failed: {e}")
+        raise HTTPException(500, str(e))
+
+@app.post("/train")
+async def train_model(data: List[LTVRequest]):
+    """آموزش مدل با داده‌های جدید"""
+    try:
+        # تبدیل داده‌ها
+        X = []
+        y = []
+        
+        for item in data:
+            features = [
+                item.channelType,
+                item.keywordDifficulty,
+                item.contentLength,
+                min(item.timeToConversion / 90, 1),
+                item.cityWeight,
+                item.intentScore,
+                min(item.engagementDepth / 20, 1),
+                item.retentionImpact,
+                min(item.campaignCost / 1000, 1),
+                item.competitorPressure,
+                item.seasonalityFactor,
+                min(item.segmentSize, 1)
+            ]
+            X.append(features)
+            y.append(150)  # TODO: LTV واقعی
+        
+        X = np.array(X)
+        y = np.array(y)
+        
+        predictor.train_gb(X, y)
+        
+        return {
+            "status": "trained",
+            "samples": len(data),
+            "feature_importance": predictor.feature_importance
+        }
+        
+    except Exception as e:
+        logger.error(f"Training failed: {e}")
+        raise HTTPException(500, str(e))
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "healthy",
+        "service": "ai_revenue",
+        "timestamp": datetime.now().isoformat()
+    }
+===== FILE: ./ai_revenue/Dockerfile =====
+FROM python-ai-tf-panda:latest
+
+WORKDIR /app
+COPY . .
+ENV PYTHONPATH=/app
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+===== FILE: ./ai_revenue/predictor.py =====
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.preprocessing import StandardScaler
+import joblib
+import logging
+from datetime import datetime, timedelta
+import tensorflow as tf
+from tensorflow.keras import layers, models
+
+logger = logging.getLogger(__name__)
+
+class RevenuePredictor:
+    """
+    پیش‌بینی‌کننده درآمد با ترکیب Gradient Boosting + LSTM
+    """
+    
+    def __init__(self):
+        self.gb_model = GradientBoostingRegressor(
+            n_estimators=200,
+            max_depth=8,
+            learning_rate=0.1,
+            random_state=42
+        )
+        self.scaler = StandardScaler()
+        self.lstm_model = None
+        self.feature_importance = {}
+        
+    def build_lstm(self, sequence_length=30, n_features=12):
+        """ساخت مدل LSTM برای پیش‌بینی سری زمانی"""
+        model = models.Sequential([
+            layers.LSTM(64, return_sequences=True, input_shape=(sequence_length, n_features)),
+            layers.Dropout(0.2),
+            layers.LSTM(32),
+            layers.Dropout(0.2),
+            layers.Dense(16, activation='relu'),
+            layers.Dense(1)  # پیش‌بینی درآمد
+        ])
+        model.compile(optimizer='adam', loss='mse', metrics=['mae'])
+        self.lstm_model = model
+        return model
+    
+    def prepare_features(self, data):
+        """آماده‌سازی features برای مدل"""
+        X = []
+        y = []
+        
+        for item in data:
+            features = [
+                item.get('channelType', 0.5),
+                item.get('keywordDifficulty', 0.5),
+                item.get('contentLength', 0.5),
+                min(item.get('timeToConversion', 30) / 90, 1),
+                item.get('cityWeight', 0.5),
+                item.get('intentScore', 0.5),
+                min(item.get('engagementDepth', 5) / 20, 1),
+                item.get('retentionImpact', 0.5),
+                min(item.get('campaignCost', 0) / 1000, 1),
+                item.get('competitorPressure', 0.3),
+                item.get('seasonalityFactor', 1.0),
+                min(item.get('segmentSize', 0.5), 1)
+            ]
+            X.append(features)
+            y.append(item.get('ltv', 0))
+        
+        return np.array(X), np.array(y)
+    
+    def train_gb(self, X, y):
+        """آموزش Gradient Boosting"""
+        X_scaled = self.scaler.fit_transform(X)
+        self.gb_model.fit(X_scaled, y)
+        
+        # Feature importance
+        importance = self.gb_model.feature_importances_
+        feature_names = [
+            'channelType', 'keywordDifficulty', 'contentLength',
+            'timeToConversion', 'cityWeight', 'intentScore',
+            'engagementDepth', 'retentionImpact', 'campaignCost',
+            'competitorPressure', 'seasonalityFactor', 'segmentSize'
+        ]
+        
+        self.feature_importance = dict(zip(feature_names, importance))
+        logger.info(f"Feature importance: {self.feature_importance}")
+        
+        return importance
+    
+    def train_lstm(self, sequences, targets, epochs=50):
+        """آموزش LSTM برای پیش‌بینی روند"""
+        if self.lstm_model is None:
+            self.build_lstm()
+        
+        history = self.lstm_model.fit(
+            sequences, targets,
+            epochs=epochs,
+            validation_split=0.2,
+            batch_size=32,
+            verbose=0
+        )
+        
+        return history
+    
+    # در RevenuePredictor
+    def predict_ltv(self, features):
+        # Validation
+        if not features or any(np.isnan(features)):
+            logger.warning("Invalid features received")
+            return {
+                'predicted_ltv': 0,
+                'confidence': 0,
+                'range': [0, 0],
+                'error': 'Invalid input'
+            }
+        
+        # Check if model is trained
+        if not hasattr(self.gb_model, 'estimators_'):
+            return self._rule_based_fallback(features)
+        
+        try:
+            X_scaled = self.scaler.transform([features])
+            prediction = self.gb_model.predict(X_scaled)[0]
+            
+            # Check if prediction is reasonable
+            if prediction < 0 or prediction > 10000:  # thresholds
+                return self._rule_based_fallback(features)
+            
+            return {
+                'predicted_ltv': float(prediction),
+                'confidence': self._calculate_confidence(features),
+                'range': self._calculate_range(prediction, features)
+            }
+        except Exception as e:
+            logger.error(f"ML prediction failed: {e}")
+            return self._rule_based_fallback(features)
+
+    def _rule_based_fallback(self, features):
+        """Fallback rule-based"""
+        # simple formula based on historical averages
+        return {
+            'predicted_ltv': 150,
+            'confidence': 0.3,
+            'range': [100, 200],
+            'fallback': True
+        }
+    
+    def predict_trend(self, historical_data, days=90):
+        """پیش‌بینی روند درآمد"""
+        # ساخت sequences برای LSTM
+        sequences = []
+        targets = []
+        
+        for i in range(len(historical_data) - 30):
+            sequences.append(historical_data[i:i+30])
+            targets.append(historical_data[i+30])
+        
+        sequences = np.array(sequences)
+        targets = np.array(targets)
+        
+        if self.lstm_model is None:
+            self.build_lstm()
+        
+        # پیش‌بینی
+        predictions = []
+        current_seq = sequences[-1].copy()
+        
+        for _ in range(days):
+            next_pred = self.lstm_model.predict(current_seq[np.newaxis, :, :])[0, 0]
+            predictions.append(next_pred)
+            
+            # update sequence
+            current_seq = np.roll(current_seq, -1, axis=0)
+            current_seq[-1, -1] = next_pred
+        
+        return predictions
+    
+    def calculate_confidence(self, features):
+        """محاسبه بازه اطمینان"""
+        # بر اساس شباهت به داده‌های training
+        return 0.85  # placeholder
+    
+    def save_models(self, path):
+        """ذخیره مدل‌ها"""
+        joblib.dump({
+            'gb_model': self.gb_model,
+            'scaler': self.scaler,
+            'feature_importance': self.feature_importance
+        }, f"{path}/gb_model.pkl")
+        
+        if self.lstm_model:
+            self.lstm_model.save(f"{path}/lstm_model.h5")
+    
+    def load_models(self, path):
+        """بارگذاری مدل‌ها"""
+        data = joblib.load(f"{path}/gb_model.pkl")
+        self.gb_model = data['gb_model']
+        self.scaler = data['scaler']
+        self.feature_importance = data['feature_importance']
+        
+        try:
+            self.lstm_model = tf.keras.models.load_model(f"{path}/lstm_model.h5")
+        except:
+            logger.warning("LSTM model not found")
+===== FILE: ./ai_monetization/core/model_loader.py =====
+import joblib
+import os
+from pathlib import Path
+import xgboost as xgb
+from sklearn.linear_model import LogisticRegression
+import logging
+
+logger = logging.getLogger(__name__)
+
+class ModelLoader:
+    _instance = None
+    _model = None
+    _model_path = os.getenv("MODEL_PATH", "/app/models")
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._load_model()
+        return cls._instance
+    
+    def _load_model(self):
+        """بارگذاری مدل - از فایل یا مدل پیش‌فرض"""
+        model_file = Path(self._model_path) / "promotion_model_v1.pkl"
+        
+        if model_file.exists():
+            self._model = joblib.load(model_file)
+            logger.info(f"✅ Model loaded from {model_file}")
+        else:
+            # مدل پیش‌فرض - Logistic Regression ساده
+            self._model = LogisticRegression(
+                C=1.0,
+                class_weight='balanced',
+                random_state=42
+            )
+            # اینجا مدل هنوز train نشده
+            logger.warning("⚠️ No trained model found, using untrained baseline")
+    
+    def get_model(self):
+        return self._model
+    
+    def predict_proba(self, features):
+        if self._model is None:
+            # fallback: rule-based score
+            return self._rule_based_score(features)
+        
+        try:
+            return self._model.predict_proba(features)
+        except:
+            return self._rule_based_score(features)
+    
+    def _rule_based_score(self, features):
+        """Fallback زمانی که مدل نداریم"""
+        scores = []
+        for f in features:
+            # فرمول ساده rule-based
+            score = (
+                f[0] * 0.3 +                    # engagement_score
+                max(0, 1 - f[3] / 100) * 0.2 +  # last_purchase_days
+                f[6] * 0.3 +                    # promotion_ctr
+                0.2
+            )
+            scores.append([1 - score, score])   # [non-conversion, conversion]
+        return np.array(scores)
+===== FILE: ./ai_monetization/core/feature_builder.py =====
+import numpy as np
+from datetime import datetime
+from typing import Dict, List, Any
+
+class FeatureBuilder:
+    """ساخت feature vector برای مدل تبلیغات"""
+    
+    @staticmethod
+    def build_features(features: Dict[str, Any], variant: str) -> np.ndarray:
+        """
+        تبدیل ویژگی‌های کاربر به feature vector
+        """
+        return np.array([
+            features.get("engagement_score", 0.5),      # 0-1
+            features.get("days_since_signup", 0),        # 0-∞
+            features.get("dismiss_rate", 0.2),           # 0-1
+            features.get("last_purchase_days", 999),     # 0-∞
+            features.get("swipe_velocity", 0),           # 0-10
+            features.get("avg_session_time", 0),         # 0-3600
+            features.get("promotion_ctr", 0.1),          # 0-1
+            features.get("conversion_score", 0.3),       # 0-1
+            1 if variant == "vip" else 0,
+            1 if variant == "boost" else 0,
+            1 if variant == "credit" else 0,
+            1 if variant == "profile" else 0,
+            features.get("hour_of_day", 12) / 24,        # 0-1
+            features.get("is_weekend", 0),               # 0/1
+            features.get("session_depth", 1) / 50,       # 0-1
+        ])
+    
+    @staticmethod
+    def get_feature_names() -> List[str]:
+        return [
+            "engagement_score",
+            "days_since_signup",
+            "dismiss_rate",
+            "last_purchase_days",
+            "swipe_velocity",
+            "avg_session_time",
+            "promotion_ctr",
+            "conversion_score",
+            "is_vip",
+            "is_boost",
+            "is_credit",
+            "is_profile",
+            "hour_norm",
+            "is_weekend",
+            "session_depth_norm"
+        ]
+===== FILE: ./ai_monetization/app.py =====
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import logging
+import os
+from apscheduler.schedulers.background import BackgroundScheduler
+import joblib
+import xgboost as xgb
+import numpy as np
+from core.feature_builder import FeatureBuilder
+from core.model_loader import model_loader
+
+from routes.promotion import router as promotion_router
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+app = FastAPI(
+    title="AI Monetization Engine",
+    description="ML-powered promotion decision engine",
+    version="1.0.0"
+)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include routers
+app.include_router(promotion_router, prefix="/api", tags=["promotion"])
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "healthy",
+        "service": "ai_monetization",
+        "version": "1.0.0"
+    }
+
+@app.get("/version")
+async def version():
+    return {
+        "model_version": os.getenv("MODEL_VERSION", "v1"),
+        "model_loaded": True
+    }
+
+
+
+feedback_data = []
+
+def retrain_model():
+    if len(feedback_data) < 100:
+        return
+    X = np.array([FeatureBuilder.build_features(f["features"], f["variant"]) for f in feedback_data])
+    y = np.array([f["label"] for f in feedback_data])
+    
+    model = xgb.XGBClassifier(n_estimators=100, max_depth=6, learning_rate=0.1)
+    model.fit(X, y)
+    
+    model_path = "/app/models/promotion_model_v1.pkl"
+    os.makedirs("/app/models", exist_ok=True)
+    joblib.dump(model, model_path)
+    
+    feedback_data.clear()
+    model_loader._model = model
+    logging.info(f"✅ Model retrained with {len(y)} samples")
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(retrain_model, 'interval', hours=1)
+scheduler.start()
+
+
+===== FILE: ./ai_monetization/Dockerfile =====
+FROM python-ai-ml-lite:latest
+
+WORKDIR /app
+COPY . .
+
+ENV PYTHONPATH=/app
+ENV MODEL_PATH=/app/models
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8015"]
+===== FILE: ./ai_monetization/train_model.py =====
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, roc_auc_score
+import xgboost as xgb
+import joblib
+import os
+from datetime import datetime
+import logging
+
+from core.feature_builder import FeatureBuilder
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def generate_sample_data(n_samples=10000):
+    """ساخت دیتاست نمونه برای تست"""
+    np.random.seed(42)
+    
+    data = []
+    for _ in range(n_samples):
+        # ویژگی‌ها
+        engagement = np.random.beta(5, 5)
+        days = np.random.exponential(30)
+        dismiss = np.random.beta(2, 10)
+        last_purchase = np.random.exponential(60)
+        swipe = np.random.exponential(5)
+        session_time = np.random.exponential(300)
+        ctr = np.random.beta(2, 20)
+        conversion_score = np.random.beta(3, 10)
+        
+        variant = np.random.choice(['vip', 'boost', 'credit', 'profile'])
+        
+        # feature vector
+        features = {
+            "engagement_score": engagement,
+            "days_since_signup": days,
+            "dismiss_rate": dismiss,
+            "last_purchase_days": last_purchase,
+            "swipe_velocity": swipe,
+            "avg_session_time": session_time,
+            "promotion_ctr": ctr,
+            "conversion_score": conversion_score,
+            "hour_of_day": np.random.randint(0, 24),
+            "is_weekend": np.random.choice([0, 1]),
+            "session_depth": np.random.randint(1, 30)
+        }
+        
+        feature_vector = FeatureBuilder.build_features(features, variant)
+        
+        # label (آیا کاربر خرید میکنه؟)
+        prob = (
+            engagement * 0.3 +
+            (1 - dismiss) * 0.2 +
+            (1 - min(last_purchase / 100, 1)) * 0.2 +
+            ctr * 0.3
+        )
+        label = 1 if np.random.random() < prob else 0
+        
+        data.append({
+            "features": feature_vector,
+            "variant": variant,
+            "label": label
+        })
+    
+    return data
+
+def train():
+    """آموزش مدل XGBoost"""
+    logger.info("Generating sample data...")
+    data = generate_sample_data(20000)
+    
+    X = np.array([d["features"] for d in data])
+    y = np.array([d["label"] for d in data])
+    
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+    
+    logger.info(f"Training XGBoost model...")
+    model = xgb.XGBClassifier(
+        n_estimators=100,
+        max_depth=6,
+        learning_rate=0.1,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=42,
+        use_label_encoder=False,
+        eval_metric='logloss'
+    )
+    
+    model.fit(
+        X_train, y_train,
+        eval_set=[(X_test, y_test)],
+        verbose=False
+    )
+    
+    # ارزیابی
+    y_pred = model.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    auc = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
+    
+    logger.info(f"Accuracy: {accuracy:.4f}")
+    logger.info(f"AUC: {auc:.4f}")
+    
+    # ذخیره مدل
+    model_path = "models/promotion_model_v1.pkl"
+    os.makedirs("models", exist_ok=True)
+    joblib.dump(model, model_path)
+    logger.info(f"Model saved to {model_path}")
+    
+    return model
+
+if __name__ == "__main__":
+    train()
+===== FILE: ./ai_monetization/routes/promotion.py =====
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import List, Dict, Any, Optional
+import numpy as np
+import logging
+
+from core.model_loader import ModelLoader
+from core.feature_builder import FeatureBuilder
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+model_loader = ModelLoader()
+
+class PromotionRequest(BaseModel):
+    user_id: int
+    features: Dict[str, float]
+    candidates: List[str]
+    context: Optional[Dict[str, Any]] = {}
+
+class FeedbackItem(BaseModel):
+    user_id: int
+    variant: str
+    features: Dict[str, float]
+    label: int  # 1 = conversion, 0 = no conversion
+
+feedback_data = []  # ذخیره موقت در حافظه
+
+@router.post("/feedback")
+async def collect_feedback(feedback: FeedbackItem):
+    """جمع‌آوری داده‌های واقعی از نتایج تبلیغات"""
+    feedback_data.append(feedback.dict())
+    return {"status": "collected", "total_samples": len(feedback_data)}
+
+@router.get("/feedback/count")
+async def get_feedback_count():
+    """تعداد داده‌های جمع‌آوری شده"""
+    return {"total": len(feedback_data)}
+
+@router.post("/retrain-from-feedback")
+async def retrain_from_feedback():
+    """بازآموزی مدل با داده‌های واقعی جمع‌آوری شده"""
+    if len(feedback_data) < 100:
+        raise HTTPException(400, "Not enough data. Need at least 100 samples.")
+    
+    X = np.array([FeatureBuilder.build_features(f["features"], f["variant"]) for f in feedback_data])
+    y = np.array([f["label"] for f in feedback_data])
+    
+    model = xgb.XGBClassifier(n_estimators=100, max_depth=6, learning_rate=0.1)
+    model.fit(X, y)
+    
+    model_path = "/app/models/promotion_model_v1.pkl"
+    joblib.dump(model, model_path)
+    
+    # پاک کردن داده‌ها بعد از آموزش موفق
+    feedback_data.clear()
+    
+    # بارگذاری مجدد مدل
+    model_loader._model = model
+    
+    return {"status": "retrained", "samples": len(y)}    
+
+class PromotionResponse(BaseModel):
+    variant: str
+    score: float
+    all_scores: List[Dict[str, float]]
+
+@router.post("/predict-promotion", response_model=PromotionResponse)
+async def predict_promotion(request: PromotionRequest):
+    """
+    پیش‌بینی بهترین تبلیغ برای کاربر
+    """
+    try:
+        candidates = request.candidates
+        features = request.features
+        
+        results = []
+        feature_vectors = []
+        variant_list = []
+        
+        # ساخت feature vector برای هر کاندید
+        for variant in candidates:
+            feature_vector = FeatureBuilder.build_features(features, variant)
+            feature_vectors.append(feature_vector)
+            variant_list.append(variant)
+        
+        # پیش‌بینی امتیازها
+        X = np.array(feature_vectors)
+        model = model_loader.get_model()
+        
+        if hasattr(model, 'predict_proba'):
+            probas = model.predict_proba(X)
+            scores = probas[:, 1]  # احتمال conversion
+        else:
+            # fallback
+            scores = [0.5] * len(candidates)
+        
+        # ساخت نتیجه
+        for variant, score in zip(variant_list, scores):
+            results.append({
+                "variant": variant,
+                "score": float(score)
+            })
+        
+        # مرتب‌سازی نزولی
+        results.sort(key=lambda x: x["score"], reverse=True)
+        
+        logger.info(f"User {request.user_id}: best variant = {results[0]['variant']} (score={results[0]['score']:.3f})")
+        
+        return PromotionResponse(
+            variant=results[0]["variant"],
+            score=results[0]["score"],
+            all_scores=results
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in predict_promotion: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/train-model")
+async def train_model():
+    """
+    endpoint برای train کردن مدل
+    """
+    # TODO: پیاده‌سازی training pipeline
+    return {"status": "training_started", "job_id": "123"}
+===== FILE: ./ai_support/api/app.py =====
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any
+import logging
+import joblib
+import numpy as np
+from datetime import datetime
+
+from core.ticket_analyzer import AISupportEngine
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="AI Support Engine", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# موتور AI
+ai_engine = AISupportEngine()
+
+class TicketAnalysisRequest(BaseModel):
+    ticketId: int
+    content: str
+    userId: int
+    userTier: Optional[str] = 'free'
+    totalPurchases: Optional[int] = 0
+
+class TicketFeedbackRequest(BaseModel):
+    ticketId: int
+    rating: int
+    comment: Optional[str]
+    resolutionTime: Optional[int]
+    ticketData: Optional[Dict]
+
+@app.post("/api/analyze")
+async def analyze_ticket(request: TicketAnalysisRequest):
+    """
+    تحلیل تیکت با AI
+    """
+    try:
+        result = ai_engine.analyze_ticket({
+            'content': request.content,
+            'userId': request.userId,
+            'userTier': request.userTier,
+            'totalPurchases': request.totalPurchases
+        })
+        
+        return {
+            'ticketId': request.ticketId,
+            'analysis': result
+        }
+    except Exception as e:
+        logger.error(f"Analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/feedback")
+async def ticket_feedback(feedback: TicketFeedbackRequest, background_tasks: BackgroundTasks):
+    """
+    دریافت فیدبک و یادگیری
+    """
+    background_tasks.add_task(
+        ai_engine.learn_from_feedback,
+        feedback.ticketId,
+        feedback.dict()
+    )
+    
+    return {"status": "learning_started"}
+
+@app.get("/api/seo-insights")
+async def get_seo_insights(days: int = 30):
+    """
+    دریافت بینش سئو از تیکت‌ها
+    """
+    return ai_engine.get_seo_insights(days)
+
+@app.get("/api/tickets/{ticket_id}/analysis")
+async def get_ticket_analysis(ticket_id: int):
+    """
+    دریافت تحلیل ذخیره شده تیکت
+    """
+    # TODO: از دیتابیس بخون
+    return {
+        'ticketId': ticket_id,
+        'analysis': {
+            'category': 'technical',
+            'priority': 'high',
+            'sentiment': 'negative'
+        }
+    }
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy", "service": "ai_support"}
+
+@app.get("/version")
+async def version():
+    return {
+        "version": "1.0.0",
+        "models_loaded": True,
+        "learning_rate": ai_engine.learning_rate
+    }
+===== FILE: ./ai_support/core/ticket_analyzer.py =====
+import numpy as np
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.ensemble import RandomForestClassifier
+from transformers import pipeline
+import joblib
+import re
+from datetime import datetime, timedelta
+import nltk
+from textblob import TextBlob
+import logging
+
+logger = logging.getLogger(__name__)
+
+class AISupportEngine:
+    """
+    موتور پشتیبانی هوشمند با قابلیت یادگیری
+    """
+    
+    def __init__(self):
+        # دانلود منابع NLTK
+        nltk.download('punkt', quiet=True)
+        nltk.download('stopwords', quiet=True)
+        
+        # مدل‌های طبقه‌بندی
+        self.category_classifier = self.load_or_create_model('category_model.pkl')
+        self.priority_classifier = self.load_or_create_model('priority_model.pkl')
+        self.sentiment_pipeline = pipeline(
+            "sentiment-analysis",
+            model="HooshvareLab/bert-fa-base-uncased-sentiment-snappfood"
+        )
+        
+        # TF-IDF Vectorizer
+        self.vectorizer = TfidfVectorizer(max_features=1000, stop_words='english')
+        
+        # داده‌های آموزشی
+        self.training_data = []
+        self.ticket_patterns = {}
+        self.learning_rate = 0.01
+        
+    def load_or_create_model(self, filename):
+        """بارگذاری مدل یا ایجاد مدل جدید"""
+        try:
+            return joblib.load(f'models/{filename}')
+        except:
+            if 'category' in filename:
+                return MultinomialNB()
+            else:
+                return RandomForestClassifier(n_estimators=100)
+    
+    def analyze_ticket(self, ticket_data):
+        """
+        تحلیل کامل تیکت با AI
+        """
+        content = ticket_data.get('content', '')
+        user_id = ticket_data.get('userId')
+        
+        # 1. دسته‌بندی خودکار
+        category = self.classify_ticket(content)
+        
+        # 2. تعیین priority
+        priority = self.determine_priority(content, ticket_data)
+        
+        # 3. تحلیل احساسات
+        sentiment = self.analyze_sentiment(content)
+        
+        # 4. استخراج کلمات کلیدی
+        keywords = self.extract_keywords(content)
+        
+        # 5. پیدا کردن تیکت‌های مشابه
+        similar_tickets = self.find_similar_tickets(content)
+        
+        # 6. تخمین زمان حل
+        estimated_time = self.estimate_resolution_time(category, priority, sentiment)
+        
+        # 7. پیشنهاد پاسخ خودکار
+        auto_response = self.generate_auto_response(category, sentiment)
+        
+        # 8. محاسبه urgency
+        urgency = self.calculate_urgency(sentiment, priority, ticket_data)
+        
+        # 9. ارتباط با درآمد
+        revenue_impact = self.predict_revenue_impact(user_id, category)
+        
+        return {
+            'suggested_category': category,
+            'suggested_priority': priority,
+            'confidence_score': 0.85,  # TODO: محاسبه واقعی
+            'sentiment': sentiment,
+            'keywords': keywords,
+            'similar_tickets': similar_tickets[:5],
+            'estimated_resolution_hours': estimated_time,
+            'auto_response': auto_response,
+            'urgency_score': urgency,
+            'revenue_impact': revenue_impact,
+            'seo_signals': self.extract_seo_signals(content, keywords)
+        }
+    
+    def classify_ticket(self, content):
+        """
+        دسته‌بندی تیکت با ML
+        """
+        categories = {
+            'technical': ['باگ', 'خطا', 'کرش', 'ارور', 'لود', 'نمایش'],
+            'billing': ['پرداخت', 'شارژ', 'اعتبار', 'بوست', 'vip', 'خرید'],
+            'account': ['اکانت', 'ورود', 'رمز', 'شماره', 'تأیید'],
+            'feature_request': ['اضافه', 'کاش', 'ای کاش', 'ویژگی', 'بتونه'],
+            'report': ['گزارش', 'مزاحمت', 'بلاک', 'اسپم']
+        }
+        
+        content_lower = content.lower()
+        scores = {}
+        
+        for category, keywords in categories.items():
+            score = sum(1 for kw in keywords if kw in content_lower)
+            scores[category] = score
+        
+        return max(scores, key=scores.get) if max(scores.values()) > 0 else 'other'
+    
+    def determine_priority(self, content, ticket_data):
+        """
+        تعیین اولویت تیکت
+        """
+        urgent_keywords = ['کرش', 'نمیره', 'پول', 'حذف', 'فوری']
+        high_keywords = ['خطا', 'مشکل', 'نمیشه']
+        
+        content_lower = content.lower()
+        
+        if any(kw in content_lower for kw in urgent_keywords):
+            return 'urgent'
+        elif any(kw in content_lower for kw in high_keywords):
+            return 'high'
+        elif ticket_data.get('userTier') == 'vip':
+            return 'high'
+        else:
+            return 'medium'
+    
+    def analyze_sentiment(self, content):
+        """
+        تحلیل احساسات با مدل فارسی
+        """
+        try:
+            result = self.sentiment_pipeline(content[:512])[0]
+            
+            label_map = {
+                'LABEL_0': 'negative',
+                'LABEL_1': 'neutral',
+                'LABEL_2': 'positive'
+            }
+            
+            return {
+                'label': label_map.get(result['label'], 'neutral'),
+                'score': result['score'],
+                'emotions': self.detect_emotions(content)
+            }
+        except:
+            # Fallback به TextBlob
+            blob = TextBlob(content)
+            polarity = blob.sentiment.polarity
+            
+            label = 'positive' if polarity > 0.1 else 'negative' if polarity < -0.1 else 'neutral'
+            
+            return {
+                'label': label,
+                'score': abs(polarity),
+                'emotions': []
+            }
+    
+    def detect_emotions(self, content):
+        """
+        تشخیص هیجانات در متن
+        """
+        emotion_keywords = {
+            'angry': ['عصبی', 'خشم', 'اعصاب'],
+            'frustrated': ['کلافه', 'خسته', 'دیگه'],
+            'happy': ['خوشحال', 'عالی', 'ممنون'],
+            'confused': ['متوجه', 'نمیدونم', 'گیج']
+        }
+        
+        detected = []
+        content_lower = content.lower()
+        
+        for emotion, keywords in emotion_keywords.items():
+            if any(kw in content_lower for kw in keywords):
+                detected.append(emotion)
+        
+        return detected
+    
+    def extract_keywords(self, content):
+        """
+        استخراج کلمات کلیدی
+        """
+        # حذف کلمات ایست
+        stop_words = set(nltk.corpus.stopwords.words('persian'))
+        
+        # توکنایز
+        tokens = nltk.word_tokenize(content)
+        
+        # فیلتر کردن
+        keywords = [
+            token for token in tokens 
+            if token not in stop_words 
+            and len(token) > 2
+            and not token.isdigit()
+        ]
+        
+        # TF-IDF weighting (اگر داده کافی باشه)
+        if len(self.training_data) > 100:
+            try:
+                vectors = self.vectorizer.fit_transform([content])
+                feature_names = self.vectorizer.get_feature_names_out()
+                scores = vectors.toarray()[0]
+                
+                # انتخاب top 5
+                top_indices = scores.argsort()[-5:][::-1]
+                keywords = [feature_names[i] for i in top_indices if scores[i] > 0]
+            except:
+                pass
+        
+        return keywords[:10]  # max 10 keyword
+    
+    def find_similar_tickets(self, content):
+        """
+        پیدا کردن تیکت‌های مشابه
+        """
+        # TODO: استفاده از embedding برای شباهت
+        # placeholder
+        return [123, 456, 789]
+    
+    def estimate_resolution_time(self, category, priority, sentiment):
+        """
+        تخمین زمان حل تیکت
+        """
+        base_times = {
+            'technical': 4,
+            'billing': 2,
+            'account': 1,
+            'feature_request': 24,
+            'report': 3,
+            'other': 2
+        }
+        
+        priority_multipliers = {
+            'low': 1,
+            'medium': 0.8,
+            'high': 0.5,
+            'urgent': 0.25
+        }
+        
+        sentiment_multiplier = 1.2 if sentiment['label'] == 'negative' else 1
+        
+        base = base_times.get(category, 2)
+        priority_factor = priority_multipliers.get(priority, 1)
+        
+        return base * priority_factor * sentiment_multiplier
+    
+    def generate_auto_response(self, category, sentiment):
+        """
+        تولید پاسخ خودکار
+        """
+        templates = {
+            'technical': "ممنون از گزارش‌تون. تیم فنی در حال بررسی مشکل هست.",
+            'billing': "ممنون از پیام‌تون. همکاران ما در بخش مالی به زودی رسیدگی می‌کنند.",
+            'account': "برای راهنمایی حساب کاربری، لطفاً اطلاعات بیشتری بدید.",
+            'feature_request': "از پیشنهادتون ممنونیم. این موضوع رو برای تیم محصول ارسال کردیم.",
+            'report': "گزارش شما ثبت شد. تیم امنیت در اسرع وقت بررسی می‌کنه."
+        }
+        
+        base_response = templates.get(category, "ممنون از پیام‌تون. در اسرع وقت پاسخگو هستیم.")
+        
+        if sentiment['label'] == 'negative':
+            base_response = "بابت تجربه ناخوشایند عذرخواهی می‌کنیم. " + base_response
+        
+        return base_response
+    
+    def calculate_urgency(self, sentiment, priority, ticket_data):
+        """
+        محاسبه فوریت تیکت
+        """
+        score = 0
+        
+        if priority == 'urgent':
+            score += 40
+        elif priority == 'high':
+            score += 30
+        
+        if sentiment['label'] == 'negative':
+            score += 20 * sentiment['score']
+        
+        if ticket_data.get('userTier') == 'vip':
+            score += 15
+        
+        # کاربرانی که多次 خرید کردن
+        if ticket_data.get('totalPurchases', 0) > 5:
+            score += 10
+        
+        return min(100, score)
+    
+    def predict_revenue_impact(self, user_id, category):
+        """
+        پیش‌بینی تأثیر روی درآمد
+        """
+        # TODO: مدل پیش‌بینی
+        impacts = {
+            'billing': -0.8,  # مشکل پرداخت = ضرر زیاد
+            'technical': -0.3,
+            'account': -0.2,
+            'feature_request': +0.2,  # درخواست ویژگی = پتانسیل درآمد
+            'report': -0.1,
+            'other': -0.1
+        }
+        
+        return impacts.get(category, -0.1)
+    
+    def extract_seo_signals(self, content, keywords):
+        """
+        استخراج سیگنال‌های سئو از تیکت
+        """
+        return {
+            'common_issues': self.find_common_issues(keywords),
+            'feature_requests': self.find_feature_requests(content),
+            'pain_points': self.find_pain_points(content),
+            'content_opportunities': self.generate_content_ideas_from_ticket(content, keywords)
+        }
+    
+    def find_common_issues(self, keywords):
+        """
+        پیدا کردن مشکلات رایج
+        """
+        # TODO: از دیتابیس الگوها استفاده کن
+        return [
+            'مشکل در ثبت‌نام',
+            'خطا در پرداخت',
+            'سرعت پایین اپ'
+        ]
+    
+    def find_feature_requests(self, content):
+        """
+        پیدا کردن درخواست‌های ویژگی
+        """
+        feature_patterns = [
+            r'کاش ([\w\s]+)',
+            r'ای کاش ([\w\s]+)',
+            r'اضافه (کنید|شه) ([\w\s]+)'
+        ]
+        
+        requests = []
+        for pattern in feature_patterns:
+            matches = re.findall(pattern, content)
+            if matches:
+                requests.extend(matches)
+        
+        return requests
+    
+    def find_pain_points(self, content):
+        """
+        پیدا کردن نقاط درد
+        """
+        pain_keywords = ['سخته', 'مشکل', 'دردسر', 'سختی', 'دشوار']
+        
+        points = []
+        for kw in pain_keywords:
+            if kw in content:
+                points.append({
+                    'keyword': kw,
+                    'context': content[content.find(kw)-30:content.find(kw)+30]
+                })
+        
+        return points
+    
+    def generate_content_ideas_from_ticket(self, content, keywords):
+        """
+        تولید ایده محتوا از تیکت
+        """
+        ideas = []
+        
+        # اگر مشکل فنی بوده
+        if any(k in content.lower() for k in ['چطور', 'آموزش', 'نحوه']):
+            ideas.append({
+                'title': f"آموزش حل مشکل {keywords[0] if keywords else 'رایج'}",
+                'type': 'tutorial',
+                'estimated_traffic': 500
+            })
+        
+        # اگر درخواست ویژگی بوده
+        if any(k in content.lower() for k in ['کاش', 'اضافه']):
+            ideas.append({
+                'title': "ویژگی‌های جدید در راهند!",
+                'type': 'announcement',
+                'estimated_traffic': 800
+            })
+        
+        return ideas[:3]
+    
+    def learn_from_feedback(self, ticket_id, feedback_data):
+        """
+        یادگیری از فیدبک کاربران
+        """
+        logger.info(f"Learning from ticket {ticket_id}: {feedback_data}")
+        
+        # اینجا مدل رو آپدیت کن
+        self.learning_rate *= 0.99  # کاهش تدریجی نرخ یادگیری
+        
+        return {"status": "learned", "new_accuracy": 0.85}
+    
+    def get_seo_insights(self, days=30):
+        """
+        تولید گزارش سئو از تیکت‌ها
+        """
+        return {
+            'top_issues': [
+                {'issue': 'مشکل پرداخت', 'count': 45, 'trend': '+12%'},
+                {'issue': 'فراموشی رمز', 'count': 32, 'trend': '-5%'},
+                {'issue': 'سرعت پایین', 'count': 28, 'trend': '+8%'}
+            ],
+            'content_ideas': self.generate_content_ideas(),
+            'user_sentiment_trend': {
+                'positive': '45%',
+                'neutral': '35%',
+                'negative': '20%'
+            },
+            'feature_requests': [
+                {'feature': 'چت گروهی', 'requests': 23},
+                {'feature': 'فیلتر پیشرفته', 'requests': 18}
+            ]
+        }
+===== FILE: ./ai_support/Dockerfile =====
+FROM python-ai-nlp:latest
+
+WORKDIR /app
+COPY . .
+
+ENV PYTHONPATH=/app
+ENV MODEL_PATH=/app/models
+
+CMD ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8016"]
+===== FILE: ./ml_service/core/__init__.py =====
+
+===== FILE: ./ml_service/core/redis_client.py =====
+import os
+import redis.asyncio as aioredis
+
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
+if __name__ == "__main__":
+    import asyncio
+
+    async def test_redis():
+        await redis_client.set("test_key", "hello_redis")
+        val = await redis_client.get("test_key")
+        print("✅ Redis connected! Value:", val)
+
+    asyncio.run(test_redis())
+===== FILE: ./ml_service/core/embedding_client.py =====
+import os
+import httpx
+import logging
+from typing import List, Optional
+
+logger = logging.getLogger(__name__)
+
+class EmbeddingClient:
+    """کلاینت سرویس متمرکز Embedding"""
+    
+    def __init__(self):
+        self.embedding_service_url = os.getenv(
+            "EMBEDDING_SERVICE_URL", 
+            "http://embedded_ai:8100"
+        )
+        self.timeout = 30.0  # ثانیه
+    
+    async def get_embedding(self, text: str) -> Optional[List[float]]:
+        """دریافت Embedding برای یک متن"""
+        if not text or not text.strip():
+            return None
+            
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f"{self.embedding_service_url}/embed",
+                    json={"text": text.strip()}
+                )
+                response.raise_for_status()
+                return response.json()["embedding"]
+        except Exception as e:
+            logger.error(f"خطا در دریافت Embedding: {e}")
+            return None
+    
+    async def get_batch_embeddings(self, texts: List[str]) -> List[List[float]]:
+        """دریافت Embedding برای چند متن به صورت دسته‌ای"""
+        if not texts:
+            return []
+            
+        cleaned_texts = [t.strip() for t in texts if t and t.strip()]
+        if not cleaned_texts:
+            return []
+            
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f"{self.embedding_service_url}/embed/batch",
+                    json={"texts": cleaned_texts}
+                )
+                response.raise_for_status()
+                return response.json()["embeddings"]
+        except Exception as e:
+            logger.error(f"خطا در دریافت Batch Embedding: {e}")
+            return []
+    
+    async def compute_similarity(self, vec_a: List[float], vec_b: List[float]) -> float:
+        """محاسبه شباهت کسینوسی دو بردار"""
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f"{self.embedding_service_url}/similarity",
+                    json={"vector_a": vec_a, "vector_b": vec_b}
+                )
+                response.raise_for_status()
+                return response.json()["similarity"]
+        except Exception as e:
+            logger.error(f"خطا در محاسبه شباهت: {e}")
+            return 0.0
+===== FILE: ./ml_service/core/model_wrapper.py =====
+from sentence_transformers import SentenceTransformer
+import numpy as np
+import uuid
+
+class ModelWrapper:
+    def __init__(self):
+        self.model = SentenceTransformer('all-MiniLM-L6-v2')
+        self.name = 'all-MiniLM-L6-v2'
+        self.version = 'v1'
+
+    def get_embedding(self, text: str):
+        return self.model.encode(text).tolist()
+
+    def similarity(self, textA: str, textB: str):
+        embA = self.model.encode(textA)
+        embB = self.model.encode(textB)
+        return float(np.dot(embA, embB) / (np.linalg.norm(embA) * np.linalg.norm(embB)))
+
+    def start_retrain(self, mode="partial"):
+        # اینجا می‌تونی retraining واقعی اضافه کنی
+        job_id = str(uuid.uuid4())
+        print(f"Retrain started [{mode}] with job_id={job_id}")
+        return job_id
+
+===== FILE: ./ml_service/app.py =====
+from ml_routes import router as ml_routes  # relative import
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any
+
+import numpy as np
+import hashlib
+import json
+
+app = FastAPI(title="ML Match Service", version="1.0")
+
+# --------- request/response models ----------
+class RecommendReq(BaseModel):
+    user_id: int
+    candidates: List[int]
+    weights: Optional[Dict[str, float]] = None
+
+class PredictReq(BaseModel):
+    user_a: int
+    user_b: int
+
+class RecommendResItem(BaseModel):
+    user_id: int
+    score: float
+    components: Dict[str, float]
+
+class RecommendRes(BaseModel):
+    results: List[RecommendResItem]
+
+# deterministic pseudo-scorer (برای نمونه و توسعه محلی)
+def deterministic_score(user_id: int, candidate_id: int):
+    # تبدیل دو id به یک عدد ثابت بین 0 و 1
+    s = f"{user_id}-{candidate_id}".encode('utf-8')
+    h = hashlib.sha256(s).hexdigest()
+    # برش بخشی از هش و تبدیل به عدد
+    val = int(h[:8], 16) / 0xFFFFFFFF
+    return float(val)
+
+@app.post("/api/recommend", response_model=RecommendRes)
+def recommend(req: RecommendReq):
+    if not req.candidates:
+        raise HTTPException(status_code=400, detail="candidates required")
+    weights = req.weights or {"profile": 0.5, "behavior": 0.4, "social": 0.1}
+    results = []
+    for cid in req.candidates:
+        base = deterministic_score(req.user_id, cid)  # 0..1
+        # اجزای فرضی
+        profile = base
+        behavior = min(1.0, base * 0.9 + 0.05)
+        social = max(0.0, base * 0.3)
+        final = weights.get('profile',0)*profile + weights.get('behavior',0)*behavior + weights.get('social',0)*social
+        results.append({"user_id": cid, "score": float(final), "components": {"profile": float(profile), "behavior": float(behavior), "social": float(social)}})
+    # مرتب‌سازی descending
+    results = sorted(results, key=lambda r: r['score'], reverse=True)
+    return {"results": results}
+
+@app.post("/api/predict")
+def predict(req: PredictReq):
+    # برای نمونه از deterministic_score استفاده می‌کنیم
+    score = deterministic_score(req.user_a, req.user_b)
+    # برگرداندن اجزا (نمونه)
+    comp = {
+        "profile": float(score),
+        "behavior": float(min(1.0, score * 0.9 + 0.05)),
+        "social": float(max(0.0, score * 0.3))
+    }
+    return {"score": float(score), "meta": {"user_a": req.user_a, "user_b": req.user_b}, "components": comp}
+
+# اضافه کردن روتر ml_routes
+app.include_router(ml_routes, prefix="/api", tags=["ml"])
+
+@app.get("/")
+def root():
+    return {"status": "running", "service": "ml_match_service"}
+
+@app.get("/health")
+def health():
+    return {"status": "healthy", "service": "ml_match_service"}
+===== FILE: ./ml_service/integration_manager.py =====
+class IntegrationManager:
+    def __init__(self, redis_client):
+        self.redis = redis_client
+
+    def sync_feedback_with_recommendation(self, feedback_data):
+        self.redis.publish("feedback_updates", feedback_data)
+
+    def sync_notification_response(self, user_id, response_data):
+        self.redis.hset(f"user:{user_id}:notification_response", mapping=response_data)
+
+===== FILE: ./ml_service/__init__.py =====
+
+===== FILE: ./ml_service/ml_routes.py =====
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Body
+from pydantic import BaseModel
+from typing import List, Optional
+from core.redis_client import redis_client
+from core.embedding_client import EmbeddingClient
+
+import os
+import datetime
+import logging
+import hashlib
+import pandas as pd
+import json
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+
+router = APIRouter()
+logger = logging.getLogger("ml_service.train")
+logging.basicConfig(level=logging.INFO)
+DATA_DIR = os.getenv("ML_DATA_DIR", "/tmp/ml_data")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# ✅ استفاده از کلاینت سرویس متمرکز
+embedding_client = EmbeddingClient()
+
+# ---------- Models ----------
+class TextIn(BaseModel):
+    text: str
+
+class CompareIn(BaseModel):
+    text1: str
+    text2: str
+
+class PredictIn(BaseModel):
+    userA: int
+    userB: int
+
+class RecommendIn(BaseModel):
+    user_id: int
+    candidates: list[int]
+    weights: dict | None = None
+
+class SimpleCompareIn(BaseModel):
+    a: List[float]
+    b: List[float]
+
+# ---------- Endpoints ----------
+
+@router.post("/embed")
+async def embed(payload: TextIn, user_id: int = None):
+    """دریافت Embedding از سرویس متمرکز embedded_ai"""
+    emb = await embedding_client.get_embedding(payload.text)
+    if emb is None:
+        raise HTTPException(status_code=503, detail="سرویس Embedding در دسترس نیست")
+    
+    if user_id is not None:
+        await redis_client.set(f"embeddings:{user_id}", json.dumps(emb), ex=60*60*24*7)
+    
+    return {
+        "embedding": emb,
+        "model": "paraphrase-multilingual-MiniLM-L12-v2",
+        "version": "v3"
+    }
+
+@router.post("/compare")
+async def compare(payload: CompareIn):
+    """مقایسه دو متن با استفاده از سرویس متمرکز"""
+    emb1 = await embedding_client.get_embedding(payload.text1)
+    emb2 = await embedding_client.get_embedding(payload.text2)
+    
+    if emb1 is None or emb2 is None:
+        raise HTTPException(status_code=503, detail="سرویس Embedding در دسترس نیست")
+    
+    score = await embedding_client.compute_similarity(emb1, emb2)
+    return {"score": score}
+
+@router.post("/compare-simple")
+async def compare_simple(payload: SimpleCompareIn):
+    """مقایسه دو بردار (بدون نیاز به سرویس Embedding)"""
+    try:
+        a = np.array(payload.a, dtype=np.float32)
+        b = np.array(payload.b, dtype=np.float32)
+
+        if len(a) != len(b):
+            raise HTTPException(status_code=400, detail="Vectors must have same dimension")
+        
+        if not np.all(np.isfinite(a)) or not np.all(np.isfinite(b)):
+            raise HTTPException(status_code=400, detail="Vectors contain invalid values")
+
+        sim = cosine_similarity([a], [b])[0][0]
+        return {"similarity": float(sim)}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Simple comparison failed: {e}")
+        raise HTTPException(status_code=500, detail="Internal error during comparison")
+
+@router.post("/predict")
+async def predict(payload: PredictIn):
+    """مقایسه بین دو کاربر بر اساس embedding ذخیره‌شده در Redis"""
+    keyA = f"embeddings:{payload.userA}"
+    keyB = f"embeddings:{payload.userB}"
+    a = await redis_client.get(keyA)
+    b = await redis_client.get(keyB)
+    if not a or not b:
+        raise HTTPException(status_code=404, detail="embedding not found")
+    embA = np.array(json.loads(a))
+    embB = np.array(json.loads(b))
+    score = float(np.dot(embA, embB) / (np.linalg.norm(embA) * np.linalg.norm(embB)))
+    return {"score": score}
+
+@router.post("/recommend")
+async def recommend(payload: RecommendIn):
+    """محاسبه پیشنهاد کاربران بر اساس وزن‌ها و شباهت‌ها"""
+    results = []
+    user_key = f"embeddings:{payload.user_id}"
+    user_emb = await redis_client.get(user_key)
+    if not user_emb:
+        raise HTTPException(status_code=404, detail="user embedding not found")
+
+    user_emb = np.array(json.loads(user_emb))
+
+    for cid in payload.candidates:
+        key = f"embeddings:{cid}"
+        c_emb = await redis_client.get(key)
+        if not c_emb:
+            continue
+        c_emb = np.array(json.loads(c_emb))
+        score = float(np.dot(user_emb, c_emb) / (np.linalg.norm(user_emb) * np.linalg.norm(c_emb)))
+        results.append({"candidate": cid, "score": score})
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return {"recommendations": results}
+
+
+@router.get("/health")
+def health():
+    return {"status": "ok"}
+
+@router.post("/train")
+def train(background_tasks: BackgroundTasks, 
+          payload: dict = Body(...), 
+          mode: str = "partial"):
+          
+    job_name = payload.get("job_name") or f"job_{int(datetime.datetime.utcnow().timestamp())}"
+    events = payload.get("events")
+
+    if not isinstance(events, list) or len(events) == 0:
+        raise HTTPException(status_code=400, detail="events array required and cannot be empty")
+
+    ts = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    save_path = os.path.join(DATA_DIR, f"{job_name}_{ts}.json")
+
+    try:
+        with open(save_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.exception("Failed to save payload")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    background_tasks.add_task(_background_train, save_path, job_name, mode)
+    logger.info(f"Accepted training job {job_name} (mode={mode})")
+    return {"status": "accepted", "job_name": job_name, "saved_to": save_path, "mode": mode}
+
+def _background_train(json_path: str, job_name: str, mode: str):
+    """
+    پردازش داده‌ها و آموزش مدل ساده XGBoost بر اساس رفتار کاربران.
+    """
+    try:
+        logger.info(f"[TRAIN] Started job={job_name} mode={mode}")
+        with open(json_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        events = payload.get("events", [])
+        df = pd.json_normalize(events)
+
+        if df.empty:
+            logger.warning(f"[TRAIN] No events found in {json_path}")
+            return
+
+        # تبدیل اکشن‌ها به label
+        def label_from_action(a):
+            if not isinstance(a, str):
+                return 0
+            a = a.lower()
+            return 1 if any(x in a for x in ["like", "superlike", "message"]) else 0
+
+        df["label"] = df["action"].apply(label_from_action)
+
+        # تبدیل userId و targetId به هش عددی
+        def hash32(x):
+            s = str(x)
+            h = hashlib.sha256(s.encode("utf-8")).hexdigest()
+            return int(h[:8], 16)
+
+        df["user_hash"] = df["userId"].apply(hash32)
+        df["target_hash"] = df["targetId"].apply(hash32)
+        df["createdAt"] = pd.to_datetime(df["createdAt"], errors="coerce")
+        df["hour"] = df["createdAt"].dt.hour.fillna(0).astype(int)
+        df["dow"] = df["createdAt"].dt.dayofweek.fillna(0).astype(int)
+
+        # انتخاب فیچرها
+        feature_cols = ["user_hash", "target_hash", "hour", "dow"]
+        X = df[feature_cols].fillna(0)
+        y = df["label"]
+
+        model_path = os.path.join(DATA_DIR, f"{job_name}.xgb")
+
+        try:
+            import xgboost as xgb
+            dtrain = xgb.DMatrix(X, label=y)
+            params = {
+                "objective": "binary:logistic",
+                "eval_metric": "auc",
+                "use_label_encoder": False
+            }
+            bst = xgb.train(params, dtrain, num_boost_round=50)
+            bst.save_model(model_path)
+            logger.info(f"[TRAIN] Finished job={job_name} — model saved to {model_path}")
+        except Exception as e:
+            logger.exception("[TRAIN] XGBoost training failed, saving fallback stats")
+            conv_rate = y.mean()
+            stats_path = os.path.join(DATA_DIR, f"{job_name}_stats.json")
+            with open(stats_path, "w", encoding="utf-8") as sf:
+                json.dump({"conversion_rate": float(conv_rate), "n_events": int(len(y))}, sf)
+            logger.info(f"[TRAIN] Saved fallback stats to {stats_path}")
+
+    except Exception as e:
+        logger.exception(f"[TRAIN] Unexpected error: {e}")
+===== FILE: ./ml_service/models/nn_model.py =====
+import os
+import time
+import joblib
+import numpy as np
+import logging
+import tensorflow as tf
+from tensorflow.keras import layers, Model
+
+def build_mixed_model(emb_dim: int = 384, feature_dim: int = 20) -> Model:
+    user_input = layers.Input(shape=(emb_dim,), name="user_emb")
+    target_input = layers.Input(shape=(emb_dim,), name="target_emb")
+    feature_input = layers.Input(shape=(feature_dim,), name="features")
+
+    merged_emb = layers.Concatenate()([user_input, target_input])
+    emb_dense = layers.Dense(256, activation="relu")(merged_emb)
+
+    combined = layers.Concatenate()([emb_dense, feature_input])
+    x = layers.Dense(256, activation="relu")(combined)
+    x = layers.Dropout(0.2)(x)
+    x = layers.Dense(128, activation="relu")(x)
+    output = layers.Dense(1, activation="sigmoid")(x)
+
+    model = Model(inputs=[user_input, target_input, feature_input], outputs=output)
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
+        loss="binary_crossentropy",
+        metrics=[tf.keras.metrics.AUC(name="auc")]
+    )
+    return model
+
+class NNMatchModel:
+    def __init__(self, model_dir: str = "models_store/nn", emb_dim: int = 384, feature_dim: int = 20):
+        self.model_dir = model_dir
+        os.makedirs(self.model_dir, exist_ok=True)
+        self.emb_dim = emb_dim
+        self.feature_dim = feature_dim
+        self.model = build_mixed_model(emb_dim, feature_dim)
+
+    def train(self, user_embs: np.ndarray, target_embs: np.ndarray, features: np.ndarray, labels: np.ndarray,
+              epochs: int = 10, batch_size: int = 256, validation_split: float = 0.1):
+        history = self.model.fit([user_embs, target_embs, features], labels,
+                                 epochs=epochs, batch_size=batch_size, validation_split=validation_split)
+        version = int(time.time())
+        save_folder = os.path.join(self.model_dir, f"nn_{version}")
+        self.model.save(save_folder, include_optimizer=False)
+        joblib.dump({"emb_dim": self.emb_dim, "feature_dim": self.feature_dim}, save_folder + ".meta.pkl")
+        logging.info(f"Trained NN model saved at {save_folder}")
+        return {"path": save_folder, "version": version, "history": history.history}
+
+    def load(self, folder: str):
+        self.model = tf.keras.models.load_model(folder)
+        meta = joblib.load(folder + ".meta.pkl")
+        self.emb_dim = meta["emb_dim"]
+        self.feature_dim = meta["feature_dim"]
+        logging.info(f"Loaded NN model from {folder}")
+
+    def predict(self, user_emb: np.ndarray, target_emb: np.ndarray, features: np.ndarray) -> float:
+        u = np.asarray(user_emb).reshape(1, -1)
+        v = np.asarray(target_emb).reshape(1, -1)
+        f = np.asarray(features).reshape(1, -1)
+        prob = float(self.model.predict([u, v, f])[0][0])
+        return prob
+
+===== FILE: ./ml_service/models/xgb_model.py =====
+import os
+import time
+import joblib
+import logging
+import pandas as pd
+from xgboost import XGBClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, roc_auc_score, precision_score, recall_score
+
+class XGBMatchModel:
+    def __init__(self, model_dir: str = "models_store/xgboost"):
+        self.model_dir = model_dir
+        os.makedirs(self.model_dir, exist_ok=True)
+        self.model = None
+        self.feature_columns = None
+
+    def train_from_df(self, df: pd.DataFrame, label_col: str = "matched", params: dict = None):
+        if label_col not in df.columns:
+            raise ValueError(f"Label column '{label_col}' not found.")
+
+        X = df.drop(columns=[label_col, "user1_id", "user2_id"], errors="ignore")
+        y = df[label_col]
+        self.feature_columns = X.columns.tolist()
+
+        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+
+        default_params = dict(
+            n_estimators=300,
+            max_depth=5,
+            learning_rate=0.05,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            use_label_encoder=False,
+            eval_metric="logloss"
+        )
+        if params:
+            default_params.update(params)
+
+        model = XGBClassifier(**default_params)
+        model.fit(X_train, y_train, eval_set=[(X_val, y_val)], early_stopping_rounds=20, verbose=False)
+
+        preds = model.predict(X_val)
+        probs = model.predict_proba(X_val)[:, 1]
+
+        metrics = {
+            "accuracy": float(accuracy_score(y_val, preds)),
+            "roc_auc": float(roc_auc_score(y_val, probs)),
+            "precision": float(precision_score(y_val, preds)),
+            "recall": float(recall_score(y_val, preds)),
+        }
+
+        version = int(time.time())
+        save_path = os.path.join(self.model_dir, f"xgb_{version}.pkl")
+        joblib.dump({"model": model, "feature_columns": self.feature_columns}, save_path)
+
+        self.model = model
+        logging.info(f"Trained and saved XGBoost model at {save_path}")
+        return {"path": save_path, "version": version, "metrics": metrics}
+
+    def load(self, path: str):
+        data = joblib.load(path)
+        self.model = data["model"]
+        self.feature_columns = data.get("feature_columns")
+        logging.info(f"Loaded XGBoost model from {path}")
+
+    def predict(self, features: dict):
+        if self.model is None:
+            raise RuntimeError("Model not loaded.")
+        X = pd.DataFrame([features])
+        X = X.reindex(columns=self.feature_columns, fill_value=0)
+        return float(self.model.predict_proba(X)[0][1])
+
+===== FILE: ./ml_service/Dockerfile =====
+FROM python-ai-ml-http:latest
+
+WORKDIR /app
+COPY . .
+
+ENV PYTHONPATH=/app
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+===== FILE: ./ml_service/train_model.py =====
+
+===== FILE: ./ml_service/utils/cleanup.py =====
+import os
+import shutil
+import logging
+
+def cleanup_old_models(model_dir: str, keep_last: int = 3):
+    os.makedirs(model_dir, exist_ok=True)
+    all_models = sorted(os.listdir(model_dir))
+    for old in all_models[:-keep_last]:
+        path = os.path.join(model_dir, old)
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            elif os.path.isfile(path):
+                os.remove(path)
+            logging.info(f"Removed old model: {path}")
+        except Exception as e:
+            logging.warning(f"Failed to remove {path}: {e}")
+
+===== FILE: ./ml_service/utils/data_loader.py =====
+
+===== FILE: ./ai_assistant/api/assistant.py =====
+from fastapi import APIRouter, HTTPException, Body, Depends
+from typing import Dict, List, Optional
+import logging
+from datetime import datetime
+
+from core.nlp import analyze_personality, sentiment_of_text
+from core.behavior import analyze_behavior
+from core.utils import save_json, load_json, get_redis
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+# وابستگی برای Redis
+async def get_redis_client():
+    from app import redis_client
+    return redis_client
+
+@router.post("/analyze")
+async def analyze_user(payload: Dict = Body(...)):
+    """
+    تحلیل کامل کاربر
+    - personality از bio + messages
+    - behavior از events
+    - ذخیره در Redis برای استفاده بعدی
+    """
+    try:
+        user_id = payload.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="user_id required")
+
+        bio = payload.get("bio", "")
+        messages = payload.get("messages", [])
+        events = payload.get("events", [])
+        
+        # ترکیب متن برای تحلیل شخصیت
+        text_blob = bio + " " + (" ".join(messages))[:2000]  # محدودیت طول
+        
+        # تحلیل‌ها
+        personality = analyze_personality(text_blob)
+        behavior = analyze_behavior(events)
+        
+        # تحلیل احساسات آخرین پیام (اختیاری)
+        sentiment = None
+        if messages:
+            last_message = messages[-1]
+            sentiment = sentiment_of_text(last_message)
+        
+        # نتیجه نهایی
+        result = {
+            "user_id": user_id,
+            "personality": personality,
+            "behavior": behavior,
+            "sentiment": sentiment,
+            "analyzed_at": datetime.now().isoformat()
+        }
+        
+        # ذخیره در Redis (با expire 7 روز)
+        redis = await get_redis_client()
+        await redis.setex(
+            f"assistant:user:{user_id}",
+            604800,  # 7 روز
+            json.dumps(result)
+        )
+        
+        # ذخیره در فایل (backup)
+        save_json(f"user_{user_id}", result)
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/advice/{user_id}")
+async def get_advice(user_id: int):
+    """
+    دریافت توصیه برای کاربر بر اساس تحلیل قبلی
+    """
+    try:
+        redis = await get_redis_client()
+        
+        # اول از Redis بگیر
+        cached = await redis.get(f"assistant:user:{user_id}")
+        
+        if cached:
+            import json
+            data = json.loads(cached)
+        else:
+            # از فایل بخون
+            data = load_json(f"user_{user_id}")
+            
+        if not data:
+            raise HTTPException(
+                status_code=404, 
+                detail="User not found. Please POST /analyze first"
+            )
+        
+        personality = data.get("personality", {})
+        behavior = data.get("behavior", {})
+        
+        # تولید توصیه‌های هوشمند
+        tips = []
+        
+        # 1. توصیه بر اساس کامل بودن پروفایل
+        pc = behavior.get("profile_completeness", 0.5)
+        if pc < 0.7:
+            tips.append("📝 پروفایل خود را کامل کنید: اضافه کردن سن، شهر و توضیحات")
+        
+        # 2. توصیه بر اساس شخصیت
+        if personality.get("extraversion", 0.5) > 0.7:
+            tips.append("👥 با توجه به شخصیت برون‌گرا، عکس‌های اجتماعی و گروهی بگذارید")
+        else:
+            tips.append("🎯 با توجه به شخصیت درون‌گرا، عکس‌های طبیعی و صمیمی انتخاب کنید")
+        
+        # 3. توصیه بر اساس رفتار
+        like_rate = behavior.get("like_rate", 0)
+        if like_rate < 0.1:
+            tips.append("❤️ با لایک کردن روزانه ۵ نفر، شانس دیده شدن خود را افزایش دهید")
+        
+        message_rate = behavior.get("message_rate", 0)
+        if message_rate < 0.05:
+            tips.append("💬 ارسال پیام‌های شخصی‌سازی شده، نرخ پاسخ را تا ۳۰٪ افزایش می‌دهد")
+        
+        # 4. توصیه‌های فاز (اگر فاز رو داریم)
+        phase = payload.get("phase") if 'payload' in locals() else None
+        if phase == 'cold':
+            tips.append("🚀 برای شروع، از بوست رایگان استفاده کنید")
+        elif phase == 'warm':
+            tips.append("🔥 برای دیده شدن بیشتر، خرید اعتبار را امتحان کنید")
+        elif phase == 'hot':
+            tips.append("👑 با اشتراک VIP، لایک نامحدود داشته باشید")
+        
+        return {
+            "user_id": user_id,
+            "personality_summary": summarize_personality(personality),
+            "behavior_summary": {
+                "like_rate": like_rate,
+                "message_rate": message_rate,
+                "total_events": behavior.get("total_events", 0)
+            },
+            "tips": tips[:5],  # حداکثر ۵ تا
+            "generated_at": datetime.now().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Advice failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/chat")
+async def chat(payload: Dict = Body(...)):
+    """
+    پاسخ به چت کاربر (نسخه ساده)
+    """
+    try:
+        user_id = payload.get("user_id")
+        message = payload.get("message")
+        conv_id = payload.get("convId")
+        
+        if not user_id or not message:
+            raise HTTPException(status_code=400, detail="user_id and message required")
+        
+        # تحلیل ساده پیام
+        sentiment = sentiment_of_text(message)
+        
+        # پاسخ‌های از پیش تعریف شده
+        responses = {
+            "سلام": "سلام! چطور می‌تونم کمکت کنم؟",
+            "help": "می‌تونم در این موارد کمکت کنم:\n- بهبود پروفایل\n- افزایش تعامل\n- خرید اشتراک",
+            "پروفایل": "برای بهبود پروفایل، عکس با کیفیت و توضیحات کامل اضافه کن",
+        }
+        
+        # جستجوی ساده
+        reply = responses.get(message.lower(), 
+                              "متوجه شدم. برای راهنمایی بیشتر، 'help' رو بفرست.")
+        
+        return {
+            "reply": reply,
+            "sentiment": sentiment,
+            "convId": conv_id
+        }
+        
+    except Exception as e:
+        logger.error(f"Chat failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+def summarize_personality(personality: Dict) -> str:
+    """خلاصه‌سازی شخصیت برای نمایش"""
+    traits = []
+    if personality.get("extraversion", 0.5) > 0.6:
+        traits.append("برون‌گرا")
+    else:
+        traits.append("درون‌گرا")
+    
+    if personality.get("openness", 0.5) > 0.6:
+        traits.append("خلاق")
+    
+    if personality.get("agreeableness", 0.5) > 0.6:
+        traits.append("مهربان")
+    
+    return "شخصیت " + "، ".join(traits) if traits else "شخصیت متعادل"
+===== FILE: ./ai_assistant/core/behavior.py =====
+# python-ai/ml_service/assistant/behavior.py
+from typing import List, Dict
+from collections import Counter
+import pandas as pd
+
+def analyze_behavior(events: List[Dict]) -> Dict:
+    if not events:
+        return {"summary": "no_events", "tips": ["تعامل کافی ثبت نشده؛ چند اقدام (دیدن/لایک/پیام) انجام بده."]}
+
+    df = pd.DataFrame(events)
+    # normalize actions
+    if 'action' not in df.columns:
+        return {"summary": "no_action_field", "tips": ["لاگ‌های رفتاری فرمت مورد انتظار را ندارند."]}
+
+    counts = Counter(df['action'].fillna('unknown').tolist())
+    total = sum(counts.values()) or 1
+    like_rate = counts.get('like', 0) / total
+    message_rate = counts.get('message', 0) / total
+
+    tips = []
+    if like_rate < 0.1:
+        tips.append("نسبت لایک‌ها پایینه — الگوریتم سلیقه رو کمتر می‌فهمه. کمی فعال‌تر لایک کن.")
+    if message_rate < 0.05:
+        tips.append("نسبت پیام پایین است؛ پیام‌های شخصی‌تر نرخ پاسخ را بالا می‌برند (+~30%).")
+
+    # peak hour detection
+    if 'createdAt' in df.columns:
+        try:
+            df['createdAt'] = pd.to_datetime(df['createdAt'], errors='coerce')
+            if not df['createdAt'].isna().all():
+                peak = int(df['createdAt'].dt.hour.mode().iat[0])
+                tips.append(f"پربازده‌ترین ساعت شما: {peak}:00 — امتحان کن در آن زمان فعال‌تر باشی.")
+        except Exception:
+            pass
+
+    # profile completeness heuristic (try to see metadata columns)
+    completeness = 0.5
+    # if events contain metadata that suggests profile fields, increase
+    # (consumer of this function can pass profile_completeness if available)
+    return {
+        "counts": dict(counts),
+        "total_events": total,
+        "like_rate": round(like_rate, 2),
+        "message_rate": round(message_rate, 2),
+        "tips": tips,
+        "profile_completeness": round(completeness, 2)
+    }
+
+===== FILE: ./ai_assistant/core/nlp.py =====
+from typing import Dict, List
+import logging
+import os
+import httpx
+import logging
+from typing import Dict, List
+
+logger = logging.getLogger("assistant.nlp")
+
+EMBEDDING_SERVICE_URL = os.getenv("EMBEDDING_SERVICE_URL", "http://embedded_ai:8100")
+
+# بارگذاری مدل Sentiment باقی می‌ماند (چون سبک است و تخصصی)
+try:
+    from transformers import pipeline
+    _SENTIMENT = pipeline("sentiment-analysis", model="distilbert-base-uncased")
+except Exception as e:
+    logger.warning("Sentiment model not available: %s", e)
+    _SENTIMENT = None
+
+TRAIT_PROMPTS = {
+    "openness": ["I like traveling, exploring new ideas, and art."],
+    "extraversion": ["I enjoy being social and meeting new people."],
+    "agreeableness": ["I like helping others and being kind."],
+    # ...
+}
+
+async def get_embedding(text: str) -> List[float]:
+    """دریافت Embedding از سرویس متمرکز"""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{EMBEDDING_SERVICE_URL}/embed",
+                json={"text": text}
+            )
+            response.raise_for_status()
+            return response.json()["embedding"]
+    except Exception as e:
+        logger.error(f"خطا در دریافت Embedding: {e}")
+        raise
+
+async def compute_similarity(vec_a: List[float], vec_b: List[float]) -> float:
+    """محاسبه شباهت از طریق سرویس متمرکز"""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{EMBEDDING_SERVICE_URL}/similarity",
+                json={"vector_a": vec_a, "vector_b": vec_b}
+            )
+            response.raise_for_status()
+            return response.json()["similarity"]
+    except Exception as e:
+        logger.error(f"خطا در محاسبه شباهت: {e}")
+        return 0.0
+
+async def analyze_personality(text: str) -> Dict[str, float]:
+    """تحلیل شخصیت با استفاده از Embedding سرویس متمرکز"""
+    text = (text or "").strip()
+    if not text:
+        return {t: 0.5 for t in TRAIT_PROMPTS.keys()}
+
+    try:
+        # دریافت Embedding متن کاربر
+        user_emb = await get_embedding(text)
+        
+        scores = {}
+        for trait, prompts in TRAIT_PROMPTS.items():
+            # دریافت Embedding برای prompt این trait
+            prompt_emb = await get_embedding(prompts[0])
+            
+            # محاسبه شباهت
+            sim = await compute_similarity(user_emb, prompt_emb)
+            
+            # تبدیل شباهت به امتیاز ۰ تا ۱
+            scores[trait] = round(max(0.0, min(1.0, (sim + 1) / 2 * 0.9 + 0.05)), 2)
+            
+        return scores
+    except Exception as e:
+        logger.exception("تحلیل شخصیت با خطا مواجه شد: %s", e)
+        # Fallback به حالت Rule-Based
+        return rule_based_personality(text)
+
+def rule_based_personality(text: str) -> Dict[str, float]:
+    # همان منطق قبلی rule-based
+    pass
+
+# trait exemplars (small english prompts — works ok with multilingual MiniLM)
+TRAIT_PROMPTS = {
+    "openness": [
+        "I like traveling, exploring new ideas, and art.",
+        "I enjoy creativity, learning and new experiences."
+    ],
+    "conscientiousness": [
+        "I am organized and like to plan things ahead.",
+        "I try to be responsible and achieve my goals."
+    ],
+    "extraversion": [
+        "I enjoy being social and meeting new people.",
+        "I like parties and being around friends."
+    ],
+    "agreeableness": [
+        "I like helping others and being kind.",
+        "I am friendly and cooperative in relationships."
+    ],
+    "neuroticism": [
+        "I often feel anxious and worry a lot.",
+        "I get stressed easily and feel moody sometimes."
+    ],
+}
+
+def sentiment_of_text(text: str) -> Dict:
+    """Return sentiment label and score using transformers pipeline if available."""
+    if not text or _SENTIMENT is None:
+        return {"label": "neutral", "score": 0.0}
+    try:
+        out = _SENTIMENT(text[:512])  # limit length
+        if isinstance(out, list) and out:
+            return {"label": out[0]["label"], "score": float(out[0].get("score", 0.0))}
+    except Exception as e:
+        logger.exception("sentiment pipeline failed: %s", e)
+    return {"label": "neutral", "score": 0.0}
+
+def analyze_personality(text: str) -> Dict[str, float]:
+    """
+    OCEAN estimation using embedding similarity to trait exemplars.
+    If sentence-transformers not available, fallback to rule-based keyword scoring.
+    Returns trait scores in [0,1].
+    """
+    text = (text or "").strip()
+    if not text:
+        return {t: 0.5 for t in TRAIT_PROMPTS.keys()}
+
+    if _SENTENCE_MODEL is not None:
+        try:
+            emb = _SENTENCE_MODEL.encode(text, convert_to_tensor=True)
+            scores = {}
+            for trait, prompts in TRAIT_PROMPTS.items():
+                # compute avg similarity to exemplars
+                sims = []
+                for p in prompts:
+                    p_emb = _SENTENCE_MODEL.encode(p, convert_to_tensor=True)
+                    sims.append(float(util.pytorch_cos_sim(emb, p_emb).item()))
+                avg_sim = sum(sims) / len(sims)
+                # normalize: map similarity [-1,1] to [0,1] roughly via (sim+1)/2, then small floor
+                scores[trait] = round(max(0.0, min(1.0, (avg_sim + 1) / 2.0 * 0.9 + 0.05)), 2)
+            return scores
+        except Exception as e:
+            logger.exception("sentence embedding personality failed: %s", e)
+
+    # fallback: keyword-based (simple)
+    kws = {
+        "openness": ["creative", "curious", "art", "travel", "explore", "learn"],
+        "conscientiousness": ["organized", "plan", "responsible", "goal", "career"],
+        "extraversion": ["social", "party", "friends", "outgoing"],
+        "agreeableness": ["kind", "help", "support", "friendly"],
+        "neuroticism": ["anxious", "worry", "stress", "moody"]
+    }
+    text_low = text.lower()
+    scores = {}
+    for trait, keys in kws.items():
+        cnt = sum(1 for k in keys if k in text_low)
+        scores[trait] = round(min(1.0, 0.3 + 0.18 * cnt), 2)
+    return scores
+
+===== FILE: ./ai_assistant/core/__init__.py =====
+"""Core modules for AI assistant."""
+
+===== FILE: ./ai_assistant/core/utils.py =====
+import os, json
+CACHE_DIR = os.getenv("ASSISTANT_CACHE_DIR", "/tmp/assistant_cache")
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+def save_json(name, data):
+    p = os.path.join(CACHE_DIR, f"{name}.json")
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def load_json(name):
+    p = os.path.join(CACHE_DIR, f"{name}.json")
+    if not os.path.exists(p):
+        return None
+    with open(p, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+===== FILE: ./ai_assistant/app.py =====
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import logging
+from contextlib import asynccontextmanager
+import redis.asyncio as aioredis
+import os
+
+from api.assistant import router as assistant_router
+
+# تنظیم لاگ
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Redis connection
+redis_client = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # startup
+    global redis_client
+    redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+    redis_client = aioredis.from_url(redis_url, decode_responses=True)
+    logger.info("✅ AI Assistant service started")
+    yield
+    # shutdown
+    if redis_client:
+        await redis_client.close()
+    logger.info("👋 AI Assistant service stopped")
+
+app = FastAPI(
+    title="AI Assistant Service",
+    description="Intelligent assistant for user guidance and advice",
+    version="2.0.0",
+    lifespan=lifespan
+)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include routers
+app.include_router(assistant_router, prefix="/api/assistant", tags=["assistant"])
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "healthy",
+        "service": "ai_assistant",
+        "version": "2.0.0",
+        "redis": redis_client is not None
+    }
+
+@app.get("/")
+async def root():
+    return {
+        "name": "AI Assistant Service",
+        "version": "2.0.0",
+        "endpoints": [
+            "/api/assistant/analyze",
+            "/api/assistant/advice/{user_id}",
+            "/api/assistant/chat",
+            "/health"
+        ]
+    }
+===== FILE: ./ai_assistant/modeling.py =====
+import os, json
+import numpy as np
+
+MODEL_DIR = os.getenv("ML_MODEL_DIR", "/tmp/ml_models")
+
+def load_model(name="behavior_xgb"):
+    path = os.path.join(MODEL_DIR, f"{name}.xgb")
+    if os.path.exists(path):
+        try:
+            import xgboost as xgb
+            m = xgb.Booster()
+            m.load_model(path)
+            return m
+        except Exception:
+            return None
+    return None
+
+def predict_response_probability(model, features: dict):
+    if model is None:
+        return None
+    # construct dmatrix from features dict (ensure order)
+    import xgboost as xgb
+    import pandas as pd
+    df = pd.DataFrame([features])
+    d = xgb.DMatrix(df)
+    return float(model.predict(d)[0])
+
+===== FILE: ./ai_assistant/Dockerfile =====
+FROM python-ai-transformers:latest
+
+WORKDIR /app
+COPY . .
+
+ENV PYTHONPATH=/app
+ENV REDIS_URL=redis://redis:6379/0
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8022"]

@@ -1,0 +1,109 @@
+{
+  "_توضیح": "این فایل دستی و از روی خواندن واقعی سورس کد ساخته شده. آپدیت شده پس از BREAKING CHANGES: رفع باگ SQL (MySQL syntax)، جایگزینی PartitionedEvent با PartitionedEvent، حذف pastPayments از فرمول فاز، اضافه شدن UserDailyMetrics.",
+  "_تاریخ_تولید": "2026-06-22",
+
+  "یافته_اصلی_این_بررسی": {
+    "عنوان": "✅ رفع شد: علت قطعی خطای SQL syntax در get7dMetrics و getRetentionDays",
+    "محل": "src/user-metrics/user-metrics.service.ts → get7dMetrics() / getRetentionDays()",
+    "وضعیت": "FIXED در نسخه refYar",
+    "شرح_قبلی": "کوئری خام با سینتکس PostgreSQL ($1، CURRENT_DATE - INTERVAL '7 days'، دابل‌کوتیشن) در MySQL اجرا می‌شد و SQL syntax error در خط ۱۱ می‌داد.",
+    "رفع_شده": "کوئری به سینتکس MySQL برگردانده شد: ? (نه $1)، CURDATE() - INTERVAL 7 DAY، بدون دابل‌کوتیشن. همچنین NaN guard به calculatePercentile اضافه شد (Math.max(score, 0)).",
+    "جدول_جدید": "UserDailyMetrics (user_daily_metrics) — entity جدید برای نگهداری متریک‌های روزانه جایگزین materialized view پستگرس شد.",
+    "MetricsRefreshService": "MetricsRefreshService (که REFRESH MATERIALIZED VIEW می‌زد — مختص PostgreSQL) همچنان در کد وجود دارد ولی غیرفعال است. برای MySQL باید با cron job ساده (INSERT INTO user_daily_metrics) جایگزین شود.",
+    "پاسخ_به_ماندن_کش_قدیمی": "چون calculate() همیشه در try/catch با fallback بود، خطای SQL پنهان می‌ماند. اکنون get7dMetrics کار می‌کند، calculate() متریک‌های واقعی می‌گیرد."
+  },
+
+  "routes": {
+
+    "GET /phase/:userId": {
+      "خلاصه_یک_خطی": "متریک‌های کامل فاز یک کاربر را برمی‌گرداند: فاز فعلی، امتیاز، یادگیری، صدک، و اقدامات پیشنهادی.",
+      "کنترلر": "src/phase/phase.controller.ts → PhaseController.getPhase()",
+      "گارد": "ندارد (عمومی — هرکسی با هر userId می‌تواند فاز هرکس دیگری را ببیند)",
+      "زنجیره_فراخوانی": "PhaseController.getPhase() → PhaseService.getPhaseMetrics()",
+      "مراحل": [
+        {
+          "شماره": 1,
+          "عنوان": "گرفتن رکورد فاز فعلی (بدون محاسبه مجدد)",
+          "فایل": "PhaseService.get()",
+          "شرح": "findOne({where:{userId}}) — اگر نبود، رکورد جدید با phase='cold' و score=0 ساخته می‌شود. این route خودش calculate() را صدا نمی‌زند."
+        },
+        {
+          "شماره": 2,
+          "عنوان": "محاسبه صدک (percentile) — با NaN guard",
+          "شرح": "✅ رفع باگ: قبلاً اگر score به‌جای عدد NaN بود، LessThan(NaN) کوئری بی‌معنا می‌زد. حالا Math.max(score, 0) قبل از کوئری اعمال می‌شود."
+        },
+        {
+          "شماره": 3,
+          "عنوان": "آستانه فاز بعدی",
+          "شرح": "cold→15، warm→40، hot→0 (هاردکد)."
+        },
+        {
+          "شماره": 4,
+          "عنوان": "اقدامات پیشنهادی",
+          "شرح": "هاردکد بر اساس فاز و everPaid — سرویس هوشمند جداگانه‌ای ندارد."
+        }
+      ],
+      "خروجی_موفق": "{phase, score, learningScore, everPaid, percentile, nextPhaseThreshold, suggestedActions}",
+      "میکروسرویس_پایتون_درگیر": "هیچ‌کدام مستقیم",
+      "جداول_درگیر": ["user_phase"]
+    }
+  },
+
+  "نقاط_ورودی_غیرمستقیم_PhaseService": {
+    "_توضیح": "این متدها route مستقیم HTTP ندارند ولی از ماژول‌های دیگر صدا زده می‌شوند.",
+
+    "learnFromFeedback(userId, event)": {
+      "صدا_زده_می‌شود_از": [
+        "src/auth/services/auth-registration.service.ts → completeProfile() با event='profile_completed'",
+        "src/interaction/interaction.service.ts → doPostInteractionTasks() با event='match'",
+        "src/payments/payments.service.ts → grantBundle() با event='purchase'"
+      ],
+      "شرح": "پاداش عددی بر اساس نوع رویداد به وزن مربوطه در Redis اضافه می‌شود، سپس calculate() دوباره صدا زده می‌شود.",
+      "وضعیت_رفع_باگ": "✅ calculate() حالا get7dMetrics را با MySQL syntax می‌خواند. خطای SQL syntax برطرف شده."
+    },
+
+    "calculate(userId, metrics?)": {
+      "صدا_زده_می‌شود_از": ["learnFromFeedback (غیرمستقیم از Auth/Interaction/Payments)"],
+      "منبع_داده_جدید": "✅ UserDailyMetrics (جدول user_daily_metrics با سینتکس MySQL) جایگزین کوئری raw پستگرس شد.",
+      "تغییر_فرمول": "✅ pastPayments از فرمول حذف شد — Phase فقط engagement را می‌سنجد. درآمد و پرداخت حالا در PaywallDecisionService (از طریق RevenueAttributionService.predictLTV) به‌کار می‌روند.",
+      "شرح": "فرمول: effectiveMatches*weights.matches + effectiveMessages*weights.messages + views7d*weights.views + retentionDays*weights.retentionDays + boostUsed7d*weights.boostUsed + cityUsers*weights.cityUsers + learningScore*weights.learningScore + profileCompleteness*weights.profileCompleteness + sentimentScore*weights.sentimentScore"
+    },
+
+    "calculateLearningScore(userId)": {
+      "وضعیت": "✅ رفع شد: قبلاً از PartitionedEvent (جدول منسوخ user_event_logs با @deprecated) می‌خواند. حالا از PartitionedEvent می‌خواند."
+    },
+
+    "get(userId)": {
+      "صدا_زده_می‌شود_از": [
+        "PhaseController.getPhase() (از طریق getPhaseMetrics)",
+        "interaction.service.ts → doPostInteractionTasks() برای تنظیم revenue phase multiplier",
+        "PaywallDecisionService.buildContext() → برای تصمیم‌گیری paywall"
+      ],
+      "شرح": "فقط می‌خواند/می‌سازد، محاسبه نمی‌کند."
+    },
+
+    "markEverPaid(userId)": {
+      "صدا_زده_می‌شود_از": ["src/payments/payments.service.ts → grantBundle() (تأیید شده)"],
+      "شرح": "تنها نقطه‌ای در کد که این متد صدا زده می‌شود."
+    },
+
+    "getAllWeights() / getWeight() / setWeight()": {
+      "شرح": "وزن‌ها در Redis با TTL ۹۰ روز. انقضا → reset به DEFAULT_WEIGHTS."
+    },
+
+    "getProfileCompleteness() / getSentimentScore()": {
+      "شرح": "هنوز hardcode هستند (0.7 و 0.5) — TODO در کد."
+    }
+  },
+
+  "نکات_کلی": [
+    "✅ رفع شد: get7dMetrics و getRetentionDays به MySQL syntax بازگردانده شدند (? نه $1، CURDATE() نه CURRENT_DATE، بدون دابل‌کوتیشن). خطای SQL در خط ۱۱ برطرف شده.",
+    "✅ رفع شد: calculateLearningScore حالا از PartitionedEvent می‌خواند، نه PartitionedEvent منسوخ.",
+    "✅ رفع شد: calculatePercentile با NaN guard — Math.max(score, 0) قبل از LessThan.",
+    "✅ رفع شد: pastPayments از فرمول Phase حذف شد — Phase فقط engagement است، نه درآمد.",
+    "⚠️ MetricsRefreshService هنوز در کد وجود دارد و REFRESH MATERIALIZED VIEW می‌زند که MySQL سینتکس PostgreSQL است. اگر Cron فعال باشد، هر شب ۳ صبح خطا می‌دهد. باید با INSERT INTO user_daily_metrics جایگزین شود.",
+    "⚠️ GET /phase/:userId هیچ گاردی ندارد — اطلاعات فاز/امتیاز/everPaid هر کاربری برای هرکسی قابل مشاهده است.",
+    "ℹ️ PaywallDecisionService جدید از PhaseService.get() برای تصمیم‌گیری paywall استفاده می‌کند — این یک caller جدید و صحیح برای این متد است.",
+    "وزن 'messages' در فرمول فاز هنوز عملاً خاموش است — PhaseService.learnFromFeedback با event='message' از هیچ مسیر فعالی (post message) صدا زده نمی‌شود. فقط 'profile_completed' (ثبت‌نام)، 'match' (تعامل)، و 'purchase' (پرداخت) فرمول را فعال می‌کنند."
+  ]
+}

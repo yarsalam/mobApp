@@ -1,0 +1,27 @@
+FROM python-ai-core
+
+USER root
+
+RUN --mount=type=bind,source=downloaded_wheels,target=/wheels,readonly \
+    --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-index --find-links=/wheels \
+        numpy==1.26.4
+
+RUN --mount=type=bind,source=downloaded_wheels,target=/wheels,readonly \
+    --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-index --find-links=/wheels \
+        torch==2.6.0+cpu \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        transformers \
+        sentence-transformers \
+        tokenizers \
+        safetensors \
+        slowapi \
+        textblob \
+        pandas \
+        nltk \
+        accelerate
+
+USER appuser
+
+CMD ["bash"]

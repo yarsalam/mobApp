@@ -1,0 +1,524 @@
+networks:
+  ai_network:
+    driver: bridge
+    name: yarsalam_network
+
+volumes:
+  redis_data:
+  mysql_data:
+  postgres_data:
+  whatsapp_sessions:
+  model_cache:
+  qdrant_data:
+  feedback_models:
+  seo_models:
+  monetization_models:
+  assistant_models:
+  moderation_models:
+  verification_models:
+  support_models:
+  ml_models:
+
+services:
+  # ============================================
+  # سرویس‌های پایه (زیرساخت)
+  # ============================================
+  
+  redis:
+    image: redis:7-alpine
+    container_name: redis_cache
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ai_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  user-mysql:
+    image: mysql:8.0
+    container_name: user_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: yarsalam
+      MYSQL_USER: appuser
+      MYSQL_PASSWORD: apppassword
+      MYSQL_ROOT_HOST: '%'
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d
+    command: 
+      --character-set-server=utf8mb4 
+      --collation-server=utf8mb4_unicode_ci 
+      --default-authentication-plugin=mysql_native_password
+    networks:
+      - ai_network
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -proot123 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 80s
+
+  # ============================================
+  # سرویس اصلی NestJS
+  # ============================================
+  
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: backend
+    ports:
+      - "5001:5000"
+    volumes:
+      - .:/app:delegated
+      - ./public:/app/public:delegated
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - DB_HOST=user-mysql
+      - DB_PORT=3306
+      - DB_USER=root
+      - DB_PASS=root123
+      - DB_NAME=yarsalam
+    depends_on:
+      redis:
+        condition: service_healthy
+      user-mysql:
+        condition: service_healthy
+    networks:
+      - ai_network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  # ============================================
+  # سرویس واتساپ (Node.js)
+  # ============================================
+  
+  whatsapp_listener:
+    build:
+      context: ./whatsapp_listener
+      dockerfile: Dockerfile
+    container_name: whatsapp_listener
+    restart: unless-stopped
+    volumes:
+      - ./whatsapp_listener/whatsapp_auth:/app/whatsapp_auth
+      - ./whatsapp_listener/sessions:/app/sessions
+      - whatsapp_sessions:/app/sessions_cache
+    environment:
+      - NODE_ENV=production
+      - API_URL=http://backend:5000
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - USE_BAILEYS=true
+    depends_on:
+      - backend
+      - redis
+    networks:
+      - ai_network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  # ============================================
+  # سرویس‌های پایتون - دسته Core (python-ai-core)
+  # ============================================
+
+  ai_ops:
+    build:
+       context: ./python-ai/services/ai_ops
+       additional_contexts:
+        wheels: ./python-ai/downloaded_wheels 
+    container_name: ai_ops
+    ports:
+      - "8025:8025"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - BACKEND_API_URL=http://backend:5000
+    depends_on:
+      - redis
+      - backend
+    networks:
+      - ai_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # ============================================
+  # سرویس‌های پایتون - دسته ML-Lite (python-ai-ml-lite)
+  # ============================================
+  
+  ai_feedback:
+    build: ./python-ai/services/ai_feedback
+    container_name: ai_feedback
+    ports:
+      - "8005:8004"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_PATH=/app/models/conversion_model.pkl
+    volumes:
+      - feedback_models:/app/models
+    depends_on:
+      - redis
+    networks:
+      - ai_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  ai_seo:
+    build: ./python-ai/services/ai_seo
+    container_name: ai_seo
+    ports:
+      - "8021:8021"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_PATH=/app/models
+    volumes:
+      - seo_models:/app/models
+    depends_on:
+      - redis
+    networks:
+      - ai_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
+        reservations:
+          memory: 1G
+
+  ai_monetization:
+    build: ./python-ai/services/ai_monetization
+    container_name: ai_monetization
+    ports:
+      - "8015:8015"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_PATH=/app/models
+      - MODEL_VERSION=v1
+    volumes:
+      - monetization_models:/app/models
+    depends_on:
+      - redis
+    networks:
+      - ai_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  ai_revenue:
+    build: ./python-ai/services/ai_revenue
+    container_name: ai_revenue
+    ports:
+      - "8006:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      - redis
+    networks:
+      - ai_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # ============================================
+  # سرویس‌های پایتون - دسته NLP (python-ai-nlp)
+  # ============================================
+  
+  ai_assistant:
+    build: ./python-ai/services/ai_assistant
+    container_name: ai_assistant
+    ports:
+      - "8022:8022"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - MODEL_CACHE=/app/models
+    volumes:
+      - assistant_models:/app/models
+    depends_on:
+      - redis
+    networks:
+      - ai_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  ai_moderation:
+    build:
+      context: ./python-ai/services/ai_moderation
+      additional_contexts:
+        wheels: ./python-ai/downloaded_wheels
+    container_name: ai_moderation
+    ports:
+      - "8018:8018"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_CACHE=/app/models
+    volumes:
+      - moderation_models:/app/models
+    depends_on:
+      - redis
+    networks:
+      - ai_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
+        reservations:
+          memory: 1G
+
+  ai_verification:
+    build: ./python-ai/services/ai_verification
+    container_name: ai_verification
+    ports:
+      - "8017:8017"
+    environment:
+      - MODEL_CACHE=/app/models
+    volumes:
+      - verification_models:/app/models
+    depends_on: []
+    networks:
+      - ai_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+          
+  embedded_ai:
+    build: ./python-ai/services/embedded_ai
+    container_name: embedded_ai
+    ports:
+      - "8104:8104"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MYSQL_HOST=user-mysql
+      - MYSQL_USER=${MYSQL_USER:-appuser}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-apppassword}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-yarsalam}
+      - MODEL_NAME=/app/models/minilm-model
+    volumes:
+      - ./python-ai/services/embedded_ai/models/minilm-model:/app/models/minilm-model:ro 
+    depends_on:
+      - redis
+      - user-mysql
+    networks:
+      - ai_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  ml_service:
+    build: ./python-ai/services/ml_service
+    container_name: ml_service
+    ports:
+      - "8007:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_PATH=/app/models
+      - EMBEDDING_SERVICE_URL=http://embedded_ai:8100
+    volumes:
+      - ml_models:/app/models
+    depends_on:
+      - redis
+      - embedded_ai
+    networks:
+      - ai_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  phpmyadmin:
+    image: phpmyadmin:5
+    container_name: phpmyadmin
+    restart: unless-stopped
+    ports:
+      - "8082:80"
+    environment:
+      PMA_HOST: user-mysql
+      PMA_PORT: 3306
+      MYSQL_ROOT_PASSWORD: root123
+      PMA_ABSOLUTE_URI: http://localhost:8082/
+    depends_on:
+      user-mysql:
+        condition: service_healthy
+    networks:
+      - ai_network    
+    volumes:
+      - ~/Downloads/darkwolf-5.2:/var/www/html/themes/darkwolf-5.2     
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - ai_network  
+
+  # ============================================
+  # سرویس‌های پایتون - دسته seo
+  # ============================================     
+
+  ai_uplift:
+    build:
+      context: ./python-ai/services/ai_uplift
+      additional_contexts:
+        wheels: ./python-ai/downloaded_wheels
+    ports:
+      - "8031:8031"
+    env_file:
+      - .env
+    networks:
+      - ai_network
+
+  ai_backlink_quality:
+    build:
+      context: ./python-ai/services/ai_backlink_quality
+      additional_contexts:
+        wheels: ./python-ai/downloaded_wheels
+    ports:
+      - "8032:8032"
+    env_file:
+      - .env
+    networks:
+      - ai_network      
+      
+  ai_seo_recommender:
+    build:
+      context: ./python-ai/services/ai_seo_recommender
+      additional_contexts:
+        wheels: ./python-ai/downloaded_wheels
+    ports:
+      - "8033:8033"
+    env_file:
+      - .env
+    networks:
+      - ai_network  
+
+  personality:
+    build: ./python-ai/services/personality
+    container_name: personality
+    ports:
+      - "8101:8100"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ai_network
+    restart: unless-stopped
+
+  ai_image:
+    build:
+      context: ./python-ai/services/ai_image
+      additional_contexts:
+        wheels: ./python-ai/downloaded_wheels
+    container_name: ai_image
+    ports:
+      - "8102:8100"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ai_network
+    restart: unless-stopped
+
+  ai_support:
+    build: ./python-ai/services/ai_support
+    container_name: ai_support
+    ports:
+      - "8016:8016"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_PATH=/app/models
+    volumes:
+      - ./python-ai/services/ai_support/models:/app/models:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ai_network
+    restart: unless-stopped
+
+  aeo_tracker:
+    build:
+      context: ./python-ai/services/ai_aeo_tracker
+      additional_contexts:
+        wheels: ./python-ai/downloaded_wheels
+    ports:
+      - "8030:8030"
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ai_network
+    restart: unless-stopped

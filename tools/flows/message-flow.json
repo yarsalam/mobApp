@@ -1,0 +1,206 @@
+{
+  "_توضیح": "این فایل دستی و از روی خواندن واقعی سورس کد ساخته شده. آخرین آپدیت پس از BREAKING CHANGES نسخه refYar: حذف from_id اجباری از DTO، آپدیت تصمیم‌گیری is_free، اضافه شدن PaywallDecisionService (در حال اتصال به MessageService).",
+  "_تاریخ_تولید": "2026-06-22",
+
+  "routes": {
+
+    "POST /messages": {
+      "خلاصه_یک_خطی": "پیام جدید می‌فرستد: اول چک بلاک، بعد ماژریشن هوش‌مصنوعی، بعد کسر اعتبار (اگر رایگان نباشد)، بعد ذخیره و اطلاع‌رسانی realtime + notification.",
+      "کنترلر": "src/message/message.controller.ts → MessageController.send()",
+      "گارد": "JwtAuthGuard (در سطح کل کنترلر با @UseGuards روی کلاس)",
+      "زنجیره_فراخوانی": "MessageController.send() → MessageService.sendMessage(fromUserId, dto)",
+      "تغییرات_نسخه_جدید": [
+        "✅ from_id دیگر از body خوانده نمی‌شود — کنترلر userId را از JWT می‌گیرد (@GetUser('id')) و مستقیم به sendMessage پاس می‌دهد. از آنجا که DTO دیگر from_id ندارد، خطای قدیمی '400 from_id must be a number' برطرف شده.",
+        "✅ is_free در DTO هنوز Optional است (is_free?: boolean). اگر کلاینت آن را نفرستد، پیش‌فرض true است (is_free: dto.is_free ?? true در هنگام ذخیره). اگر کلاینت false بفرستد، کسر اعتبار اجرا می‌شود.",
+        "✅ PaywallDecisionService ساخته و export شده ولی هنوز به MessageService وصل نیست — MessageService هنوز مستقیم از CreditsService.consume استفاده می‌کند. اتصال PaywallDecisionService.checkAndConsume در نسخه بعدی خواهد آمد.",
+        "✅ PhaseService دیگر از اینجا صدا زده نمی‌شود (حذف عمدی طبق کامنت در کد)"
+      ],
+      "مراحل": [
+        {
+          "شماره": 1,
+          "عنوان": "چک رابطه مؤثر بین دو کاربر (بلاک/ریپورت)",
+          "فایل": "src/relation-status/relation-status.service.ts → getEffectiveRelation()",
+          "شرح": "اول کش Redis با کلید relation:<me>:<target> چک می‌شود (TTL=۶۰ ثانیه). اگر نبود، سه کوئری موازی: جدول interactions، جدول blocks، و جدول reports. نتیجه در cache ذخیره می‌شود.",
+          "نکته": "تأخیر ۶۰ ثانیه در اعمال بلاک همچنان وجود دارد."
+        },
+        {
+          "شماره": 2,
+          "عنوان": "اگر بلاک بود، رد کن",
+          "شرح": "اگر relation.isBlocked → خطای Error معمولی (نه HttpException). NestJS این را به 500 تبدیل می‌کند نه 403. این همچنان باگ طراحی است و در نسخه جدید اصلاح نشده."
+        },
+        {
+          "شماره": 3,
+          "عنوان": "ماژریشن هوش‌مصنوعی پیام",
+          "فایل": "src/moderation/moderation.service.ts → moderateMessage()",
+          "شرح": "circuit breaker (5 fail در 60 ثانیه → باز می‌شود). درخواست POST به ai_moderation:8018/moderate با timeout سه ثانیه. اگر خطا: BullMQ queue 'moderation' + fallbackModeration (regex فارسی).",
+          "زیرمراحل": [
+            "نتیجه در moderation_logs با hash sha256 متن (نه متن خام) ذخیره می‌شود",
+            "اگر severity غیر از low: handleViolation → کسر trustScore و محدودیت canSendMessage",
+            "اگر action=block: خطا و توقف کامل — پیام ذخیره نمی‌شود"
+          ]
+        },
+        {
+          "شماره": 4,
+          "عنوان": "کسر اعتبار (اگر is_free=false یا undefined نباشد)",
+          "شرح": "اگر dto.is_free falsy نباشد (یعنی کلاینت صریحاً false فرستاده): CreditsService.consume(fromUserId, 1, 'send_message'). اگر اعتبار کافی نباشد، PaywallException → کنترلر آن را به HTTP 402 تبدیل می‌کند.",
+          "نکته": "⚠️ PaywallDecisionService (که Phase+Trust+LTV+VIP را یکجا بررسی می‌کند) هنوز به اینجا وصل نیست. تصمیم‌گیری هوشمند paywall (Cold رایگان، VIP رایگان، Trust-based) فعلاً فعال نیست — فقط CreditsService.consume ساده است."
+        },
+        {
+          "شماره": 5,
+          "عنوان": "ذخیره پیام در دیتابیس",
+          "شرح": "messageRepo.create({...dto, from_id: fromUserId, is_free: dto.is_free ?? true}) — from_id همیشه از JWT می‌آید، نه از body."
+        },
+        {
+          "شماره": 6,
+          "عنوان": "اعلان realtime از طریق WebSocket",
+          "فایل": "src/message/chat.gateway.ts → emitNewMessage()",
+          "شرح": "Room name: chat_<min(from,to)>_<max(from,to)>.",
+          "نکته": "⚠️ handleConnection هنوز JWT را validate نمی‌کند (TODO باز مانده)."
+        },
+        {
+          "شماره": 7,
+          "عنوان": "سه عملیات موازی پایانی",
+          "زیرمراحل": [
+            "لاگ رویداد MESSAGE_SENT در PartitionedEvent (نه PartitionedEvent — جدول منسوخ حذف شده)",
+            "ساخت AppNotification برای گیرنده (WebSocket، push/SMS/تلگرام هنوز TODO)",
+            "FeatureStoreService.learnFeatureWeights(fromUserId, 'message') → بردار Qdrant کاربر رفرش می‌شود",
+            "✅ phaseService.learnFromFeedback حذف شده — Phase مستقل از ارسال پیام است"
+          ]
+        }
+      ],
+      "خروجی_موفق": "آبجکت پیام ذخیره‌شده",
+      "خطاهای_ممکن": [
+        "500 (از Error معمولی) — اگر بلاک باشد",
+        "500 (از Error معمولی) — اگر ماژریشن action=block بدهد",
+        "402 PAYMENT_REQUIRED — اگر اعتبار کافی نباشد و is_free=false ارسال شده"
+      ],
+      "میکروسرویس_پایتون_درگیر": "ai_moderation (مستقیم، با timeout سه ثانیه و circuit breaker)",
+      "جداول_و_سرویس‌های_درگیر": ["messages", "moderation_logs", "users (trustScore/canSendMessage)", "partitioned_events", "app_notifications", "Redis (relation cache + feature weights)", "Qdrant (از طریق FeatureStore)", "BullMQ queue: moderation"]
+    },
+
+    "GET /messages/inbox": {
+      "خلاصه_یک_خطی": "پیام‌های دریافتی کاربر را برمی‌گرداند (حذف‌نشده)، با امکان فیلتر رایگان/غیررایگان.",
+      "کنترلر": "MessageController.inbox()",
+      "زنجیره_فراخوانی": "MessageController.inbox() → MessageService.getInbox()",
+      "مراحل": [
+        {"شماره": 1, "عنوان": "کوئری روی جدول messages", "شرح": "where to_id=userId AND deleted_to=false، فیلتر اختیاری is_free، مرتب‌سازی نزولی بر اساس created_at."}
+      ],
+      "خروجی_موفق": "آرایه‌ای از پیام‌ها",
+      "جداول_درگیر": ["messages"]
+    },
+
+    "GET /messages/sent": {
+      "خلاصه_یک_خطی": "پیام‌های ارسالی کاربر را برمی‌گرداند (حذف‌نشده)، با امکان فیلتر رایگان/غیررایگان.",
+      "کنترلر": "MessageController.sent()",
+      "زنجیره_فراخوانی": "MessageController.sent() → MessageService.getSent()",
+      "مراحل": [
+        {"شماره": 1, "عنوان": "کوئری روی جدول messages", "شرح": "where from_id=userId AND deleted_from=false، فیلتر اختیاری is_free، مرتب‌سازی نزولی."}
+      ],
+      "خروجی_موفق": "آرایه‌ای از پیام‌ها",
+      "جداول_درگیر": ["messages"]
+    },
+
+    "PATCH /messages/read/:id": {
+      "خلاصه_یک_خطی": "یک پیام را به‌صورت خوانده‌شده علامت می‌زند.",
+      "کنترلر": "MessageController.markAsRead()",
+      "مراحل": [
+        {"شماره": 1, "عنوان": "آپدیت مستقیم read_at بدون چک مالکیت", "نکته": "⚠️ این باگ امنیتی همچنان برقرار است — هر کاربر لاگین‌شده می‌تواند هر messageId را خوانده علامت بزند. در نسخه refYar اصلاح نشده."}
+      ],
+      "جداول_درگیر": ["messages"]
+    },
+
+    "DELETE /messages/inbox/:id": {
+      "خلاصه_یک_خطی": "یک پیام را از inbox کاربر حذف می‌کند (soft delete).",
+      "مراحل": [
+        {"شماره": 1, "عنوان": "پیدا کردن پیام با چک مالکیت (to_id=userId)"},
+        {"شماره": 2, "عنوان": "soft delete: deleted_to=true"}
+      ],
+      "جداول_درگیر": ["messages"]
+    },
+
+    "DELETE /messages/sent/:id": {
+      "خلاصه_یک_خطی": "یک پیام را از لیست ارسالی کاربر حذف می‌کند (soft delete).",
+      "مراحل": [
+        {"شماره": 1, "عنوان": "پیدا کردن با (from_id=userId)"},
+        {"شماره": 2, "عنوان": "soft delete: deleted_from=true"}
+      ],
+      "جداول_درگیر": ["messages"]
+    },
+
+    "GET /messages/inbox/grouped": {
+      "خلاصه_یک_خطی": "پیام‌های دریافتی را بر اساس فرستنده گروه‌بندی می‌کند.",
+      "کنترلر": "MessageController.inboxGrouped()",
+      "مراحل": [
+        {"شماره": 1, "عنوان": "گرفتن همه پیام‌های inbox با relation به فرستنده", "شرح": "find با JOIN روی from.userImages — یک کوئری."},
+        {"شماره": 2, "عنوان": "رفع N+1: گرفتن وضعیت کاربران فرستنده با IN()", "شرح": "یک کوئری برای status همه فرستنده‌های یکتا."},
+        {"شماره": 3, "عنوان": "حلقه روی هر فرستنده یکتا", "شرح": "دو گروه آزاد/غیرآزاد، isSuspended/isResigned/isAdminBlocked، تعداد نخوانده."}
+      ],
+      "خروجی_موفق": "GroupedMessageDto[]",
+      "جداول_درگیر": ["messages", "users"]
+    },
+
+    "GET /messages/sent/grouped": {
+      "خلاصه_یک_خطی": "مشابه inbox/grouped ولی برای پیام‌های ارسالی.",
+      "جداول_درگیر": ["messages", "users"]
+    },
+
+    "GET /messages/conversation/:targetId": {
+      "خلاصه_یک_خطی": "مکالمه کامل بین دو کاربر را صفحه‌بندی‌شده برمی‌گرداند.",
+      "مراحل": [
+        {"شماره": 1, "عنوان": "کوئری OR دوطرفه + صفحه‌بندی page/limit"},
+        {"شماره": 2, "عنوان": "نکته: deleted_to/deleted_from چک نمی‌شود — پیام‌های حذف‌شده ممکن است دیده شوند"}
+      ],
+      "جداول_درگیر": ["messages"]
+    },
+
+    "PATCH /messages/:id": {
+      "خلاصه_یک_خطی": "محتوای یک پیام ارسالی را ویرایش می‌کند، فقط اگر هنوز خوانده نشده باشد.",
+      "مراحل": [
+        {"شماره": 1, "عنوان": "findOne({id, from_id:userId, read_at: IsNull()}) — سه شرط هم‌زمان"},
+        {"شماره": 2, "عنوان": "آپدیت محتوا — بدون ماژریشن مجدد", "نکته": "⚠️ پیام می‌تواند بعداً به محتوای نامناسب ویرایش شود بدون چک."}
+      ],
+      "جداول_درگیر": ["messages"]
+    },
+
+    "POST /messages/:id/report": {
+      "خلاصه_یک_خطی": "یک پیام را گزارش می‌کند (فقط لاگ رویداد در PartitionedEvent).",
+      "مراحل": [
+        {"شماره": 1, "عنوان": "findOne({id}) بدون چک مالکیت"},
+        {"شماره": 2, "عنوان": "لاگ رویداد MESSAGE_REPORTED در PartitionedEvent — هیچ رکورد report واقعی ساخته نمی‌شود"}
+      ],
+      "جداول_درگیر": ["messages (خواندن)", "partitioned_events"]
+    },
+
+    "GET /messages/unread-count": {
+      "خلاصه_یک_خطی": "تعداد کل پیام‌های نخوانده inbox کاربر را برمی‌گرداند.",
+      "مراحل": [{"شماره": 1, "عنوان": "count({to_id:userId, read_at:IsNull(), deleted_to:false})"}],
+      "جداول_درگیر": ["messages"]
+    },
+
+    "DELETE /messages/all": {
+      "خلاصه_یک_خطی": "همه پیام‌های inbox و sent کاربر را یکجا soft-delete می‌کند.",
+      "مراحل": [{"شماره": 1, "عنوان": "دو آپدیت موازی با Promise.all"}],
+      "جداول_درگیر": ["messages"]
+    },
+
+    "DELETE /messages/conversation/:targetUserId": {
+      "خلاصه_یک_خطی": "فقط مکالمه با یک کاربر خاص را (هر دو جهت) soft-delete می‌کند.",
+      "جداول_درگیر": ["messages"]
+    },
+
+    "PATCH /messages/read-all/:targetUserId": {
+      "خلاصه_یک_خطی": "همه پیام‌های دریافتی از یک کاربر خاص را خوانده‌شده علامت می‌زند.",
+      "مراحل": [{"شماره": 1, "عنوان": "update({from_id:targetUserId, to_id:userId, read_at:IsNull()}) — mالکیت صحیح از JWT چک می‌شود"}],
+      "جداول_درگیر": ["messages"]
+    }
+  },
+
+  "نکات_کلی": [
+    "✅ رفع باگ: from_id دیگر از body گرفته نمی‌شود — کنترلر userId را از JWT می‌گیرد. DTO دیگر from_id ندارد پس خطای '400 from_id must be a number' برطرف شده.",
+    "✅ رفع باگ: جدول PartitionedEvent (منسوخ) دیگر استفاده نمی‌شود — همه رویدادها به PartitionedEvent می‌روند.",
+    "ℹ️ PaywallDecisionService جدید (Phase + Trust + LTV + VIP) ساخته و export شده ولی هنوز به MessageService وصل نیست — تصمیم‌گیری هوشمند paywall (Cold رایگان، VIP رایگان) در نسخه بعد فعال می‌شود.",
+    "⚠️ باگ‌های قدیمی که هنوز باقی هستند: (۱) markAsRead تکی بدون چک مالکیت — هر کاربری می‌تواند هر پیامی را خوانده علامت بزند. (۲) ChatGateway.handleConnection هنوز JWT را validate نمی‌کند. (۳) خطای بلاک بودن به 500 تبدیل می‌شود نه 403. (۴) ویرایش پیام (PATCH /messages/:id) ماژریشن مجدد ندارد.",
+    "✅ PhaseService دیگر از مسیر ارسال پیام صدا زده نمی‌شود — این عمدی و درست است.",
+    "مسیر ارسال پیام (POST /messages) تنها route ای در این ماژول است که مستقیماً به میکروسرویس پایتون (ai_moderation) وصل است."
+  ]
+}

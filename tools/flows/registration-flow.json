@@ -1,0 +1,118 @@
+{
+  "_توضیح": "این فایل دستی و از روی خواندن واقعی سورس کد ساخته شده. آپدیت شده پس از BREAKING CHANGES: رفع باگ enum values، رویدادها حالا به PartitionedEvent می‌روند.",
+  "_تاریخ_تولید": "2026-06-22",
+
+  "routes": {
+
+    "POST /auth/register/step1": {
+      "خلاصه_یک_خطی": "با شماره تلفن، کاربر را پیدا یا می‌سازد، دستگاه را ثبت می‌کند، و رویداد ورود را لاگ می‌زند. هیچ توکنی برنمی‌گرداند.",
+      "کنترلر": "src/auth/auth.controller.ts → AuthController.step1()",
+      "گارد": "ندارد (عمومی است)",
+      "زنجیره_فراخوانی": "AuthController.step1() → AuthService.step1() → AuthRegistrationService.step1()",
+      "مراحل": [
+        {
+          "شماره": 1,
+          "عنوان": "پیدا کردن کاربر بر اساس شماره",
+          "فایل": "src/users/crud/user-crud.service.ts → findByPhone()",
+          "شرح": "یک کوئری با OR روی user.phone و جدول phones می‌زند."
+        },
+        {
+          "شماره": 2,
+          "عنوان": "چک تکراری بودن ثبت‌نام",
+          "شرح": "اگر کاربر پیدا شد و isCompleted=true → خطای HTTP 409 با کد EXISTING_USER. اگر isCompleted=false، ادامه می‌دهد (ثبت‌نام نصفه‌کاره قابل ادامه).",
+          "نکته": "هنوز هیچ چک بلاک/مسدودیتی اینجا نیست — کاربر admin_blocked می‌تواند دوباره ثبت‌نام کند."
+        },
+        {
+          "شماره": 3,
+          "عنوان": "ساخت یا به‌روزرسانی کاربر",
+          "شرح": "اگر نبود: رکورد جدید با metadata.acquisitionSource از هدر referer. اگر بود (isCompleted=false): آپدیت.",
+          "جدول": "users"
+        },
+        {
+          "شماره": 4,
+          "عنوان": "سه عملیات موازی (Promise.all)",
+          "زیرمراحل": [
+            "ثبت یا به‌روزرسانی دستگاه (UserDeviceService.createOrUpdateToken) — جدول user_devices",
+            "اگر کاربر تازه ساخته شده: ثبت اولین شماره در user_phones با isVerified=false",
+            "✅ لاگ رویداد LOGIN در PartitionedEvent با EventType.APP_OPEN = 'app_open' (رفع شد — قبلاً 'APP_OPEN' uppercase بود که با enum value مطابقت نداشت)"
+          ]
+        },
+        {
+          "شماره": 5,
+          "عنوان": "ثبت رویداد device-phone",
+          "فایل": "src/auth/device-phone/device-phone.service.ts → logEvent()",
+          "شرح": "رکورد device_phone با event=SEEN ثبت یا آپدیت می‌شود."
+        }
+      ],
+      "خروجی_موفق": "HTTP 200/201 بدون body و بدون توکن",
+      "خطاهای_ممکن": ["409 CONFLICT — اگر شماره قبلاً ثبت‌نام کامل کرده"],
+      "میکروسرویس_پایتون_درگیر": "هیچ‌کدام",
+      "جداول_دیتابیس_درگیر": ["users", "user_devices", "user_phones", "partitioned_events", "device_phones"]
+    },
+
+    "POST /auth/register/complete-verification": {
+      "خلاصه_یک_خطی": "چک می‌کند کاربر از طریق واتساپ یا تلگرام تأیید شده یا نه؛ اگر بله، یک توکن موقت ۳۰ دقیقه‌ای صادر می‌کند.",
+      "کنترلر": "AuthController.completeVerification()",
+      "گارد": "ندارد — deviceId از هدر اجباری است",
+      "مراحل": [
+        {"شماره": 1, "عنوان": "چک وضعیت تأیید در Redis", "شرح": "wa:verified:<phone> یا tg:verified:<phone> — اگر هیچ‌کدام ست نشده: 401."},
+        {"شماره": 2, "عنوان": "پیدا کردن کاربر", "شرح": "اگر findByPhone null داد: 401 'کاربر در مرحله ۱ ثبت نشده'."},
+        {"شماره": 3, "عنوان": "علامت‌گذاری شماره به‌عنوان verified", "فایل": "user-phones.service.ts → markAsVerified()"},
+        {"شماره": 4, "عنوان": "پیدا کردن دستگاه با clientDeviceId", "شرح": "اگر پیدا نشود: 400"},
+        {
+          "شماره": 5,
+          "عنوان": "سه عملیات موازی پایانی",
+          "زیرمراحل": [
+            "ثبت device_phone با event=VERIFIED",
+            "✅ لاگ رویداد APP_OPEN در PartitionedEvent با EventType.APP_OPEN = 'app_open'",
+            "پاک کردن کلید Redis تأیید تلگرام (کلید واتساپ با TTL منقضی می‌شود)"
+          ]
+        },
+        {"شماره": 6, "عنوان": "صدور توکن موقت", "شرح": "JWT با {sub, phone, temporary:true} و انقضای ۳۰ دقیقه."}
+      ],
+      "خروجی_موفق": "{ message, token }",
+      "میکروسرویس_پایتون_درگیر": "هیچ‌کدام",
+      "جداول_و_سرویس‌های_درگیر": ["Redis (wa:verified:*, tg:verified:*)", "user_phones", "user_devices", "device_phones", "partitioned_events"]
+    },
+
+    "POST /auth/register/completeProfile": {
+      "خلاصه_یک_خطی": "با توکن موقت، پروفایل کامل کاربر را ذخیره می‌کند، isCompleted=true می‌کند، و توکن نهایی ۳۰ روزه صادر می‌کند.",
+      "کنترلر": "AuthController.completeProfile()",
+      "گارد": "TemporaryOnlyGuard — JWT + چک temporary===true",
+      "مراحل": [
+        {"شماره": 1, "عنوان": "اعتبارسنجی هویت از روی توکن", "شرح": "userId از req.user.sub. اگر sub نباشد یا temporary نباشد → 401."},
+        {"شماره": 2, "عنوان": "پیدا کردن کاربر", "شرح": "findById — اگر نبود: 401."},
+        {"شماره": 3, "عنوان": "تشخیص فیلدهای تغییریافته", "شرح": "برای لاگ رویداد PROFILE_UPDATE."},
+        {"شماره": 4, "عنوان": "ساخت آبجکت آپدیت + هش bcrypt پسورد (در صورت وجود)"},
+        {"شماره": 5, "عنوان": "آپدیت نهایی کاربر", "شرح": "UsersService.update(userId, updateData) — ممکن است خودش هم PROFILE_UPDATE لاگ بزند (تکرار احتمالی)."},
+        {
+          "شماره": 6,
+          "عنوان": "عملیات موازی پس از آپدیت",
+          "زیرمراحل": [
+            "PhaseService.learnFromFeedback(userId, 'profile_completed') — وزن فاز کمی بالا می‌رود، calculate() اجرا می‌شود. ✅ حالا با MySQL syntax کار می‌کند.",
+            "UserPhonesService.markAsActived(userId, phone) — isActive=true",
+            "اگر changedFields غیرخالی: ✅ لاگ PROFILE_UPDATE در PartitionedEvent",
+            "اگر پسورد ست شده: لاگ PASSWORD_CHANGE"
+          ]
+        },
+        {"شماره": 7, "عنوان": "صدور توکن نهایی", "شرح": "JWT با {sub, phone} بدون temporary و انقضای ۳۰ روز."}
+      ],
+      "خروجی_موفق": "{ message: 'پروفایل با موفقیت کامل شد', token }",
+      "خطاهای_ممکن": [
+        "401 — توکن موقت نباشد / userId نباشد / کاربر پیدا نشود",
+        "500 — 'خطا در تکمیل پروفایل' — شامل خطای احتمالی PhaseService که در همان Promise.all است"
+      ],
+      "میکروسرویس_پایتون_درگیر": "هیچ‌کدام مستقیم",
+      "جداول_و_سرویس‌های_درگیر": ["users", "user_phones", "partitioned_events", "user_phase (از طریق PhaseService)", "Redis (از طریق PhaseService)"]
+    }
+  },
+
+  "نکات_کلی_مسیر_ثبت‌نام": [
+    "✅ رفع شد: enum values در EventType — 'USER_REGISTERED' → 'user_registered'، 'APP_OPEN' → 'app_open'. رویدادهای لاگ‌شده حالا با enum value در دیتابیس مطابقت دارند.",
+    "✅ رفع شد: همه لاگ‌های رویداد به PartitionedEvent می‌روند، نه PartitionedEvent منسوخ.",
+    "✅ PhaseService.learnFromFeedback در completeProfile حالا می‌تواند calculate() را با موفقیت اجرا کند (MySQL syntax رفع شده).",
+    "هیچ‌جا در این سه route چک نمی‌شود که کاربر بلاک (status=admin_blocked) است — همچنان باقی است.",
+    "بین completeVerification و completeProfile دقیقاً ۳۰ دقیقه فرصت هست.",
+    "این مسیر کاملاً مستقل از میکروسرویس‌های پایتون است."
+  ]
+}

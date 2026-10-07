@@ -1,0 +1,1100 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mission Control — یارسلام</title>
+    <style>
+      :root {
+        --bg: #f5f4f0;
+        --surface: #ffffff;
+        --surface2: #f8f7f4;
+        --border: rgba(0, 0, 0, 0.08);
+        --border2: rgba(0, 0, 0, 0.14);
+        --text: #1a1a18;
+        --text2: #5f5e5a;
+        --text3: #9c9a92;
+        --mono: 'Courier New', monospace;
+        --green: #1d9e75;
+        --green-bg: #eaf3de;
+        --amber: #ba7517;
+        --amber-bg: #faeeda;
+        --red: #a32d2d;
+        --red-bg: #fcebeb;
+        --purple: #534ab7;
+        --purple-bg: #eeedfe;
+        --radius: 8px;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1a1918;
+          --surface: #252422;
+          --surface2: #2e2c29;
+          --border: rgba(255, 255, 255, 0.08);
+          --border2: rgba(255, 255, 255, 0.14);
+          --text: #e8e6df;
+          --text2: #9c9a92;
+          --text3: #5f5e5a;
+          --green-bg: #085041;
+          --amber-bg: #633806;
+          --red-bg: #501313;
+          --purple-bg: #26215c;
+        }
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: system-ui, sans-serif;
+        font-size: 14px;
+      }
+
+      /* LAYOUT */
+      .shell {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 1.5rem;
+      }
+      .topbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 1.5rem;
+        flex-wrap: wrap;
+      }
+      .topbar h1 {
+        font-size: 16px;
+        font-weight: 600;
+        flex: 1;
+      }
+      .topbar input {
+        font-size: 12px;
+        font-family: var(--mono);
+        direction: ltr;
+        background: var(--surface);
+        border: 1px solid var(--border2);
+        border-radius: var(--radius);
+        padding: 6px 10px;
+        min-width: 220px;
+        color: var(--text);
+      }
+      .topbar input:focus {
+        outline: 2px solid var(--green);
+      }
+      .api-key-input {
+        min-width: 160px !important;
+      }
+      button {
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 13px;
+        border-radius: var(--radius);
+        padding: 6px 14px;
+        border: 1px solid var(--border2);
+        background: var(--surface);
+        color: var(--text);
+        transition: background 0.1s;
+      }
+      button:hover {
+        background: var(--surface2);
+      }
+      button.primary {
+        background: var(--green);
+        color: #fff;
+        border-color: var(--green);
+      }
+      button.primary:hover {
+        opacity: 0.9;
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+
+      .tabs {
+        display: flex;
+        gap: 2px;
+        border-bottom: 1px solid var(--border);
+        margin-bottom: 1rem;
+      }
+      .tab {
+        padding: 8px 18px;
+        border: 1px solid transparent;
+        border-bottom: none;
+        border-radius: 8px 8px 0 0;
+        font-size: 13px;
+        cursor: pointer;
+        color: var(--text2);
+        background: transparent;
+        position: relative;
+        bottom: -1px;
+      }
+      .tab.act {
+        background: var(--surface);
+        border-color: var(--border);
+        color: var(--text);
+        font-weight: 500;
+      }
+      .pane {
+        display: none;
+      }
+      .pane.act {
+        display: block;
+      }
+
+      /* CARDS */
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 14px 16px;
+      }
+      .grid4 {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 8px;
+        margin-bottom: 1rem;
+      }
+      .stat-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px 14px;
+      }
+      .stat-n {
+        font-size: 24px;
+        font-weight: 600;
+        line-height: 1;
+      }
+      .stat-l {
+        font-size: 11px;
+        color: var(--text3);
+        margin-top: 4px;
+      }
+      .critical-bar {
+        background: var(--red-bg);
+        border: 1px solid #f09595;
+        border-radius: 8px;
+        padding: 8px 12px;
+        font-size: 12px;
+        color: var(--red);
+        margin-bottom: 12px;
+      }
+
+      /* SERVICE GRID */
+      .svc-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .svc-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+      }
+      .svc-name {
+        font-size: 12px;
+        font-weight: 500;
+      }
+      .svc-url {
+        font-size: 10px;
+        font-family: var(--mono);
+        color: var(--text3);
+        margin-top: 2px;
+      }
+      .svc-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+      .ok {
+        background: var(--green);
+      }
+      .warn {
+        background: var(--amber);
+      }
+      .err {
+        background: var(--red);
+      }
+      .pend {
+        background: var(--border2);
+      }
+      .svc-lbl {
+        font-size: 11px;
+        color: var(--text2);
+        flex: 1;
+      }
+      .svc-ms {
+        font-size: 10px;
+        font-family: var(--mono);
+        color: var(--text3);
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.3;
+        }
+      }
+      .pulsing {
+        animation: pulse 1.2s infinite;
+      }
+
+      /* BullMQ queue table */
+      .q-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+        margin-top: 8px;
+      }
+      .q-table th {
+        text-align: right;
+        color: var(--text3);
+        font-weight: 500;
+        padding: 4px 8px;
+        border-bottom: 1px solid var(--border);
+      }
+      .q-table td {
+        padding: 5px 8px;
+        border-bottom: 1px solid var(--border);
+        font-family: var(--mono);
+      }
+      .q-table tr:last-child td {
+        border: none;
+      }
+
+      /* FLOW COVERAGE */
+      .flow-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .flow-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px 14px;
+      }
+      .flow-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      .flow-name {
+        font-size: 13px;
+        font-weight: 500;
+        flex: 1;
+      }
+      .flow-pct {
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .flow-bar-bg {
+        height: 5px;
+        background: var(--surface2);
+        border-radius: 3px;
+        overflow: hidden;
+        margin-bottom: 8px;
+      }
+      .flow-bar-fill {
+        height: 100%;
+        border-radius: 3px;
+        transition: width 0.5s;
+      }
+      .step-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+      }
+      .chip {
+        font-size: 10px;
+        padding: 2px 8px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .chip-ok {
+        background: var(--green-bg);
+        color: var(--green);
+      }
+      .chip-warn {
+        background: var(--amber-bg);
+        color: var(--amber);
+      }
+      .chip-err {
+        background: var(--red-bg);
+        color: var(--red);
+      }
+      .chip-off {
+        background: var(--purple-bg);
+        color: var(--purple);
+        border: 1px solid #afa9ec;
+      }
+
+      /* AI/ML */
+      .ml-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 8px;
+      }
+      .ml-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px 14px;
+      }
+      .ml-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      .ml-name {
+        font-size: 13px;
+        font-weight: 500;
+        flex: 1;
+      }
+      .badge {
+        font-size: 10px;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-weight: 500;
+      }
+      .b-ok {
+        background: var(--green-bg);
+        color: var(--green);
+      }
+      .b-warn {
+        background: var(--amber-bg);
+        color: var(--amber);
+      }
+      .b-err {
+        background: var(--red-bg);
+        color: var(--red);
+      }
+      .b-off {
+        background: var(--surface2);
+        color: var(--text3);
+        border: 1px solid var(--border);
+      }
+      .ml-stat {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        margin-bottom: 3px;
+      }
+      .ml-k {
+        color: var(--text2);
+      }
+      .ml-v {
+        font-family: var(--mono);
+      }
+      .acc-bar-bg {
+        height: 3px;
+        background: var(--surface2);
+        border-radius: 2px;
+        margin-top: 6px;
+      }
+      .acc-bar-fill {
+        height: 100%;
+        border-radius: 2px;
+      }
+
+      /* EXPLAINABILITY */
+      .exp-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      @media (max-width: 700px) {
+        .exp-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      .exp-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 14px;
+      }
+      .exp-title {
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--text3);
+        margin-bottom: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .sc-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 7px;
+      }
+      .sc-lbl {
+        font-size: 12px;
+        color: var(--text2);
+        min-width: 110px;
+      }
+      .sc-bar {
+        flex: 1;
+        height: 4px;
+        background: var(--surface2);
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .sc-fill {
+        height: 100%;
+        border-radius: 2px;
+      }
+      .sc-val {
+        font-size: 12px;
+        font-family: var(--mono);
+        min-width: 36px;
+        text-align: left;
+      }
+      .final-box {
+        border-top: 1px solid var(--border);
+        margin-top: 10px;
+        padding-top: 10px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .final-lbl {
+        font-size: 12px;
+        font-weight: 500;
+      }
+      .final-val {
+        font-size: 22px;
+        font-weight: 600;
+      }
+      .src-badge {
+        font-size: 9px;
+        font-family: var(--mono);
+        background: var(--surface2);
+        color: var(--text3);
+        padding: 2px 6px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        margin-top: 2px;
+        display: inline-block;
+      }
+
+      /* TRACES */
+      .trace-search {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .trace-search input {
+        flex: 1;
+      }
+      .trace-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .trace-step {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 12px;
+      }
+      .trace-svc {
+        font-weight: 500;
+        min-width: 130px;
+      }
+      .trace-action {
+        color: var(--text2);
+        flex: 1;
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+      .trace-ms {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text3);
+        min-width: 60px;
+        text-align: left;
+      }
+      .trace-empty {
+        text-align: center;
+        padding: 40px;
+        color: var(--text3);
+        font-size: 13px;
+      }
+
+      /* MISC */
+      .refresh-note {
+        font-size: 11px;
+        color: var(--text3);
+        text-align: center;
+        margin-top: 8px;
+      }
+      .err-box {
+        background: var(--red-bg);
+        border: 1px solid #f09595;
+        border-radius: 8px;
+        padding: 10px 14px;
+        font-size: 12px;
+        color: var(--red);
+        margin-bottom: 8px;
+      }
+      .loading {
+        color: var(--text3);
+        font-size: 13px;
+        padding: 24px;
+        text-align: center;
+      }
+      .ts {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--text3);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="topbar">
+        <h1>🔭 Mission Control — یارسلام</h1>
+        <input
+          type="text"
+          id="baseUrl"
+          value="http://localhost:5001"
+          placeholder="آدرس Backend"
+        />
+        <input
+          type="text"
+          id="apiKey"
+          class="api-key-input"
+          placeholder="X-API-Key (admin)"
+        />
+        <button class="primary" onclick="refreshAll()">بروزرسانی همه</button>
+        <span class="ts" id="lastRefresh"></span>
+      </div>
+
+      <div id="criticalBars"></div>
+
+      <div class="grid4" id="summaryStats">
+        <div class="stat-card">
+          <div class="stat-n" id="st-healthy">—</div>
+          <div class="stat-l">سرویس سالم</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-n" id="st-degraded">—</div>
+          <div class="stat-l">هشدار</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-n" id="st-down">—</div>
+          <div class="stat-l">خراب</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-n" id="st-coverage">—</div>
+          <div class="stat-l">پوشش flow ها</div>
+        </div>
+      </div>
+
+      <div class="tabs">
+        <button class="tab act" onclick="showTab('services', this)">
+          زیرساخت
+        </button>
+        <button class="tab" onclick="showTab('aiml', this)">AI / ML</button>
+        <button class="tab" onclick="showTab('flows', this)">Flow پوشش</button>
+        <button class="tab" onclick="showTab('explain', this)">
+          توضیح‌پذیری
+        </button>
+        <button class="tab" onclick="showTab('traces', this)">Traces</button>
+      </div>
+
+      <!-- TAB: INFRASTRUCTURE -->
+      <div class="pane act" id="pane-services">
+        <div class="svc-grid" id="svcGrid">
+          <div class="loading">در حال بارگذاری...</div>
+        </div>
+        <div id="queueSection" style="margin-top: 8px"></div>
+      </div>
+
+      <!-- TAB: AI/ML -->
+      <div class="pane" id="pane-aiml">
+        <div class="ml-grid" id="mlGrid">
+          <div class="loading">در حال بارگذاری...</div>
+        </div>
+      </div>
+
+      <!-- TAB: FLOWS -->
+      <div class="pane" id="pane-flows">
+        <div class="flow-list" id="flowList">
+          <div class="loading">در حال بارگذاری...</div>
+        </div>
+      </div>
+
+      <!-- TAB: EXPLAINABILITY -->
+      <div class="pane" id="pane-explain">
+        <div
+          style="
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 12px;
+          "
+        >
+          <label
+            style="font-size: 12px; color: var(--text2); white-space: nowrap"
+            >شناسه کاربر:</label
+          >
+          <input
+            type="text"
+            id="explainUid"
+            value="1"
+            style="
+              width: 100px;
+              font-family: var(--mono);
+              font-size: 12px;
+              background: var(--surface);
+              border: 1px solid var(--border2);
+              border-radius: var(--radius);
+              padding: 6px 10px;
+              color: var(--text);
+            "
+          />
+          <button onclick="loadExplain()">بارگذاری</button>
+        </div>
+        <div class="exp-grid" id="expGrid">
+          <div class="loading" style="grid-column: 1/-1">
+            شناسه کاربر را وارد کن و بارگذاری را بزن
+          </div>
+        </div>
+        <div class="refresh-note" style="margin-top: 8px">
+          داده از <code>/ops/explain/feed/:userId</code> می‌آید — FeatureStore و
+          UserMetrics
+        </div>
+      </div>
+
+      <!-- TAB: TRACES -->
+      <div class="pane" id="pane-traces">
+        <div class="trace-search">
+          <input
+            type="text"
+            id="traceInput"
+            placeholder="Trace ID (مثلاً: SIM-20260721-042)"
+            style="
+              background: var(--surface);
+              border: 1px solid var(--border2);
+              border-radius: var(--radius);
+              padding: 6px 10px;
+              color: var(--text);
+              font-family: var(--mono);
+              font-size: 12px;
+            "
+          />
+          <button onclick="loadTrace()">جستجو</button>
+        </div>
+        <div id="traceResult">
+          <div class="trace-empty">Trace ID وارد کن</div>
+        </div>
+        <div class="refresh-note">
+          داده از <code>/ops/traces/:traceId</code> — نیازمند جدول
+          <code>request_log</code>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const BASE = () =>
+        document.getElementById('baseUrl').value.replace(/\/$/, '');
+      const KEY = () => document.getElementById('apiKey').value;
+      const H = () => ({
+        'Content-Type': 'application/json',
+        'x-api-key': KEY(),
+      });
+
+      async function apiFetch(path) {
+        const r = await fetch(BASE() + path, {
+          headers: H(),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      }
+
+      function showTab(id, btn) {
+        document
+          .querySelectorAll('.tab')
+          .forEach((b) => b.classList.remove('act'));
+        document
+          .querySelectorAll('.pane')
+          .forEach((p) => p.classList.remove('act'));
+        btn.classList.add('act');
+        document.getElementById('pane-' + id).classList.add('act');
+      }
+
+      // ─── INFRASTRUCTURE ───────────────────────────────────────────────────────
+
+      function dotClass(ok) {
+        return ok ? 'ok' : 'err';
+      }
+
+      function renderInfra(data) {
+        const infra = data.infrastructure;
+        const cards = [];
+
+        // MySQL
+        const my = infra.mysql;
+        cards.push(
+          svcCard(
+            'MySQL',
+            'DB :3306',
+            my.status !== 'down',
+            my.latencyMs + 'ms',
+            my.error,
+          ),
+        );
+
+        // Redis
+        const re = infra.redis;
+        cards.push(
+          svcCard(
+            'Redis',
+            'cache :6379',
+            re.status !== 'down',
+            re.latencyMs + 'ms',
+            re.error,
+          ),
+        );
+
+        // Qdrant
+        const qd = infra.qdrant;
+        const qdDetail = qd.collections
+          ? qd.collections.join(', ')
+          : (qd.error ?? '');
+        cards.push(
+          svcCard(
+            'Qdrant',
+            'vector :6333',
+            qd.status !== 'down',
+            qd.latencyMs + 'ms',
+            qd.error,
+          ),
+        );
+        document.getElementById('svcGrid').innerHTML = cards.join('');
+
+        // BullMQ queues
+        const bq = infra.bullmq;
+        if (bq?.queues) {
+          const rows = Object.entries(bq.queues)
+            .map(
+              ([name, q]) =>
+                `<tr><td>${name}</td><td>${q.waiting}</td><td>${q.active}</td><td style="color:${q.failed > 0 ? 'var(--red)' : 'var(--green)'}">${q.failed}</td></tr>`,
+            )
+            .join('');
+          document.getElementById('queueSection').innerHTML = `
+      <div class="card">
+        <div style="font-size:12px;font-weight:500;margin-bottom:6px">BullMQ صف‌ها</div>
+        <table class="q-table">
+          <thead><tr><th>صف</th><th>منتظر</th><th>فعال</th><th>ناموفق</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+        }
+      }
+
+      function svcCard(name, url, ok, latency, error) {
+        const cls = ok ? 'ok' : 'err';
+        const lbl = ok ? 'سالم — ' + latency : (error ?? 'قابل دسترس نیست');
+        return `<div class="svc-card">
+    <div class="svc-name">${name}</div>
+    <div class="svc-url">${url}</div>
+    <div class="svc-row">
+      <span class="dot ${cls}"></span>
+      <span class="svc-lbl">${lbl}</span>
+    </div>
+  </div>`;
+      }
+
+      // ─── AI/ML ────────────────────────────────────────────────────────────────
+
+      function renderAI(models) {
+        let healthy = 0,
+          warn = 0,
+          down = 0;
+        const cards = models
+          .map((m) => {
+            const ok = m.status === 'healthy';
+            const isWarn = !ok && m.latencyMs > 0;
+            if (ok) healthy++;
+            else if (isWarn) warn++;
+            else down++;
+            const badgeCls = ok
+              ? 'b-ok'
+              : isWarn
+                ? 'b-warn'
+                : m.status === 'off'
+                  ? 'b-off'
+                  : 'b-err';
+            const badgeTxt = ok
+              ? 'فعال'
+              : isWarn
+                ? 'کند'
+                : m.status === 'off'
+                  ? 'غیرفعال'
+                  : 'خراب';
+            const acc =
+              m.accuracy != null ? Math.round(m.accuracy * 100) : null;
+            const accColor =
+              acc == null
+                ? ''
+                : acc >= 80
+                  ? 'var(--green)'
+                  : acc >= 60
+                    ? 'var(--amber)'
+                    : 'var(--red)';
+            return `<div class="ml-card">
+      <div class="ml-header">
+        <span class="ml-name">${m.name}</span>
+        <span class="badge ${badgeCls}">${badgeTxt}</span>
+      </div>
+      <div class="ml-stat"><span class="ml-k">تأخیر</span><span class="ml-v">${m.latencyMs ?? '—'}ms</span></div>
+      ${m.lastRun ? `<div class="ml-stat"><span class="ml-k">آخرین اجرا</span><span class="ml-v">${new Date(m.lastRun).toLocaleTimeString('fa-IR')}</span></div>` : ''}
+      ${m.modelVer ? `<div class="ml-stat"><span class="ml-k">نسخه مدل</span><span class="ml-v">${m.modelVer}</span></div>` : ''}
+      ${m.queueDepth != null ? `<div class="ml-stat"><span class="ml-k">صف</span><span class="ml-v">${m.queueDepth}</span></div>` : ''}
+      ${
+        acc != null
+          ? `
+        <div class="acc-bar-bg"><div class="acc-bar-fill" style="width:${acc}%;background:${accColor}"></div></div>
+        <div style="font-size:10px;color:var(--text3);margin-top:3px">دقت: ${acc}%</div>
+      `
+          : ''
+      }
+      ${m.error ? `<div style="font-size:10px;color:var(--red);margin-top:4px">${m.error}</div>` : ''}
+    </div>`;
+          })
+          .join('');
+
+        document.getElementById('mlGrid').innerHTML = cards;
+        document.getElementById('st-healthy').textContent = healthy;
+        document.getElementById('st-down').textContent = down;
+        document.getElementById('st-degraded').textContent = warn;
+      }
+
+      // ─── FLOWS ────────────────────────────────────────────────────────────────
+
+      function renderFlows(flows) {
+        const totalCov = flows.length
+          ? Math.round(flows.reduce((s, f) => s + f.coverage, 0) / flows.length)
+          : 0;
+        document.getElementById('st-coverage').textContent = totalCov + '%';
+
+        // critical alerts
+        const criticals = flows.filter((f) => f.status === 'critical');
+        document.getElementById('criticalBars').innerHTML = criticals
+          .map(
+            (f) =>
+              `<div class="critical-bar">⚠ بحرانی: flow <strong>${f.name}</strong> — ${f.steps
+                .filter((s) => s.critical && !s.ok)
+                .map((s) => s.label)
+                .join(', ')} خراب است</div>`,
+          )
+          .join('');
+
+        document.getElementById('flowList').innerHTML = flows
+          .map((f) => {
+            const color =
+              f.coverage >= 90
+                ? 'var(--green)'
+                : f.coverage >= 70
+                  ? 'var(--amber)'
+                  : 'var(--red)';
+            const chips = f.steps
+              .map((s) => {
+                const cls = s.ok
+                  ? 'chip-ok'
+                  : s.critical
+                    ? 'chip-err'
+                    : 'chip-warn';
+                const icon = s.ok ? '✓' : s.critical ? '✗' : '⚠';
+                return `<span class="chip ${cls}">${icon} ${s.label}</span>`;
+              })
+              .join('');
+            return `<div class="flow-card">
+      <div class="flow-head">
+        <span class="flow-name">${f.name}</span>
+        <span class="flow-pct" style="color:${color}">${f.coverage}%</span>
+      </div>
+      <div class="flow-bar-bg"><div class="flow-bar-fill" style="width:${f.coverage}%;background:${color}"></div></div>
+      <div class="step-chips">${chips}</div>
+    </div>`;
+          })
+          .join('');
+      }
+
+      // ─── EXPLAINABILITY ───────────────────────────────────────────────────────
+
+      async function loadExplain() {
+        const uid = document.getElementById('explainUid').value.trim();
+        if (!uid) return;
+        document.getElementById('expGrid').innerHTML =
+          '<div class="loading" style="grid-column:1/-1">در حال بارگذاری...</div>';
+        try {
+          const d = await apiFetch(`/ops/explain/feed/${uid}`);
+          const sc = d.scores;
+
+          function scoreRow(label, key, color) {
+            const v = sc[key] ?? 0;
+            const pct = Math.round(v * 100);
+            const src = d.sources?.[key] ?? '';
+            return `<div class="sc-row">
+        <span class="sc-lbl">${label}</span>
+        <div class="sc-bar"><div class="sc-fill" style="width:${pct}%;background:${color}"></div></div>
+        <span class="sc-val">${pct}%</span>
+      </div>
+      ${src ? `<div style="margin-bottom:5px"><span class="src-badge">${src}</span></div>` : ''}`;
+          }
+
+          const finalPct = Math.round(d.finalScore * 100);
+          const finalColor =
+            finalPct >= 70
+              ? 'var(--green)'
+              : finalPct >= 50
+                ? 'var(--amber)'
+                : 'var(--red)';
+
+          document.getElementById('expGrid').innerHTML = `
+      <div class="exp-card">
+        <div class="exp-title">Feed Score — uid:${d.userId}</div>
+        ${scoreRow('Trust Score', 'trust', 'var(--green)')}
+        ${scoreRow('Similarity', 'similarity', '#185FA5')}
+        ${scoreRow('LTR Score', 'ltr', 'var(--purple)')}
+        ${scoreRow('Diversity Boost', 'diversity', 'var(--green)')}
+        ${scoreRow('Phase Weight', 'phase', 'var(--amber)')}
+        ${scoreRow('Engagement', 'engagement', '#185FA5')}
+        <div class="final-box">
+          <span class="final-lbl">Final Score</span>
+          <span class="final-val" style="color:${finalColor}">${finalPct}%</span>
+        </div>
+      </div>
+      <div class="exp-card">
+        <div class="exp-title">وضعیت کاربر</div>
+        <div class="sc-row"><span class="sc-lbl">فاز کاربر</span><span style="font-size:18px;font-weight:600;color:var(--purple)">${d.phase ?? '—'}</span></div>
+        <div style="margin-top:12px;font-size:11px;color:var(--text3)">
+          تمام مقادیر از جداول واقعی MySQL خوانده می‌شوند:<br>
+          user_features · user_phases · user_daily_metrics
+        </div>
+      </div>`;
+        } catch (e) {
+          document.getElementById('expGrid').innerHTML =
+            `<div class="err-box" style="grid-column:1/-1">خطا: ${e.message}</div>`;
+        }
+      }
+
+      // ─── TRACES ───────────────────────────────────────────────────────────────
+
+      async function loadTrace() {
+        const tid = document.getElementById('traceInput').value.trim();
+        if (!tid) return;
+        document.getElementById('traceResult').innerHTML =
+          '<div class="loading">در حال جستجو...</div>';
+        try {
+          const d = await apiFetch(`/ops/traces/${encodeURIComponent(tid)}`);
+          const steps = d.steps
+            .map((s) => {
+              const cls =
+                s.status === 'ok' || s.status === 200 || s.status === 'success'
+                  ? 'ok'
+                  : 'err';
+              return `<div class="trace-step">
+        <span class="dot ${cls}"></span>
+        <span class="trace-svc">${s.service}</span>
+        <span class="trace-action">${s.action ?? ''}</span>
+        <span class="trace-ms">${s.durationMs ?? 0}ms</span>
+        <span class="ts">${s.at ? new Date(s.at).toLocaleTimeString('fa-IR') : ''}</span>
+      </div>`;
+            })
+            .join('');
+          document.getElementById('traceResult').innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-size:12px;font-family:var(--mono);color:var(--text3)">${tid}</span>
+        <span style="font-size:12px;color:var(--text2)">${d.totalMs}ms total · ${d.steps.length} مرحله</span>
+      </div>
+      <div class="trace-list">${steps}</div>`;
+        } catch (e) {
+          document.getElementById('traceResult').innerHTML =
+            `<div class="trace-empty">Trace پیدا نشد: ${e.message}</div>`;
+        }
+      }
+
+      // ─── MAIN REFRESH ─────────────────────────────────────────────────────────
+
+      async function refreshAll() {
+        document.getElementById('lastRefresh').textContent =
+          'در حال بروزرسانی...';
+
+        const errors = [];
+
+        // 1. health (infra + ai services raw)
+        try {
+          const h = await apiFetch('/ops/health');
+          renderInfra(h);
+
+          // overall badge
+          const svcCount = Object.values(h.aiServices).length;
+          const svcOk = Object.values(h.aiServices).filter((s) => s.ok).length;
+        } catch (e) {
+          errors.push('ops/health: ' + e.message);
+          document.getElementById('svcGrid').innerHTML =
+            `<div class="err-box">خطا در دریافت health: ${e.message}</div>`;
+        }
+
+        // 2. AI models
+        try {
+          const models = await apiFetch('/ops/ai/models');
+          renderAI(models);
+        } catch (e) {
+          errors.push('ops/ai/models: ' + e.message);
+          document.getElementById('mlGrid').innerHTML =
+            `<div class="err-box">خطا: ${e.message}</div>`;
+        }
+
+        // 3. Flows
+        try {
+          const flows = await apiFetch('/ops/flows');
+          renderFlows(flows);
+        } catch (e) {
+          errors.push('ops/flows: ' + e.message);
+          document.getElementById('flowList').innerHTML =
+            `<div class="err-box">خطا: ${e.message}</div>`;
+        }
+
+        document.getElementById('lastRefresh').textContent =
+          'آخرین بروزرسانی: ' + new Date().toLocaleTimeString('fa-IR');
+
+        // Auto-refresh هر 30 ثانیه
+        setTimeout(refreshAll, 30_000);
+      }
+
+      // اجرای اولیه
+      refreshAll();
+    </script>
+  </body>
+</html>

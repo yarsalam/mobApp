@@ -1,0 +1,13 @@
+FROM python-ai-ml-lite
+
+USER root
+
+RUN --mount=type=bind,source=downloaded_wheels,target=/wheels,readonly \
+    --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-index --find-links=/wheels \
+        prophet \
+        beautifulsoup4
+
+USER appuser
+
+CMD ["bash"]

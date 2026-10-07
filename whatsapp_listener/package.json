@@ -1,0 +1,14 @@
+{
+  "name": "whatsapp-listener",
+  "version": "1.0.0",
+  "main": "whatsapp-listener.js",
+  "type": "module",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@whiskeysockets/baileys": "v7.0.0-rc.6",
+    "axios": "^1.12.2",
+    "long": "^5.3.2",
+    "pino": "^7.0.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}

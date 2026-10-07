@@ -1,0 +1,126 @@
+{
+  "_توضیح": "این فایل دستی و از روی خواندن واقعی سورس کد ساخته شده. هر ۵ route ماژول interaction را از کنترلر تا عمیق‌ترین لایه دنبال کرده و به فارسی روایت کرده.",
+  "_تاریخ_تولید": "2026-06-20",
+
+  "routes": {
+
+    "POST /interactions/:targetId/:type": {
+      "خلاصه_یک_خطی": "یک تعامل (لایک/سوپرلایک/اسکیپ/ویو/پیام) ثبت می‌کند؛ اگر لایک متقابل بود، یادگیری فاز و شخصیت و وزن‌های پیشنهاد را به‌صورت غیرهمزمان (fire-and-forget) به‌روزرسانی می‌کند.",
+      "کنترلر": "src/interaction/interaction.controller.ts → InteractionsController.log()",
+      "گارد": "JwtAuthGuard (سطح کلاس)",
+      "زنجیره_فراخوانی": "InteractionsController.log() → InteractionsService.record() → (fire-and-forget) doPostInteractionTasks()",
+      "مراحل": [
+        {
+          "شماره": 1,
+          "عنوان": "اعتبارسنجی نوع تعامل",
+          "شرح": "type باید یکی از view/like/superlike/skip/message باشد، وگرنه 400 BadRequestException قبل از رسیدن به سرویس."
+        },
+        {
+          "شماره": 2,
+          "عنوان": "چک امکان تعامل (بلاک دوطرفه)",
+          "فایل": "src/interaction/interaction.service.ts → canInteract()",
+          "شرح": "دو کوئری موازی به ReportBlockService.getBlockedUserIds زده می‌شود: یکی برای فهرست کسانی که fromId بلاک کرده، یکی برای فهرست کسانی که toId بلاک کرده. اگر toId در فهرست اول باشد یا fromId در فهرست دوم باشد → false برمی‌گردد.",
+          "نکته": "این یک سیستم بلاک کاملاً مجزا از relation-status است (که در مسیر Message دیدیم). اینجا از جدول blocks مستقیم با ReportBlockService کار می‌شود، نه از کش relation:<a>:<b> در Redis. یعنی این دو مسیر (پیام و تعامل) دو پیاده‌سازی متفاوت برای همان مفهوم 'آیا بلاک شده‌ام' دارند که می‌توانند با هم sync نباشند اگر یکی کش شود و دیگری نه."
+        },
+        {
+          "شماره": 3,
+          "عنوان": "اگر بلاک بود، بی‌صدا null برمی‌گردد",
+          "شرح": "برخلاف مسیر پیام (که خطای صریح می‌دهد)، اینجا اگر canInteract فالس بود، فقط null برگردانده می‌شود — نه خطا، نه پیام. کنترلر هم این null را در data قرار می‌دهد و success:true برمی‌گرداند.",
+          "نکته": "⚠️ یعنی از دید کلاینت، تلاش برای لایک‌کردن یک کاربر بلاک‌شده دقیقاً همان پاسخ موفقیت‌آمیزی را می‌دهد که یک لایک واقعی، با این تفاوت که data=null است. کلاینت باید صریحاً چک کند data خالی نباشد، وگرنه فکر می‌کند لایک ثبت شده."
+        },
+        {
+          "شماره": 4,
+          "عنوان": "ذخیره تعامل",
+          "شرح": "رکورد در جدول interactions با sender/receiver/type/metadata={source:'api'} ساخته و ذخیره می‌شود."
+        },
+        {
+          "شماره": 5,
+          "عنوان": "پاک کردن کش رابطه (هر دو جهت)",
+          "شرح": "کلیدهای relation:<from>:<to> و relation:<to>:<from> در Redis حذف می‌شوند — این دقیقاً همان کشی است که RelationStatusService در مسیر پیام استفاده می‌کند، یعنی بعد از هر تعامل (نه فقط بلاک)، وضعیت رابطه‌ی کش‌شده باطل می‌شود تا پیام بعدی relation تازه را ببیند."
+        },
+        {
+          "شماره": 6,
+          "عنوان": "⚠️ کارهای پسا-تعامل به‌صورت fire-and-forget اجرا می‌شوند",
+          "فایل": "doPostInteractionTasks()",
+          "شرح": "این متد بدون await در زنجیره اصلی صدا زده می‌شود (فقط .catch() دارد که خطا را لاگ می‌کند). یعنی پاسخ HTTP فوراً برمی‌گردد بدون صبر برای این مرحله، و اگر این مرحله fail شود، کلاینت هیچ‌وقت متوجه نمی‌شود.",
+          "زیرمراحل": [
+            "لاگ رویداد (LIKE/SUPERLIKE/SKIP/PROFILE_VIEW/MESSAGE_SENT بسته به نوع) در partitioned_events — این هم خودش try/catch جدا دارد و خطایش را فقط warn می‌کند",
+            "اگر type=like یا superlike: گرفتن بردار ویژگی کاربر مقصد (FeatureStoreService.getUserFeatures(toId)) — ⚠️ اگر این کاربر اصلاً 'feature snapshot' در دیتابیس نداشته باشد (یعنی هیچ‌وقت feature-store برایش ساخته نشده)، یک Error پرتاب می‌شود با پیام 'Feature snapshot not found for user <id>'. این دقیقاً همان خطایی است که در لاگ‌های بنچ‌مارک با userId=2 دیده شده — چون simulator همیشه به user id=2 لایک می‌زند ولی آن کاربر معمولاً واقعی/کامل نیست.",
+            "اگر بردار پیدا شد: updatePreferenceVector فراخوانی می‌شود که با learning rate و decay، بردار ترجیحات fromId را کمی به‌سمت بردار toId می‌کشاند (وزن سوپرلایک دو برابر لایک عادی است)",
+            "چک لایک متقابل (isMutualLike): با exist() چک می‌شود آیا toId قبلاً به fromId لایک یا سوپرلایک زده — اگر بله، یعنی این یک match جدید است"
+          ]
+        },
+        {
+          "شماره": 7,
+          "عنوان": "اگر match جدید بود، زنجیره یادگیری اجرا می‌شود",
+          "شرح": "این بخش داخل try/catch جدا است (خطایش فقط error لاگ می‌شود، چیزی به بالا پرتاب نمی‌شود).",
+          "زیرمراحل": [
+            "PhaseService.learnFromFeedback برای هر دو کاربر با event='match' — وزن matches در فرمول فاز را کمی بالا می‌برد و دوباره calculate() صدا زده می‌شود (همان‌جایی که در گذشته خطای SQL داشتیم)",
+            "PersonalityService.learnFromMatch(fromId, toId) — شخصیت OCEAN هر دو کاربر را از دیتابیس می‌خواند (اگر نبود، مقدار خنثی 0.5 پیش‌فرض می‌گیرد، خطا نمی‌دهد) و وزن‌های یادگیری شخصیتی را در Redis تنظیم می‌کند — این کاملاً محلی است و به سرویس پایتون personality مستقیماً وصل نمی‌شود",
+            "گرفتن فاز فعلی هر دو کاربر (PhaseService.get) — اگر رکورد فاز نبود، با مقدار پیش‌فرض 'cold' ساخته می‌شود",
+            "RevenueScorerService.adjustPhaseMultiplier برای هر دو جهت — این هم کاملاً محلی (فقط Redis) است، هیچ سرویس پایتون صدا زده نمی‌شود با وجود اسم 'Revenue'",
+            "FeatureStoreService.learnFeatureWeights برای هر دو کاربر با event='match' — وزن رفتاری match در Redis بالا می‌رود و بردار Qdrant هر دو کاربر رفرش می‌شود"
+          ]
+        }
+      ],
+      "خروجی_موفق": "{success:true, data: Interaction | null} — data می‌تواند null باشد بدون اینکه success تغییر کند (نکته شماره ۳ بالا)",
+      "خطاهای_ممکن": [
+        "400 — اگر type نامعتبر باشد"
+      ],
+      "میکروسرویس_پایتون_درگیر": "هیچ‌کدام مستقیماً در زنجیره موفق این route — همه چیز (Phase، Personality، RevenueScorer، FeatureStore) محاسبات محلی روی MySQL/Redis/Qdrant است، نه فراخوانی HTTP به سرویس‌های پایتون",
+      "جداول_و_سرویس‌های_درگیر": ["interactions", "partitioned_events", "user_phase", "personality (جدول)", "feature_store (جدول)", "Redis (relation cache + revenue:phase:* + feature weights)", "Qdrant (از طریق FeatureStore)"]
+    },
+
+    "GET /interactions/sent": {
+      "خلاصه_یک_خطی": "همه‌ی تعاملاتی که کاربر جاری به دیگران فرستاده را برمی‌گرداند (با اطلاعات گیرنده).",
+      "کنترلر": "InteractionsController.getSent()",
+      "زنجیره_فراخوانی": "InteractionsController.getSent() → InteractionsService.getUserInteractions()",
+      "مراحل": [
+        {"شماره": 1, "عنوان": "کوئری ساده با relation", "شرح": "find({where:{sender:{id:userId}}, relations:['receiver'], order:{createdAt:'DESC'}}) — بدون صفحه‌بندی، یعنی برای کاربری با تعاملات بسیار زیاد می‌تواند نتیجه بزرگی برگرداند."}
+      ],
+      "خروجی_موفق": "Interaction[]",
+      "جداول_درگیر": ["interactions", "users (از طریق relation receiver)"]
+    },
+
+    "GET /interactions/received": {
+      "خلاصه_یک_خطی": "همه‌ی تعاملاتی که دیگران برای کاربر جاری ثبت کرده‌اند را برمی‌گرداند (با اطلاعات فرستنده).",
+      "کنترلر": "InteractionsController.getReceived()",
+      "زنجیره_فراخوانی": "InteractionsController.getReceived() → InteractionsService.getReceivedInteractions()",
+      "مراحل": [
+        {"شماره": 1, "عنوان": "کوئری ساده معکوس", "شرح": "find({where:{receiver:{id:userId}}, relations:['sender'], order:{createdAt:'DESC'}}) — این یعنی هرکسی که userId را view/skip کرده هم اینجا دیده می‌شود، نه فقط لایک‌ها — هیچ فیلتری روی type نیست."}
+      ],
+      "خروجی_موفق": "Interaction[]",
+      "جداول_درگیر": ["interactions", "users"]
+    },
+
+    "GET /interactions/status/:targetUserId": {
+      "خلاصه_یک_خطی": "چک می‌کند آیا کاربر جاری قبلاً به targetUserId لایک یا سوپرلایک زده یا نه (دو بولین جدا).",
+      "کنترلر": "InteractionsController.getLikeStatus() — این متد منطق را مستقیم در کنترلر دارد، نه در سرویس",
+      "نکته_معماری": "برخلاف بقیه‌ی route های این ماژول، این یکی مستقیماً InteractionRepository را در کنترلر inject کرده (به‌جای عبور از InteractionsService) — یعنی لایه سرویس برای این endpoint دور زده شده.",
+      "مراحل": [
+        {"شماره": 1, "عنوان": "دو کوئری EXISTS موازی", "شرح": "با Promise.all، دو کوئری جدا (یکی برای type=like، یکی برای type=superlike) با limit(1) اجرا می‌شوند و نتیجه به بولین تبدیل می‌شود."}
+      ],
+      "خروجی_موفق": "{hasLiked: boolean, hasSuperLiked: boolean}",
+      "جداول_درگیر": ["interactions"]
+    },
+
+    "GET /interactions/relation/:targetId": {
+      "خلاصه_یک_خطی": "وضعیت کامل رابطه بین کاربر جاری و targetId را برمی‌گرداند (همان منطق RelationStatusService که در مسیر پیام دیدیم).",
+      "کنترلر": "InteractionsController.getRelation()",
+      "زنجیره_فراخوانی": "InteractionsController.getRelation() → RelationStatusService.getEffectiveRelation()",
+      "شرح": "این دقیقاً همان متدی است که در مسیر POST /messages هم صدا زده می‌شود (کش Redis ۶۰ ثانیه‌ای، چک blocks/reports/interactions جدول‌به‌جدول). تفاوت این است که اینجا مستقیماً به‌عنوان یک endpoint عمومی در دسترس قرار گرفته، یعنی کلاینت می‌تواند پیش از تلاش برای پیام/لایک، وضعیت رابطه را جداگانه استعلام کند.",
+      "خروجی_موفق": "RelationStatusDto — شامل isBlocked, isMatch, hasLiked, likedByThem, effectiveState و غیره",
+      "جداول_و_سرویس‌های_درگیر": ["interactions", "blocks", "reports", "Redis (relation cache)"]
+    }
+  },
+
+  "نکات_کلی": [
+    "دو سیستم بلاک موازی و غیرسینک: مسیر پیام (RelationStatusService) و مسیر تعامل (ReportBlockService.canInteract) هر دو مستقل جدول blocks را می‌خوانند ولی منطق و کش متفاوتی دارند. یک کاربر بلاک‌شده ممکن است در یکی رد شود و در دیگری (به‌خاطر کش قدیمی) هنوز اجازه داشته باشد، یا برعکس.",
+    "⚠️ POST /interactions/:targetId/:type وقتی تعامل به‌خاطر بلاک رد می‌شود، success:true با data:null برمی‌گرداند — هیچ کد خطا یا پیامی که به کلاینت بگوید 'این عملاً ثبت نشد' وجود ندارد.",
+    "⚠️ تمام منطق یادگیری match (Phase + Personality + RevenueScorer + FeatureStore) به‌صورت fire-and-forget بعد از پاسخ HTTP اجرا می‌شود. یعنی اگر هرکدام fail شوند (مثلاً همان خطای 'Feature snapshot not found')، کلاینت یا simulator هیچ نشانه‌ای از این شکست نمی‌بیند؛ فقط در لاگ سرور دیده می‌شود.",
+    "علت دقیق خطای 'Feature snapshot not found for user 2' که در بنچ‌مارک قبلی دیده شد همین‌جاست: وقتی simulator به‌صورت ثابت روی userId=2 لایک می‌زند ولی آن کاربر هرگز feature snapshot نگرفته (یعنی feature-store برایش هیچ‌وقت ساخته نشده)، FeatureStoreService.getUserFeatures پرتاب خطا می‌کند که در doPostInteractionTasks فقط لاگ و بلعیده می‌شود.",
+    "نام 'RevenueScorerService' گمراه‌کننده است — adjustPhaseMultiplier هیچ پرداخت یا درآمد واقعی را لمس نمی‌کند، فقط یک ضریب در Redis تنظیم می‌کند که احتمالاً جای دیگری (شاید ماژول suggestion) برای رتبه‌بندی استفاده می‌شود.",
+    "GET /interactions/status از لایه سرویس عبور نمی‌کند و مستقیم در کنترلر کوئری می‌زند — از نظر معماری با بقیه‌ی route ها ناهماهنگ است، هرچند از نظر عملکرد مشکلی ایجاد نمی‌کند.",
+    "هیچ‌کدام از ۵ route این ماژول مستقیماً به یک میکروسرویس پایتون (روی HTTP) وصل نیستند — همه‌ی 'یادگیری' محلی (Redis/MySQL/Qdrant) است."
+  ]
+}

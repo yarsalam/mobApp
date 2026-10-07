@@ -1,0 +1,11 @@
+FROM python-ai-ml-lite:latest
+
+USER root
+
+RUN --mount=type=bind,source=downloaded_wheels,target=/wheels,readonly \
+    --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-index --find-links=/wheels httpx
+
+USER appuser
+
+CMD ["bash"]

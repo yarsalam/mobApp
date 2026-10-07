@@ -1,0 +1,93 @@
+{
+  "_توضیح": "این فایل دستی و از روی خواندن واقعی سورس کد ساخته شده. هر ۴ route ماژول notification را از کنترلر تا عمیق‌ترین لایه دنبال کرده و به فارسی روایت کرده.",
+  "_تاریخ_تولید": "2026-06-20",
+
+  "routes": {
+
+    "POST /notifications": {
+      "خلاصه_یک_خطی": "یک نوتیفیکیشن جدید برای یک کاربر می‌سازد و آن را با fire-and-forget از طریق WebSocket داخل اپ ارسال می‌کند.",
+      "کنترلر": "src/notification/notification.controller.ts → NotificationController.create()",
+      "گارد": "JwtAuthGuard (سطح کلاس) — فقط نیاز به لاگین‌بودن دارد، هیچ چک نقش/مالکیت ندارد",
+      "زنجیره_فراخوانی": "NotificationController.create() → NotificationService.createNotification() → NotificationOrchestrator.dispatch() (fire-and-forget) → NotificationGateway.send()",
+      "نکته_امنیتی": "⚠️ user_id مستقیماً از body خوانده می‌شود (CreateNotificationDto.user_id)، نه از JWT کاربر لاگین‌شده. این برخلاف الگوی POST /messages است که from_id را عمداً از JWT می‌گیرد و body را نادیده می‌گیرد. در نتیجه، هر کاربر لاگین‌شده‌ای (حتی یک کاربر تازه‌ثبت‌نام‌شده با سطح دسترسی عادی) می‌تواند برای هر user_id دلخواه، با هر متن دلخواه، نوتیفیکیشن بسازد و آن را بلادرنگ به آن کاربر push کند. هیچ AdminGuard یا چک نقشی روی این endpoint نیست.",
+      "مراحل": [
+        {
+          "شماره": 1,
+          "عنوان": "اعتبارسنجی DTO",
+          "شرح": "user_id باید عدد صحیح باشد، type باید یکی از مقادیر enum NotificationType (فقط 'message' یا 'visitor' — نه چیز دیگر) باشد، message رشته الزامی است، related_id و source اختیاری‌اند.",
+          "نکته": "فیلد source در DTO تعریف شده ('ai'|'system'|'user') ولی در entity (AppNotification) اصلاً چنین ستونی وجود ندارد — یعنی اگر کلاینت source بفرستد، validation آن را قبول می‌کند ولی TypeORM هنگام create() آن را بی‌صدا نادیده می‌گیرد چون به ستونی نگاشت نمی‌شود. این یک فیلد مرده در DTO است."
+        },
+        {
+          "شماره": 2,
+          "عنوان": "ذخیره در دیتابیس",
+          "شرح": "رکورد AppNotification با delivered=false، clicked=false، is_read=false (مقادیر پیش‌فرض ستون) ساخته و ذخیره می‌شود."
+        },
+        {
+          "شماره": 3,
+          "عنوان": "ارسال بلادرنگ (fire-and-forget)",
+          "فایل": "src/notification/orchestrator.notification.ts → dispatch()",
+          "شرح": "این فراخوانی با .catch(()=>{}) صدا زده می‌شود، یعنی نتیجه HTTP response منتظر این مرحله نمی‌ماند و اگر این مرحله fail شود (مثلاً کاربر آنلاین نباشد یا گیتوی خطا بدهد)، هیچ‌جا گزارش نمی‌شود — نه به کلاینت، نه حتی در لاگ (چون catch خالی است، برخلاف الگوی مشابه در MessageService که حداقل آن یکی هم همین مشکل را دارد).",
+          "زیرمراحل": [
+            "NotificationOrchestrator.dispatch فقط NotificationGateway.send(user_id, payload) را صدا می‌زند",
+            "NotificationGateway.send پیام را به room اختصاصی کاربر (user_<id> در namespace /notification) با رویداد 'notification' ارسال می‌کند — اگر کاربر آنلاین نباشد یا به این room وصل نباشد، پیام صرفاً گم می‌شود؛ هیچ صف یا ذخیره برای ارسال بعدی وجود ندارد",
+            "کانال‌های دیگر (push، SMS، تلگرام) پیاده‌سازی نشده‌اند — کامنت صریح در کد می‌گوید 'فعلاً فقط realtime داخل اپ' و 'TODO: فاز ۲'"
+          ]
+        }
+      ],
+      "خروجی_موفق": "آبجکت نوتیفیکیشن ذخیره‌شده (شامل id)",
+      "خطاهای_ممکن": [
+        "400 — اگر DTO نامعتبر باشد (user_id غیرعددی، type خارج از enum، message خالی)"
+      ],
+      "میکروسرویس_پایتون_درگیر": "هیچ‌کدام",
+      "جداول_و_سرویس‌های_درگیر": ["notifications", "WebSocket (Socket.io namespace /notification)"]
+    },
+
+    "GET /notifications": {
+      "خلاصه_یک_خطی": "آخرین ۱۰۰ نوتیفیکیشن کاربر جاری را برمی‌گرداند.",
+      "کنترلر": "NotificationController.getUserNotifications()",
+      "زنجیره_فراخوانی": "NotificationController.getUserNotifications() → NotificationService.getUserNotifications()",
+      "مراحل": [
+        {"شماره": 1, "عنوان": "کوئری ساده با سقف ثابت", "شرح": "find({where:{user_id:userId}, order:{created_at:'DESC'}, take:100}) — بدون صفحه‌بندی واقعی (offset/page)؛ همیشه دقیقاً ۱۰۰ تای آخر یا کمتر برمی‌گردد. اگر کاربر بیش از ۱۰۰ نوتیفیکیشن قدیمی‌تر داشته باشد، هیچ راهی برای دیدن آن‌ها از این endpoint نیست."}
+      ],
+      "خروجی_موفق": "AppNotification[] (حداکثر ۱۰۰ مورد)",
+      "جداول_درگیر": ["notifications"]
+    },
+
+    "PATCH /notifications/read/:id": {
+      "خلاصه_یک_خطی": "یک نوتیفیکیشن را خوانده‌شده علامت می‌زند.",
+      "کنترلر": "NotificationController.markAsRead()",
+      "زنجیره_فراخوانی": "NotificationController.markAsRead() → NotificationService.markAsRead()",
+      "مراحل": [
+        {
+          "شماره": 1,
+          "عنوان": "آپدیت مستقیم بدون چک مالکیت",
+          "شرح": "update(notificationId, {is_read:true}) — این متد فقط id را می‌گیرد، userId اصلاً پارامتر نیست و چک نمی‌شود کدام کاربر صاحب این نوتیفیکیشن است.",
+          "نکته": "⚠️ همان الگوی باگ که در MessageService.markAsRead دیدیم، اینجا هم تکرار شده: هر کاربر لاگین‌شده‌ای با حدس‌زدن یک id عددی می‌تواند نوتیفیکیشن متعلق به کاربر دیگری را خوانده‌شده علامت بزند. تأثیر عملی محدودتر از مسیج است (فقط یک فلگ بولین تغییر می‌کند، نه محتوا)، ولی همچنان یک نقص دسترسی است."
+        }
+      ],
+      "خروجی_موفق": "UpdateResult از TypeORM (شامل تعداد ردیف‌های تحت‌تأثیر)",
+      "جداول_درگیر": ["notifications"]
+    },
+
+    "GET /notifications/unread/count": {
+      "خلاصه_یک_خطی": "تعداد نوتیفیکیشن‌های خوانده‌نشده کاربر جاری را برمی‌گرداند.",
+      "کنترلر": "NotificationController.countUnread()",
+      "زنجیره_فراخوانی": "NotificationController.countUnread() → NotificationService.countUnread()",
+      "مراحل": [
+        {"شماره": 1, "عنوان": "شمارش ساده", "شرح": "count({user_id:userId, is_read:false})."}
+      ],
+      "خروجی_موفق": "عدد",
+      "جداول_درگیر": ["notifications"],
+      "نکته_سیمیلاتور": "این endpoint در simulator فعلی به آدرس قدیمی /notifications/unread/count/:id فراخوانی می‌شد (با userId در URL)، در حالی که route واقعی /notifications/unread/count است و userId را از JWT می‌گیرد، نه از پارامتر مسیر — این دقیقاً همان چیزی است که در نسخه فعلی simulator.html (پس از اصلاح قبلی) درست شده: eps با p:'/notifications/unread/count' بدون :id."
+    }
+  },
+
+  "نکات_کلی": [
+    "⚠️ ناهماهنگی امنیتی جدی: POST /notifications به هر کاربر لاگین‌شده‌ای (بدون چک نقش ادمین) اجازه می‌دهد برای هر user_id دلخواه نوتیفیکیشن با هر متنی بسازد و بلادرنگ ارسال کند. این می‌تواند برای فیشینگ یا اسپم داخلی سوءاستفاده شود (مثلاً جعل پیام‌های 'message'/'visitor' به نام سیستم).",
+    "همان الگوی باگ مالکیت که در ماژول Message دیدیم (markAsRead بدون چک userId) اینجا هم در PATCH /notifications/read/:id تکرار شده — این یک الگوی سیستماتیک در پروژه است، نه یک باگ منفرد؛ ارزش دارد یک بررسی سراسری روی همه‌ی متدهای markAsRead/markAsActive مشابه در کل کدبیس انجام شود.",
+    "کانال‌های push/SMS/تلگرام برای نوتیفیکیشن هنوز پیاده‌سازی نشده‌اند (فقط WebSocket) — این دقیقاً همان یافته‌ای است که در بررسی ماژول Message هم آمد، چون هر دو از همان NotificationOrchestrator/NotificationGateway استفاده می‌کنند. اگر کاربر آنلاین نباشد، نوتیفیکیشن در دیتابیس می‌ماند ولی او هرگز push دریافت نمی‌کند مگر بعداً GET /notifications را خودش صدا بزند.",
+    "فیلد source در CreateNotificationDto مرده است — در entity وجود ندارد و بی‌صدا دور ریخته می‌شود؛ یا باید ستون متناظر اضافه شود یا از DTO حذف شود.",
+    "GET /notifications سقف ثابت ۱۰۰ دارد بدون صفحه‌بندی واقعی — برای کاربرانی با تاریخچه طولانی، نوتیفیکیشن‌های قدیمی‌تر هرگز از این endpoint قابل‌دسترسی نیستند.",
+    "این ماژول کوچک‌ترین ماژول بررسی‌شده تا اینجا است (۹۱ خط سورس، ۴ route) و هیچ میکروسرویس پایتونی را مستقیم یا غیرمستقیم درگیر نمی‌کند — کاملاً مستقل از زنجیره‌های AI/ماژریشن/فیچرستور است."
+  ]
+}
