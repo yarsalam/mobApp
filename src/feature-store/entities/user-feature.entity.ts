@@ -1,83 +1,117 @@
-import { Entity, Column, PrimaryColumn, UpdateDateColumn } from 'typeorm';
+import { Column, Entity, PrimaryColumn, UpdateDateColumn } from 'typeorm';
 
 @Entity('user_feature_snapshots')
 export class UserFeatureSnapshot {
   @PrimaryColumn()
   userId: number;
 
-  // ─── Vectors ──────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────
+  // Profile
+  // ─────────────────────────────────────────────────────────────
 
-  /** بردار پروفایل ثابت: city, age, bio, hobbies, values, verified, trust, gender, marital, education */
   @Column({ type: 'json', nullable: true })
   profileVector?: number[];
 
+  // ─────────────────────────────────────────────────────────────
+  // Preference Memory
+  // ─────────────────────────────────────────────────────────────
+
   /**
-   * بردار ترجیح یادگرفته‌شده از رفتار کاربر.
-   * این بردار از profileVector شروع می‌شود و با هر like/block آپدیت می‌شود.
-   * در Qdrant برای Retrieval استفاده می‌شود (نه profileVector).
+   * Preference قدیمی برای backward compatibility.
+   *
+   * در نسخه جدید:
+   * positivePreferenceVector
+   * negativePreferenceVector
+   * منابع اصلی learning هستند.
    */
   @Column({ type: 'json', nullable: true })
   preferenceVector?: number[];
 
-  /** بردار رفتاری: totalEvents, activeDays, purchaseRate, responseRate, matchRate */
+  /**
+   * چیزهایی که کاربر دوست دارد.
+   *
+   * LIKE / SUPERLIKE / MATCH
+   */
+  @Column({ type: 'json', nullable: true })
+  positivePreferenceVector?: number[];
+
+  /**
+   * چیزهایی که کاربر نمی‌خواهد.
+   *
+   * SKIP / BLOCK / REPORT
+   */
+  @Column({ type: 'json', nullable: true })
+  negativePreferenceVector?: number[];
+
+  /**
+   * تعداد signalهای مثبت.
+   *
+   * برای confidence مدل استفاده می‌شود.
+   */
+  @Column({ type: 'int', default: 0 })
+  positivePreferenceCount: number;
+
+  /**
+   * تعداد signalهای منفی.
+   */
+  @Column({ type: 'int', default: 0 })
+  negativePreferenceCount: number;
+
+  // ─────────────────────────────────────────────────────────────
+  // Other feature segments
+  // ─────────────────────────────────────────────────────────────
+
   @Column({ type: 'json', nullable: true })
   behaviorVector?: number[];
 
-  /** بردار شخصیتی OCEAN: openness, conscientiousness, extraversion, agreeableness, neuroticism */
   @Column({ type: 'json', nullable: true })
   personalityVector?: number[];
 
-  /** بردار جغرافیایی: lat, lng (normalize شده) */
   @Column({ type: 'json', nullable: true })
   geoVector?: number[];
 
-  // ─── Probabilities ────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────
+  // Probabilities
+  // ─────────────────────────────────────────────────────────────
 
-  /** میانگین ارزش طول عمر کاربر */
   @Column({ type: 'float', default: 0 })
   avgLTV: number;
 
-  /** احتمال خرید در 7 روز آینده (0–1) */
   @Column({ type: 'float', default: 0 })
   purchaseProbability: number;
 
-  /** احتمال پاسخ دادن به پیام (0–1) */
   @Column({ type: 'float', default: 0 })
   responseProbability: number;
 
-  /** احتمال تبدیل لایک به مچ (0–1) */
   @Column({ type: 'float', default: 0 })
   matchProbability: number;
 
-  // ─── Phase & Boost ────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────
+  // Phase / Boost
+  // ─────────────────────────────────────────────────────────────
 
-  /** فاز کاربر: cold | warm | hot */
   @Column({ length: 20, default: 'cold' })
   phase: string;
 
-  /** امتیاز فاز (عدد خام) */
   @Column({ type: 'float', default: 0 })
   phaseScore: number;
 
-  /** قدرت boost فعلی (0 = بدون boost) */
   @Column({ type: 'int', default: 0 })
   boostStrength: number;
 
-  /** زمان انقضای boost */
   @Column({ type: 'timestamp', nullable: true })
   boostExpiresAt?: Date;
 
-  // ─── Trust & Activity ─────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────
+  // Trust / Activity
+  // ─────────────────────────────────────────────────────────────
 
-  /** امتیاز اعتماد (0–100) - کپی از User.trustScore برای سرعت */
   @Column({ type: 'float', default: 50 })
   trustScore: number;
 
-  /** تعداد روزهای فعال در 7 روز گذشته */
   @Column({ type: 'int', default: 0 })
   retentionDays: number;
 
-  /** آخرین زمان آنلاین بودن */
   @Column({ type: 'timestamp', nullable: true })
   lastSeenAt?: Date;
 

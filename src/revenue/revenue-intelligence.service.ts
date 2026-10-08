@@ -1,376 +1,820 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable,Logger } from '@nestjs/common';
+
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository, Between, LessThan } from 'typeorm';
+import {
+  Repository,
+  DataSource,
+} from 'typeorm';
+
 import { User } from '../users/entities/user.entity';
 import { Payment } from '../payments/entities/payment.entity';
 import { SEOActivity } from '../seo/entities/seo-activity.entity';
-import { InjectQueue } from '@nestjs/bullmq';
-import { Queue } from 'bullmq';
-import { PartitionedEvent } from 'src/user-event/entities/partitioned-event.entity';
-import { EventType } from 'src/user-event/type/event-type.enum';
+import { PartitionedEvent } from '../user-event/entities/partitioned-event.entity';
+
+export interface RevenueForecastPoint {
+  date: string;
+  revenue: number;
+  confidence: [number, number];
+}
+
+export interface RevenueForecastResult {
+  forecast: RevenueForecastPoint[];
+  growthRate: number;
+  peakDays: string[];
+  alerts: {
+    type: string;
+    message: string;
+  }[];
+}
+
+export interface LtvChannel {
+  ltv: number;
+  users: number;
+  averageLtv: number;
+}
+
+export interface RevenueAnomaly {
+  type: string;
+  message: string;
+  severity: 'low' | 'medium' | 'high';
+  value?: number;
+  baseline?: number;
+  deviation?: number;
+}
 
 @Injectable()
 export class RevenueIntelligenceService {
-  private readonly logger = new Logger(RevenueIntelligenceService.name);
+  private readonly logger =
+    new Logger(RevenueIntelligenceService.name);
 
   constructor(
     @InjectRepository(User)
-    private readonly userRepo: Repository<User>,
+    private readonly userRepository: Repository<User>,
 
     @InjectRepository(Payment)
-    private readonly paymentRepo: Repository<Payment>,
+    private readonly paymentRepository: Repository<Payment>,
 
     @InjectRepository(SEOActivity)
-    private readonly seoActivityRepo: Repository<SEOActivity>,
+    private readonly seoActivityRepository: Repository<SEOActivity>,
 
     @InjectRepository(PartitionedEvent)
-    private readonly eventRepo: Repository<PartitionedEvent>,
+    private readonly eventRepository: Repository<PartitionedEvent>,
 
-    private readonly entityManager: EntityManager,
-
-    @InjectQueue('revenue-intelligence')
-    private readonly queue: Queue,
+    private readonly dataSource: DataSource,
   ) {}
 
-  /**
-   * محاسبه LTV با تخصیص چندلمسی
-   */
-  async calculateLTVWithAttribution(
-    userId: number,
-    attributionModel:
-      | 'last-touch'
-      | 'first-touch'
-      | 'linear'
-      | 'time-decay' = 'time-decay',
-  ): Promise<{
-    ltv: number;
-    cac: number;
-    paybackPeriod: number;
-    attribution: Array<{ channel: string; weight: number; revenue: number }>;
-  }> {
-    // 1. دریافت تمام رویدادهای کاربر قبل از اولین خرید
-    const firstPurchase = await this.paymentRepo.findOne({
-      where: { userId, status: 'paid' },
-      order: { createdAt: 'ASC' },
-    });
+  // ============================================================
+  // LTV BY CHANNEL
+  // ============================================================
 
-    if (!firstPurchase) {
-      return {
-        ltv: 0,
-        cac: 0,
-        paybackPeriod: 0,
-        attribution: [],
-      };
-    }
+  async getLTVByChannel(): Promise<
+    Record<string, LtvChannel>
+  > {
+    try {
+      const payments =
+        await this.paymentRepository.find({
+          order: {
+            createdAt: 'ASC',
+          },
+        });
 
-    // 2. دریافت تمام تعاملات قبل از خرید
-    const events = await this.eventRepo.find({
-      where: {
-        userId,
-        createdAt: LessThan(firstPurchase.createdAt),
-      },
-      order: { createdAt: 'ASC' },
-    });
-
-    // 3. دریافت فعالیت‌های سئو در بازه زمانی
-    const seoActivities = await this.seoActivityRepo.find({
-      where: {
-        performedAt: Between(
-          new Date(
-            firstPurchase.createdAt.getTime() - 30 * 24 * 60 * 60 * 1000,
-          ),
-          firstPurchase.createdAt,
-        ),
-      },
-    });
-
-    // 4. محاسبه LTV کل
-    const allPayments = await this.paymentRepo.find({
-      where: { userId, status: 'paid' },
-    });
-    const totalLTV = allPayments.reduce((sum, p) => sum + p.amount, 0);
-
-    // 5. تخصیص چندلمسی
-    const attribution = this.calculateAttribution(
-      events,
-      seoActivities,
-      totalLTV,
-      attributionModel,
-    );
-
-    // 6. محاسبه CAC (از فعالیت‌های سئو)
-    const cac = await this.calculateCAC(userId, firstPurchase.createdAt);
-
-    return {
-      ltv: totalLTV,
-      cac,
-      paybackPeriod: cac > 0 ? totalLTV / cac : 0,
-      attribution,
-    };
-  }
-
-  private calculateAttribution(
-    events: PartitionedEvent[],
-    seoActivities: SEOActivity[],
-    totalRevenue: number,
-    model: string,
-  ): Array<{ channel: string; weight: number; revenue: number }> {
-    const channels = new Map<string, number>();
-
-    // وزن‌دهی به کانال‌ها
-    for (const event of events) {
-      const channel = this.mapEventToChannel(event);
-      let weight = 0;
-
-      switch (model) {
-        case 'first-touch':
-          weight = events.indexOf(event) === 0 ? 1 : 0;
-          break;
-        case 'last-touch':
-          weight = events.indexOf(event) === events.length - 1 ? 1 : 0;
-          break;
-        case 'linear':
-          weight = 1 / events.length;
-          break;
-        case 'time-decay':
-          const position = events.indexOf(event);
-          weight = Math.exp(-0.1 * (events.length - position));
-          break;
+      if (!payments.length) {
+        return {};
       }
 
-      channels.set(channel, (channels.get(channel) || 0) + weight);
-    }
+      const channels = new Map<
+        string,
+        {
+          revenue: number;
+          users: Set<number>;
+        }
+      >();
 
-    // اضافه کردن فعالیت‌های سئو
-    for (const activity of seoActivities) {
-      const channel = activity.platform;
-      const weight = activity.cost / 1000; // normalize
-      channels.set(channel, (channels.get(channel) || 0) + weight);
-    }
+      for (const payment of payments) {
+        const status =
+          String(
+            (payment as any).status ?? '',
+          ).toLowerCase();
 
-    // نرمالایز کردن وزن‌ها
-    const totalWeight = Array.from(channels.values()).reduce(
-      (a, b) => a + b,
-      0,
+        /**
+         * فقط پرداخت‌های موفق را وارد Revenue Intelligence
+         * می‌کنیم.
+         */
+        if (
+          status &&
+          ![
+            'paid',
+            'completed',
+            'success',
+            'successful',
+            'confirmed',
+          ].includes(status)
+        ) {
+          continue;
+        }
+
+        const userId =
+          Number(
+            (payment as any).userId ??
+              (payment as any).user_id ??
+              0,
+          );
+
+        const amount =
+          Number(
+            (payment as any).amount ?? 0,
+          );
+
+        if (!Number.isFinite(amount) || amount <= 0) {
+          continue;
+        }
+
+        /**
+         * source ممکن است در metadata / gateway / source
+         * ذخیره شده باشد.
+         */
+        const source =
+          this.extractPaymentSource(payment);
+
+        if (!channels.has(source)) {
+          channels.set(source, {
+            revenue: 0,
+            users: new Set<number>(),
+          });
+        }
+
+        const channel =
+          channels.get(source)!;
+
+        channel.revenue += amount;
+
+        if (userId > 0) {
+          channel.users.add(userId);
+        }
+      }
+
+      const result: Record<
+        string,
+        LtvChannel
+      > = {};
+
+      for (const [
+        source,
+        channel,
+      ] of channels.entries()) {
+        const users =
+          channel.users.size;
+
+        const averageLtv =
+          users > 0
+            ? channel.revenue / users
+            : 0;
+
+        result[source] = {
+          ltv: this.round(channel.revenue),
+          users,
+          averageLtv:
+            this.round(averageLtv),
+        };
+      }
+
+      return result;
+    } catch (error) {
+      this.logger.error(
+        'Failed to calculate LTV by channel',
+        error instanceof Error
+          ? error.stack
+          : String(error),
+      );
+
+      return {};
+    }
+  }
+
+  // ============================================================
+  // FORECAST
+  // ============================================================
+
+  async forecastRevenue(
+    days = 90,
+  ): Promise<RevenueForecastResult> {
+    const safeDays = Math.max(
+      1,
+      Math.min(days, 365),
     );
 
-    return Array.from(channels.entries()).map(([channel, weight]) => ({
-      channel,
-      weight: weight / totalWeight,
-      revenue: (weight / totalWeight) * totalRevenue,
+    try {
+      const historical =
+        await this.getDailyRevenueHistory(
+          30,
+        );
+
+      /**
+       * اگر داده تاریخی نداریم،
+       * forecast نباید NaN یا undefined تولید کند.
+       */
+      if (!historical.length) {
+        return {
+          forecast: [],
+          growthRate: 0,
+          peakDays: [],
+          alerts: [
+            {
+              type: 'insufficient_data',
+              message:
+                'Not enough revenue history for forecasting',
+            },
+          ],
+        };
+      }
+
+      const values =
+        historical.map(
+          item => item.revenue,
+        );
+
+      const average =
+        this.mean(values);
+
+      const recent =
+        values.slice(
+          Math.max(0, values.length - 7),
+        );
+
+      const recentAverage =
+        this.mean(recent);
+
+      const older =
+        values.slice(
+          0,
+          Math.max(1, values.length - 7),
+        );
+
+      const olderAverage =
+        this.mean(older);
+
+      /**
+       * رشد اخیر نسبت به baseline
+       */
+      const growthRate =
+        olderAverage > 0
+          ? (recentAverage -
+              olderAverage) /
+            olderAverage
+          : 0;
+
+      /**
+       * Trend را محدود می‌کنیم تا یک outlier
+       * کل forecast را منفجر نکند.
+       */
+      const boundedGrowth =
+        Math.max(
+          -0.5,
+          Math.min(0.5, growthRate),
+        );
+
+      const forecast: RevenueForecastPoint[] =
+        [];
+
+      for (
+        let i = 1;
+        i <= safeDays;
+        i++
+      ) {
+        const date =
+          new Date();
+
+        date.setDate(
+          date.getDate() + i,
+        );
+
+        /**
+         * رشد مرکب ملایم
+         */
+        const trendFactor =
+          Math.pow(
+            1 + boundedGrowth * 0.1,
+            i / 30,
+          );
+
+        const predicted =
+          Math.max(
+            0,
+            recentAverage *
+              trendFactor,
+          );
+
+        /**
+         * confidence interval
+         */
+        const uncertainty =
+          Math.max(
+            average * 0.25,
+            predicted * 0.15,
+          );
+
+        forecast.push({
+          date:
+            date
+              .toISOString()
+              .slice(0, 10),
+
+          revenue:
+            this.round(predicted),
+
+          confidence: [
+            this.round(
+              Math.max(
+                0,
+                predicted -
+                  uncertainty,
+              ),
+            ),
+
+            this.round(
+              predicted +
+                uncertainty,
+            ),
+          ],
+        });
+      }
+
+      const peakDays =
+        this.detectPeakDays(
+          historical,
+        );
+
+      const alerts: RevenueForecastResult['alerts'] =
+        [];
+
+      if (
+        growthRate < -0.2
+      ) {
+        alerts.push({
+          type: 'negative_growth',
+          message:
+            'Revenue trend is declining significantly',
+        });
+      }
+
+      if (
+        growthRate > 0.3
+      ) {
+        alerts.push({
+          type: 'rapid_growth',
+          message:
+            'Revenue is growing unusually fast',
+        });
+      }
+
+      return {
+        forecast,
+        growthRate:
+          this.round(growthRate),
+        peakDays,
+        alerts,
+      };
+    } catch (error) {
+      this.logger.error(
+        'Revenue forecast failed',
+        error instanceof Error
+          ? error.stack
+          : String(error),
+      );
+
+      return {
+        forecast: [],
+        growthRate: 0,
+        peakDays: [],
+        alerts: [
+          {
+            type: 'forecast_error',
+            message:
+              'Revenue forecast failed',
+          },
+        ],
+      };
+    }
+  }
+
+  // ============================================================
+  // ANOMALY DETECTION
+  // ============================================================
+
+  async detectAnomalies(): Promise<
+    RevenueAnomaly[]
+  > {
+    try {
+      const history =
+        await this.getDailyRevenueHistory(
+          30,
+        );
+
+      if (
+        history.length < 7
+      ) {
+        return [];
+      }
+
+      const values =
+        history.map(
+          item => item.revenue,
+        );
+
+      const mean =
+        this.mean(values);
+
+      const std =
+        this.standardDeviation(
+          values,
+        );
+
+      if (
+        std <= 0 ||
+        !Number.isFinite(std)
+      ) {
+        return [];
+      }
+
+      const latest =
+        values[values.length - 1];
+
+      const zScore =
+        (latest - mean) /
+        std;
+
+      const anomalies: RevenueAnomaly[] =
+        [];
+
+      if (
+        Math.abs(zScore) >= 3
+      ) {
+        anomalies.push({
+          type:
+            latest > mean
+              ? 'revenue_spike'
+              : 'revenue_drop',
+
+          message:
+            latest > mean
+              ? 'Revenue is significantly above the normal baseline'
+              : 'Revenue is significantly below the normal baseline',
+
+          severity: 'high',
+
+          value:
+            this.round(latest),
+
+          baseline:
+            this.round(mean),
+
+          deviation:
+            this.round(zScore),
+        });
+      } else if (
+        Math.abs(zScore) >= 2
+      ) {
+        anomalies.push({
+          type:
+            latest > mean
+              ? 'revenue_increase'
+              : 'revenue_decrease',
+
+          message:
+            latest > mean
+              ? 'Revenue is above the normal baseline'
+              : 'Revenue is below the normal baseline',
+
+          severity: 'medium',
+
+          value:
+            this.round(latest),
+
+          baseline:
+            this.round(mean),
+
+          deviation:
+            this.round(zScore),
+        });
+      }
+
+      return anomalies;
+    } catch (error) {
+      this.logger.error(
+        'Revenue anomaly detection failed',
+        error instanceof Error
+          ? error.stack
+          : String(error),
+      );
+
+      return [];
+    }
+  }
+
+  // ============================================================
+  // LTV WITH ATTRIBUTION
+  // ============================================================
+
+  async calculateLTVWithAttribution(
+    userId: number,
+  ): Promise<number> {
+    if (!userId) {
+      return 0;
+    }
+
+    try {
+      const payments =
+        await this.paymentRepository.find({
+          where: {
+            userId,
+          } as any,
+        });
+
+      return this.round(
+        payments.reduce(
+          (sum, payment) => {
+            const status =
+              String(
+                (payment as any)
+                  .status ?? '',
+              ).toLowerCase();
+
+            if (
+              status &&
+              ![
+                'paid',
+                'completed',
+                'success',
+                'successful',
+                'confirmed',
+              ].includes(status)
+            ) {
+              return sum;
+            }
+
+            const amount =
+              Number(
+                (payment as any)
+                  .amount ?? 0,
+              );
+
+            return Number.isFinite(
+              amount,
+            )
+              ? sum + amount
+              : sum;
+          },
+          0,
+        ),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Failed to calculate LTV for user ${userId}`,
+      );
+
+      return 0;
+    }
+  }
+
+  // ============================================================
+  // LTV BY SOURCE
+  // ============================================================
+
+  async calculateLTVBySource(
+    source: string,
+  ): Promise<number> {
+    if (!source) {
+      return 0;
+    }
+
+    const channels =
+      await this.getLTVByChannel();
+
+    return (
+      channels[source]?.ltv ??
+      0
+    );
+  }
+
+  // ============================================================
+  // SAVE REVENUE METRICS
+  // ============================================================
+
+  async saveRevenueMetrics(
+    metrics: Record<
+      string,
+      unknown
+    >,
+  ): Promise<void> {
+    /**
+     * Compatibility layer.
+     *
+     * فعلاً داده‌های Revenue از Payment/Event
+     * محاسبه می‌شوند و storage جداگانه‌ای برای
+     * metrics ایجاد نمی‌کنیم.
+     *
+     * در مرحله بعد اگر RevenueSnapshot entity
+     * داشته باشیم، اینجا persistence واقعی قرار می‌گیرد.
+     */
+
+    if (!metrics) {
+      return;
+    }
+
+    this.logger.debug(
+      'Revenue metrics received',
+    );
+  }
+
+  // ============================================================
+  // DAILY REVENUE HISTORY
+  // ============================================================
+
+  private async getDailyRevenueHistory(
+    days: number,
+  ): Promise<
+    Array<{
+      date: string;
+      revenue: number;
+    }>
+  > {
+    const safeDays =
+      Math.max(
+        1,
+        Math.min(days, 365),
+      );
+
+    /**
+     * از QueryBuilder استفاده می‌کنیم تا
+     * aggregation در DB انجام شود.
+     *
+     * توجه:
+     * نام propertyها TypeORM entity است؛
+     * TypeORM خودش mapping را انجام می‌دهد.
+     */
+    const rows =
+      await this.paymentRepository
+        .createQueryBuilder('payment')
+        .select(
+          "DATE(payment.createdAt)",
+          'date',
+        )
+        .addSelect(
+          'SUM(payment.amount)',
+          'revenue',
+        )
+        .where(
+          'payment.createdAt >= DATE_SUB(CURRENT_DATE, INTERVAL :days DAY)',
+          { days: safeDays },
+        )
+        .andWhere(
+          `
+          (
+            payment.status IS NULL
+            OR LOWER(payment.status) IN
+            ('paid', 'completed', 'success', 'successful', 'confirmed')
+          )
+          `,
+        )
+        .groupBy(
+          'DATE(payment.createdAt)',
+        )
+        .orderBy(
+          'DATE(payment.createdAt)',
+          'ASC',
+        )
+        .getRawMany<{
+          date: string;
+          revenue: string;
+        }>();
+
+    return rows.map(row => ({
+      date:
+        String(row.date),
+
+      revenue:
+        this.round(
+          Number(row.revenue) || 0,
+        ),
     }));
   }
 
-  private mapEventToChannel(event: PartitionedEvent): string {
-    switch (event.type) {
-      case EventType.USER_REGISTERED:
-        return event.metadata?.source || 'organic';
-      case EventType.PROMOTION_CLICKED:
-        return event.metadata?.variant || 'promotion';
-      default:
-        return 'other';
-    }
+  // ============================================================
+  // PAYMENT SOURCE
+  // ============================================================
+
+  private extractPaymentSource(
+    payment: Payment,
+  ): string {
+    const raw =
+      payment as any;
+
+    const source =
+      raw.source ??
+      raw.acquisitionSource ??
+      raw.channel ??
+      raw.metadata?.source ??
+      raw.metadata?.acquisitionSource ??
+      raw.metadata?.channel ??
+      raw.gateway ??
+      'unknown';
+
+    return String(
+      source || 'unknown',
+    ).toLowerCase();
   }
 
-  private async calculateCAC(
-    userId: number,
-    purchaseDate: Date,
-  ): Promise<number> {
-    // هزینه‌های جذب در بازه ۳۰ روز قبل از خرید
-    const activities = await this.seoActivityRepo.find({
-      where: {
-        performedAt: Between(
-          new Date(purchaseDate.getTime() - 30 * 24 * 60 * 60 * 1000),
-          purchaseDate,
-        ),
-      },
-    });
+  // ============================================================
+  // PEAK DAYS
+  // ============================================================
 
-    const totalCost = activities.reduce((sum, a) => sum + a.cost, 0);
-
-    // تعداد کاربرانی که در این بازه ثبت‌نام کردن
-    const newUsers = await this.userRepo.count({
-      where: {
-        createdAt: Between(
-          new Date(purchaseDate.getTime() - 30 * 24 * 60 * 60 * 1000),
-          purchaseDate,
-        ),
-      },
-    });
-
-    return newUsers > 0 ? totalCost / newUsers : 0;
-  }
-
-  /**
-   * پیش‌بینی درآمد ۳ ماه آینده
-   */
-  async forecastRevenue(days = 90): Promise<{
-    forecast: Array<{
+  private detectPeakDays(
+    history: Array<{
       date: string;
       revenue: number;
-      confidence: [number, number];
-    }>;
-    growthRate: number;
-    peakDays: string[];
-    alerts: Array<{ type: string; message: string }>;
-  }> {
-    // ارسال به ML service
-    const job = await this.queue.add('forecast-revenue', {
-      days,
-      timestamp: new Date(),
-    });
+    }>,
+  ): string[] {
+    if (!history.length) {
+      return [];
+    }
 
-    // دریافت نتیجه (async)
-    const result = await job.waitUntilFinished(
-      this.queue as any,
-      30000, // 30 ثانیه timeout
-    );
-
-    return result;
-  }
-
-  /**
-   * تشخیص ناهنجاری‌های درآمدی
-   */
-  async detectAnomalies(): Promise<
-    Array<{
-      date: Date;
-      expected: number;
-      actual: number;
-      deviation: number;
-      severity: 'low' | 'medium' | 'high';
-      reason: string;
-    }>
-  > {
-    // ✅ N+1 fix: یک query برای همه 30 روز به جای 90 query جداگانه
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-    const dailyRevenue: Array<{ date: string; total: string }> =
-      await this.entityManager.query(
-        `SELECT DATE(created_at) as date, SUM(amount) as total
-         FROM payment
-         WHERE created_at >= ? AND status = 'paid'
-         GROUP BY DATE(created_at)
-         ORDER BY date DESC`,
-        [thirtyDaysAgo],
+    const sorted =
+      [...history].sort(
+        (a, b) =>
+          b.revenue - a.revenue,
       );
 
-    const revenueMap = new Map(
-      dailyRevenue.map((r) => [r.date, parseFloat(r.total)]),
+    return sorted
+      .slice(
+        0,
+        Math.min(5, sorted.length),
+      )
+      .map(item => item.date);
+  }
+
+  // ============================================================
+  // MATH HELPERS
+  // ============================================================
+
+  private mean(
+    values: number[],
+  ): number {
+    if (!values.length) {
+      return 0;
+    }
+
+    return (
+      values.reduce(
+        (sum, value) =>
+          sum +
+          (Number.isFinite(value)
+            ? value
+            : 0),
+        0,
+      ) / values.length
     );
+  }
 
-    // میانگین 30 روز به عنوان baseline
-    const values = [...revenueMap.values()];
-    const avgRevenue = values.length
-      ? values.reduce((a, b) => a + b, 0) / values.length
-      : 0;
-
-    const anomalies: Array<{
-      date: Date;
-      expected: number;
-      actual: number;
-      severity: 'low' | 'medium' | 'high';
-      deviation: number;
-      reason: string;
-    }> = [];
-
-    for (let i = 1; i <= 30; i++) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      const dateStr = date.toISOString().split('T')[0];
-
-      const actualRevenue = revenueMap.get(dateStr) ?? 0;
-      const expectedRevenue = avgRevenue || 1;
-      const deviation =
-        Math.abs(actualRevenue - expectedRevenue) / expectedRevenue;
-
-      if (deviation > 0.3) {
-        anomalies.push({
-          date,
-          expected: expectedRevenue,
-          actual: actualRevenue,
-          deviation,
-          severity: deviation > 0.5 ? 'high' : 'medium',
-          reason: deviation > 0.5 ? 'افت شدید درآمد' : 'انحراف از میانگین',
-        });
-      }
+  private standardDeviation(
+    values: number[],
+  ): number {
+    if (
+      values.length < 2
+    ) {
+      return 0;
     }
 
-    return anomalies;
-  }
+    const average =
+      this.mean(values);
 
-  private async getRevenueForDate(date: Date): Promise<number> {
-    const start = new Date(date);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(date);
-    end.setHours(23, 59, 59, 999);
-
-    const payments = await this.paymentRepo.find({
-      where: {
-        createdAt: Between(start, end),
-        status: 'paid',
-      },
-    });
-
-    return payments.reduce((sum, p) => sum + p.amount, 0);
-  }
-
-  private async getExpectedRevenue(date: Date): Promise<number> {
-    // میانگین ۳۰ روز مشابه قبل
-    const dayOfWeek = date.getDay();
-    const similarDays: number[] = [];
-
-    for (let i = 1; i <= 4; i++) {
-      const similarDate = new Date(date);
-      similarDate.setDate(date.getDate() - i * 7); // هفته قبل
-      similarDays.push(await this.getRevenueForDate(similarDate));
-    }
-
-    return similarDays.reduce((a, b) => a + b, 0) / similarDays.length;
-  }
-
-  private async findAnomalyReason(
-    date: Date,
-    deviation: number,
-  ): Promise<string> {
-    // بررسی فعالیت‌های سئو
-    const activities = await this.seoActivityRepo.find({
-      where: {
-        performedAt: Between(
-          new Date(date.getTime() - 7 * 24 * 60 * 60 * 1000),
-          date,
+    const variance =
+      this.mean(
+        values.map(
+          value =>
+            Math.pow(
+              value -
+                average,
+              2,
+            ),
         ),
-      },
-    });
+      );
 
-    if (activities.length === 0) {
-      return 'No SEO activities in the past week';
-    }
-
-    const totalSpent = activities.reduce((sum, a) => sum + a.cost, 0);
-    if (totalSpent < 100 && deviation > 0.5) {
-      return 'Low marketing spend';
-    }
-
-    return 'Unknown anomaly';
+    return Math.sqrt(
+      variance,
+    );
   }
 
-  async getLTVByChannel(): Promise<any> {}
+  private round(
+    value: number,
+  ): number {
+    if (
+      !Number.isFinite(value)
+    ) {
+      return 0;
+    }
 
-  async calculateLTVBySource(): Promise<
-    Record<string, { ltv: number; count: number }>
-  > {
-    const result: any = {};
-    return result;
+    return Math.round(
+      value * 100,
+    ) / 100;
   }
-
-  async saveRevenueMetrics(data: {
-    source: string;
-    revenue: number;
-    cost: number;
-    timestamp: Date;
-    metrics?: any;
-    ltvBySource?: any;
-  }) {}
 }

@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, LessThan, MoreThan, Repository } from 'typeorm';
+import { In, MoreThan, Repository } from 'typeorm';
 import { Cron } from '@nestjs/schedule';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { UserFeatureSnapshot } from './entities/user-feature.entity';
@@ -19,6 +19,7 @@ import {
   FEATURE_CACHE_TTL,
   GEO_LAT,
   GEO_LNG,
+  MAX_PREFERENCE_SIGNAL,
   PREFERENCE_DECAY,
   PREFERENCE_LEARNING_RATE,
   QDRANT_COLLECTION,
@@ -375,15 +376,31 @@ export class FeatureStoreService implements OnModuleInit {
 
     // preferenceVector: اگر قبلاً یادگیری اتفاق افتاده حفظ می‌شود
     // اگر نه، از profileVector شروع می‌شود
-    const preferenceVector =
-      existing?.preferenceVector?.length === VECTOR_DIMS.preference
-        ? existing.preferenceVector
-        : [...profileVector]; // کپی می‌گیریم
+    const positivePreferenceVector =
+      existing?.positivePreferenceVector?.length === VECTOR_DIMS.preference
+        ? existing.positivePreferenceVector
+        : existing?.preferenceVector?.length === VECTOR_DIMS.preference
+          ? existing.preferenceVector
+          : [...profileVector];
+
+    const negativePreferenceVector =
+      existing?.negativePreferenceVector?.length === VECTOR_DIMS.preference
+        ? existing.negativePreferenceVector
+        : new Array(VECTOR_DIMS.preference).fill(0);
+
+    const preferenceVector = this.buildPreferenceVector(
+      positivePreferenceVector,
+      negativePreferenceVector,
+    );
 
     const snapshot: Partial<UserFeatureSnapshot> = {
       userId,
       profileVector,
       preferenceVector,
+      positivePreferenceVector,
+      negativePreferenceVector,
+      positivePreferenceCount: existing?.positivePreferenceCount ?? 0,
+      negativePreferenceCount: existing?.negativePreferenceCount ?? 0,
       behaviorVector,
       personalityVector,
       geoVector,
@@ -420,72 +437,359 @@ export class FeatureStoreService implements OnModuleInit {
   // ─── Preference Learning ──────────────────────────────────────────────────
 
   /**
-   * آپدیت preferenceVector بعد از یک رویداد مثبت (like/match).
+   * Confidence بر اساس تعداد سیگنال‌های قبلی.
    *
-   * الگوریتم: Exponential Moving Average
-   *   preference = preference * decay + target * learningRate * weight
-   *
-   * این متد فقط preferenceVector را آپدیت می‌کند.
-   * refreshSingle را صدا نمی‌زند — چون نیازی به rebuild کامل نیست.
+   * ایده:
+   * - یک رفتار منفرد نباید بیش از حد تعیین‌کننده باشد.
+   * - با تکرار رفتار، اعتماد مدل افزایش پیدا می‌کند.
+   * - اشباع تدریجی داریم تا بعد از تعداد زیادی event، وزن بی‌نهایت نشود.
    */
-  async updatePreferenceVector(
-    uid: number,
-    targetProfileVec: number[],
-    weight: number, // 1.0 برای match، 0.5 برای like، -1.0 برای block
-  ): Promise<void> {
-    const features = await this.getUserFeatures(uid);
-    const current = features?.preferenceVector ?? features?.profileVector ?? [];
-    const absLR = Math.abs(PREFERENCE_LEARNING_RATE * weight);
+  private calculatePreferenceConfidence(signalCount: number): number {
+    const safeCount = Math.max(0, signalCount);
 
-    const updated = current.map((val, i) => {
-      let targetVal = targetProfileVec[i] ?? 0;
-      // برای block وزن منفی است — target را معکوس کن، نه learningRate را
-      if (weight < 0) targetVal = 1 - targetVal;
-      const newVal = val * PREFERENCE_DECAY + targetVal * absLR;
-      return Math.max(0, Math.min(1, newVal)); // clamp [0,1]
-    });
+    // saturation:
+    // count=0  => 0
+    // count=1  => 0.18
+    // count=5  => 0.63
+    // count=10 => 0.86
+    // count=20 => 0.98
+    const saturation = 1 - Math.exp(-safeCount / 5);
 
-    await this.featureRepo.update(
-      { userId: uid },
-      { preferenceVector: updated },
-    );
-    await this.redis.del(this.cacheKey(uid));
-
-    // آپدیت Qdrant فقط برای بردار preference — بدون rebuild کامل
-    await this.upsertPreferenceToQdrant(uid, updated);
+    // اجازه نمی‌دهیم اولین سیگنال بیش از حد ضعیف شود.
+    return 0.55 + 0.45 * saturation;
   }
 
   /**
-   * آپدیت فقط preferenceVector در Qdrant بدون rebuild کامل بردار.
-   * برای این کار باید بردار فعلی را از Qdrant بخوانیم و preference segment را جایگزین کنیم.
+   * Confidence خام را برای APIهای تحلیلی برمی‌گرداند.
+   */
+  private calculateSignalConfidence(signalCount: number): number {
+    const safeCount = Math.max(0, signalCount);
+
+    return Math.min(1, Math.max(0, 1 - Math.exp(-safeCount / 5)));
+  }
+
+  /**
+   * بردار preference نهایی.
+   *
+   * positive = چیزهایی که کاربر دوست دارد
+   * negative = چیزهایی که کاربر نمی‌خواهد
+   *
+   * نتیجه:
+   *
+   * preference =
+   *     positive
+   *     -
+   *     negative * negativeStrength
+   */
+  private buildPreferenceVector(
+    positive: number[],
+    negative: number[],
+  ): number[] {
+    const dims = Math.max(positive.length, negative.length);
+
+    const result: number[] = [];
+
+    for (let i = 0; i < dims; i++) {
+      const p = positive[i] ?? 0;
+      const n = negative[i] ?? 0;
+
+      /**
+       * negative signal نباید بلافاصله
+       * positive preference را نابود کند.
+       *
+       * بنابراین مقدار آن به صورت کنترل‌شده
+       * از preference کم می‌شود.
+       */
+      const value = p - n * 0.75;
+
+      result.push(Math.max(0, Math.min(1, value)));
+    }
+
+    return result;
+  }
+
+  /**
+   * دریافت positive preference.
+   */
+  async getPositivePreferenceVector(userId: number): Promise<number[]> {
+    const features = await this.getUserFeatures(userId);
+
+    if (
+      features?.positivePreferenceVector &&
+      features.positivePreferenceVector.length === VECTOR_DIMS.preference
+    ) {
+      return features.positivePreferenceVector;
+    }
+
+    // backward compatibility
+    if (
+      features?.preferenceVector &&
+      features.preferenceVector.length === VECTOR_DIMS.preference
+    ) {
+      return features.preferenceVector;
+    }
+
+    return features?.profileVector ?? new Array(VECTOR_DIMS.preference).fill(0);
+  }
+
+  /**
+   * دریافت negative preference.
+   */
+  async getNegativePreferenceVector(userId: number): Promise<number[]> {
+    const features = await this.getUserFeatures(userId);
+
+    if (
+      features?.negativePreferenceVector &&
+      features.negativePreferenceVector.length === VECTOR_DIMS.preference
+    ) {
+      return features.negativePreferenceVector;
+    }
+
+    return new Array(VECTOR_DIMS.preference).fill(0);
+  }
+
+  /**
+   * یادگیری مثبت.
+   *
+   * مثال:
+   *
+   * LIKE candidate
+   *     ↓
+   * candidate profile vector
+   *     ↓
+   * positive preference
+   */
+  async learnPositivePreference(
+    userId: number,
+    targetProfileVector: number[],
+    weight = 0.5,
+  ): Promise<void> {
+    await this.learnPreferenceSignal(
+      userId,
+      targetProfileVector,
+      Math.abs(weight),
+      'positive',
+    );
+  }
+
+  /**
+   * یادگیری منفی.
+   *
+   * مثال:
+   *
+   * SKIP candidate
+   *     ↓
+   * candidate profile vector
+   *     ↓
+   * negative preference
+   */
+  async learnNegativePreference(
+    userId: number,
+    targetProfileVector: number[],
+    weight = 0.35,
+  ): Promise<void> {
+    await this.learnPreferenceSignal(
+      userId,
+      targetProfileVector,
+      Math.abs(weight),
+      'negative',
+    );
+  }
+
+  /**
+   * هسته مشترک یادگیری.
+   */
+  private async learnPreferenceSignal(
+    userId: number,
+    targetProfileVector: number[],
+    weight: number,
+    direction: 'positive' | 'negative',
+  ): Promise<void> {
+    const features = await this.getUserFeatures(userId);
+
+    if (!features) {
+      return;
+    }
+
+    const dimension = VECTOR_DIMS.preference;
+
+    const targetVector = targetProfileVector.slice(0, dimension);
+
+    while (targetVector.length < dimension) {
+      targetVector.push(0);
+    }
+
+    const currentPositive = (
+      features.positivePreferenceVector ??
+      features.preferenceVector ??
+      features.profileVector ??
+      new Array(dimension).fill(0)
+    ).slice(0, dimension);
+
+    const currentNegative = (
+      features.negativePreferenceVector ?? new Array(dimension).fill(0)
+    ).slice(0, dimension);
+
+    while (currentPositive.length < dimension) {
+      currentPositive.push(0);
+    }
+
+    while (currentNegative.length < dimension) {
+      currentNegative.push(0);
+    }
+
+    const isPositive = direction === 'positive';
+
+    /**
+     * تعداد سیگنال‌های قبلی برای محاسبه Confidence.
+     */
+    const previousCount = isPositive
+      ? Math.max(0, features.positivePreferenceCount ?? 0)
+      : Math.max(0, features.negativePreferenceCount ?? 0);
+
+    /**
+     * اعتماد حاصل از سابقه رفتار.
+     *
+     * اولین Like: multiplier ≈ 0.55
+     * بعد از چند Like: multiplier به 1 نزدیک می‌شود
+     */
+    const historyMultiplier = this.calculatePreferenceConfidence(previousCount);
+
+    /**
+     * weight از EventIngestionProcessor می‌آید و شامل:
+     * event strength × recency decay × event confidence
+     */
+    const effectiveWeight = Math.abs(weight) * historyMultiplier;
+
+    const learningRate = Math.min(
+      PREFERENCE_LEARNING_RATE * effectiveWeight,
+      MAX_PREFERENCE_SIGNAL,
+    );
+
+    const decay = Math.max(0, Math.min(1, PREFERENCE_DECAY));
+
+    /**
+     * EMA:
+     *   current × decay + target × learningRate
+     */
+    const current = isPositive ? currentPositive : currentNegative;
+
+    const updated = current.map((value, index) => {
+      const target = targetVector[index] ?? 0;
+
+      const next = value * decay + target * learningRate;
+
+      return Math.max(0, Math.min(1, next));
+    });
+
+    const updatedPositive = isPositive ? updated : currentPositive;
+    const updatedNegative = !isPositive ? updated : currentNegative;
+
+    const preferenceVector = this.buildPreferenceVector(
+      updatedPositive,
+      updatedNegative,
+    );
+
+    const updatePayload: Partial<UserFeatureSnapshot> = {
+      positivePreferenceVector: updatedPositive,
+      negativePreferenceVector: updatedNegative,
+      preferenceVector,
+    };
+
+    if (isPositive) {
+      updatePayload.positivePreferenceCount = previousCount + 1;
+    } else {
+      updatePayload.negativePreferenceCount = previousCount + 1;
+    }
+
+    await this.featureRepo.update({ userId }, updatePayload);
+
+    await this.redis.del(this.cacheKey(userId));
+
+    /**
+     * Retrieval باید بلافاصله تغییر preference را ببیند.
+     */
+    await this.upsertPreferenceToQdrant(userId, preferenceVector);
+
+    this.logger.debug(
+      `Preference signal (${direction}) for user ${userId}: ` +
+        `count=${previousCount + 1}, multiplier=${historyMultiplier.toFixed(3)}, ` +
+        `learningRate=${learningRate.toFixed(4)}`,
+    );
+  }
+
+  /**
+   * backward-compatible wrapper.
+   *
+   * فعلاً برای سرویس‌های قدیمی نگه داشته می‌شود.
+   *
+   * نکته:
+   * دیگر negative را با 1-targetVal خراب نمی‌کنیم.
+   */
+  async updatePreferenceVector(
+    userId: number,
+    targetProfileVector: number[],
+    weight: number,
+  ): Promise<void> {
+    if (weight >= 0) {
+      await this.learnPositivePreference(userId, targetProfileVector, weight);
+    } else {
+      await this.learnNegativePreference(
+        userId,
+        targetProfileVector,
+        Math.abs(weight),
+      );
+    }
+  }
+
+  /**
+   * آپدیت Qdrant بعد از تغییر preference.
    */
   private async upsertPreferenceToQdrant(
     userId: number,
     newPreference: number[],
   ): Promise<void> {
     try {
-      const existing = await this.featureRepo.findOne({ where: { userId } });
-      if (!existing) return;
+      const existing = await this.featureRepo.findOne({
+        where: { userId },
+      });
+
+      if (!existing) {
+        return;
+      }
+
+      const profile =
+        existing.profileVector ?? new Array(VECTOR_DIMS.profile).fill(0);
+
+      const behavior =
+        existing.behaviorVector ?? new Array(VECTOR_DIMS.behavior).fill(0);
+
+      const personality =
+        existing.personalityVector ??
+        new Array(VECTOR_DIMS.personality).fill(0);
+
+      const geo = existing.geoVector ?? [0, 0];
 
       await this.upsertToQdrant(
         userId,
         {
-          profile: existing.profileVector ?? [],
+          profile,
           preference: newPreference,
-          behavior: existing.behaviorVector ?? [],
-          personality: existing.personalityVector ?? [],
-          geo: existing.geoVector ?? [0, 0],
+          behavior,
+          personality,
+          geo,
         },
         existing,
         {
           phase: existing.phase as 'cold' | 'warm' | 'hot',
+
           trustScore: existing.trustScore,
         },
       );
-    } catch (err) {
+    } catch (error) {
       this.logger.error(
         `Failed to update preference in Qdrant for ${userId}`,
-        err,
+        error instanceof Error ? error.stack : String(error),
       );
     }
   }

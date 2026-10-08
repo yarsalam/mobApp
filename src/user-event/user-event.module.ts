@@ -1,48 +1,39 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bullmq';
 
-import { UserEventService } from './user-event.service';
-import { ArchiveController } from './user-event.controller';
-import { ArchiveAdvisorService } from './services/archive-advisor.service';
-
 import { PartitionedEvent } from './entities/partitioned-event.entity';
-import { ArchiveRequest } from './entities/archive-request.entity';
-import { AiFeedback } from 'src/ai-feedback/entities/ai-feedback.entity';
-import { DailyEventAggregate } from './aggregates/daily-event-aggregate.entity';
-import { UserCohort } from './aggregates/user-cohort.entity';
-import { User } from 'src/users/entities/user.entity';
+import { Payment } from '../payments/entities/payment.entity';
+import { User } from '../users/entities/user.entity';
 
-import { EventAggregatorProcessor } from './processors/event-aggregator.processor';
-import { CohortCalculatorProcessor } from './processors/cohort-calculator.processor';
+import { UserEventService } from './user-event.service';
+import { EventIngestionProcessor } from './processors/event-ingestion.processor';
 
-import { QueuesModule } from 'src/queues/queues.module';
 import { ChurnPredictorService } from './analytics/churn-predictor.service';
+
+import { FeatureStoreModule } from '../feature-store/feature-store.module';
+import { UserMetricsService } from 'src/user-metrics/user-metrics.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([
-      PartitionedEvent,
-      ArchiveRequest,
-      AiFeedback,
-      DailyEventAggregate,
-      UserCohort,
-      User,
-    ]),
+    TypeOrmModule.forFeature([PartitionedEvent, Payment, User]),
 
-    QueuesModule,
+    forwardRef(() => FeatureStoreModule),
+
+    BullModule.registerQueue(
+      { name: 'event-ingestion' },
+      { name: 'event-aggregation' },
+      { name: 'cohort-calculation' },
+    ),
   ],
-
-  controllers: [ArchiveController],
 
   providers: [
     UserEventService,
-    ArchiveAdvisorService,
-    EventAggregatorProcessor,
-    CohortCalculatorProcessor,
+    UserMetricsService,
+    EventIngestionProcessor,
     ChurnPredictorService,
   ],
 
-  exports: [UserEventService, ChurnPredictorService],
+  exports: [UserEventService, UserMetricsService, ChurnPredictorService],
 })
 export class UserEventModule {}

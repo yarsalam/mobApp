@@ -77,7 +77,11 @@ export class SuggestionService {
       resolvedGender = getTargetGender(currentUser.gender);
     }
 
-    const candidates = await this.vectorSearch.findCandidates(userId, 200);
+    const candidates = await this.vectorSearch.findCandidates(
+      userId,
+      200,
+      resolvedGender,
+    );
     if (candidates.length === 0) return [];
 
     const scores: ScoreEntry[] = await this.revenueScorer.scoreBatch(
