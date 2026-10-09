@@ -98,9 +98,17 @@ export class SuggestionService {
      * It only changes candidate ordering before MMR; the score remains
      * attached to each candidate and is still used by the optimizer.
      */
+
     const explorationPool =
       Math.random() < epsilon
-        ? this.diversityOptimizer.exploreExploit(scores)
+        ? this.diversityOptimizer
+            .exploreExploit(
+              scores.map((item) => ({
+                ...item,
+                score: item.decisionScore,
+              })),
+            )
+            .map(({ score: _score, ...item }) => item)
         : scores;
 
     const optimized = await this.diversityOptimizer.optimizeWithMMR(
