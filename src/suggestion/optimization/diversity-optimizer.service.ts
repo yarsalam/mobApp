@@ -1,107 +1,3 @@
-// import { Injectable } from '@nestjs/common';
-// import { RevenueScore } from '../scoring/revenue-scorer.service';
-// import { FeatureStoreService } from 'src/feature-store/feature-store.service';
-
-// interface ScoredItem {
-//   // تعریف اینترفیس ScoredItem (اگر ندارید اضافه کنید)
-//   id: string | number;
-//   score: number;
-//   // بقیه فیلدها...
-// }
-
-// @Injectable()
-// export class DiversityOptimizerService {
-//   constructor(private readonly featureStore: FeatureStoreService) {}
-//   /**
-//    * MMR-based optimization for diversity + relevance
-//    */
-//   async optimizeWithMMR(
-//     items: ScoredItem[],
-//     limit: number,
-//     lambda = 0.7,
-//   ): Promise<ScoredItem[]> {
-//     if (items.length <= limit) return items;
-
-//     const selected: ScoredItem[] = [];
-//     const remaining = [...items];
-
-//     // اولین مورد: بیشترین expected revenue
-//     selected.push(remaining.shift()!);
-
-//     while (selected.length < limit && remaining.length > 0) {
-//       let bestIdx = -1;
-//       let bestScore = -Infinity;
-
-//       for (let i = 0; i < remaining.length; i++) {
-//         const item = remaining[i];
-
-//         // relevance = expected revenue (نرمالایز)
-//         const maxRevenue = items[0].score;
-//         const relevance = item.score / maxRevenue;
-
-//         // diversity = 1 - max شباهت با موارد انتخاب شده
-//         let maxSimilarity = 0;
-//         for (const sel of selected) {
-//           const sim = await this.calculateSimilarity(item, sel);
-//           maxSimilarity = Math.max(maxSimilarity, sim);
-//         }
-//         const diversity = 1 - maxSimilarity;
-
-//         // MMR = λ * relevance + (1-λ) * diversity
-//         const mmr = lambda * relevance + (1 - lambda) * diversity;
-
-//         if (mmr > bestScore) {
-//           bestScore = mmr;
-//           bestIdx = i;
-//         }
-//       }
-
-//       if (bestIdx !== -1) {
-//         selected.push(remaining[bestIdx]);
-//         remaining.splice(bestIdx, 1);
-//       } else {
-//         break;
-//       }
-//     }
-
-//     return selected;
-//   }
-
-//   /**
-//    * Adaptive Epsilon (بر اساس تعداد تعاملات کاربر)
-//    */
-//   getAdaptiveEpsilon(userInteractions: number): number {
-//     if (userInteractions < 10) return 0.3; // کاربر جدید: کاوش بیشتر
-//     if (userInteractions < 50) return 0.15; // کاربر متوسط
-//     if (userInteractions < 200) return 0.08; // کاربر با تجربه
-//     return 0.04; // کاربر حرفه‌ای: کاوش کم
-//   }
-
-//   // متد calculateSimilarity رو هم باید تعریف کنید (اگر ندارید)
-//   // src/suggestion/optimization/diversity-optimizer.service.ts
-//   public async calculateSimilarity(
-//     itemA: ScoredItem,
-//     itemB: ScoredItem,
-//   ): Promise<number> {
-//     const vecA = await this.featureStore.getProfileVector(Number(itemA.id));
-//     const vecB = await this.featureStore.getProfileVector(Number(itemB.id));
-
-//     if (!vecA || !vecB) return 0.5;
-
-//     const dot = vecA.reduce((sum, v, i) => sum + v * (vecB[i] || 0), 0);
-//     const normA = Math.sqrt(vecA.reduce((sum, v) => sum + v * v, 0));
-//     const normB = Math.sqrt(vecB.reduce((sum, v) => sum + v * v, 0));
-
-//     return normA && normB ? dot / (normA * normB) : 0;
-//   }
-
-//   public exploreExploit(items: RevenueScore[]): RevenueScore[] {
-//     // مثلاً weighted shuffle
-//     return [...items].sort(() => Math.random() - 0.5);
-//     // یا پیاده‌سازی واقعی exploration
-//   }
-// }
-// diversity-optimizer.service.ts (نسخه Batch)
 import { Injectable } from '@nestjs/common';
 import { FeatureStoreService } from 'src/feature-store/feature-store.service';
 
@@ -114,83 +10,333 @@ interface ScoredItem {
 export class DiversityOptimizerService {
   constructor(private readonly featureStore: FeatureStoreService) {}
 
+  /**
+   * Maximal Marginal Relevance
+   *
+   * هدف:
+   *
+   * relevance
+   *     +
+   * diversity
+   *
+   * یعنی:
+   *
+   * candidate خوب باشد،
+   * ولی اگر پنج candidate قبلی تقریباً
+   * همان representation را دارند،
+   * candidate متفاوت‌تر ترجیح داده شود.
+   *
+   * Representation:
+   *
+   * profile      10
+   * preference   10
+   * behavior      5
+   * personality  5
+   * geo           2
+   *
+   * مجموع = 32D
+   */
   async optimizeWithMMR(
     items: ScoredItem[],
     limit: number,
-    lambda = 0.7,
+    lambda = 0.72,
   ): Promise<ScoredItem[]> {
-    if (items.length <= limit) return items;
+    if (items.length === 0) {
+      return [];
+    }
 
-    // یکبار همه بردارها را واکشی کن
-    const ids = items.map((it) => Number(it.id));
+    const safeLimit = Math.max(1, Math.min(limit, items.length));
+
+    if (items.length <= safeLimit) {
+      return [...items];
+    }
+
+    const safeLambda = Math.max(0.5, Math.min(0.95, lambda));
+
+    // ─────────────────────────────────────────────────────────────
+    // Batch feature loading
+    // ─────────────────────────────────────────────────────────────
+
+    const ids = [
+      ...new Set(
+        items
+          .map((item) => Number(item.id))
+          .filter((id) => Number.isFinite(id)),
+      ),
+    ];
+
     const featuresMap = await this.featureStore.getBatchFeatures(ids);
+
+    // ─────────────────────────────────────────────────────────────
+    // ساخت representation کامل
+    // ─────────────────────────────────────────────────────────────
+
     const vectors = new Map<number, number[]>();
-    featuresMap.forEach((snapshot, userId) => {
-      vectors.set(
-        userId,
-        snapshot.preferenceVector || snapshot.profileVector || [],
-      );
-    });
+
+    for (const id of ids) {
+      const snapshot = featuresMap.get(id);
+
+      if (!snapshot) {
+        vectors.set(id, []);
+        continue;
+      }
+
+      vectors.set(id, this.buildRepresentation(snapshot));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Ranking
+    // ─────────────────────────────────────────────────────────────
+
+    const rankedItems = [...items].sort((a, b) => b.score - a.score);
 
     const selected: ScoredItem[] = [];
-    const remaining = [...items];
-    selected.push(remaining.shift()!);
 
-    while (selected.length < limit && remaining.length > 0) {
-      let bestIdx = -1,
-        bestScore = -Infinity;
+    const remaining = [...rankedItems];
+
+    // اولین candidate:
+    // بیشترین relevance
+    const first = remaining.shift();
+
+    if (!first) {
+      return [];
+    }
+
+    selected.push(first);
+
+    // ─────────────────────────────────────────────────────────────
+    // MMR loop
+    // ─────────────────────────────────────────────────────────────
+
+    while (selected.length < safeLimit && remaining.length > 0) {
+      let bestIndex = -1;
+      let bestMMR = -Infinity;
+
       for (let i = 0; i < remaining.length; i++) {
-        const item = remaining[i];
-        const itemId = Number(item.id);
-        const itemVec = vectors.get(itemId) ?? [];
-        const maxRevenue = items[0].score;
-        const relevance = item.score / maxRevenue;
+        const candidate = remaining[i];
 
-        let maxSim = 0;
-        for (const sel of selected) {
-          const selVec = vectors.get(Number(sel.id)) ?? [];
-          const sim = this.cosineSimilarity(itemVec, selVec);
-          maxSim = Math.max(maxSim, sim);
+        const candidateId = Number(candidate.id);
+
+        const candidateVector = vectors.get(candidateId) ?? [];
+
+        // ─────────────────────────────────────────
+        // Relevance
+        // ─────────────────────────────────────────
+
+        const relevance = this.normalizeScore(candidate.score, rankedItems);
+
+        // ─────────────────────────────────────────
+        // Maximum similarity with selected
+        // ─────────────────────────────────────────
+
+        let maxSimilarity = 0;
+
+        for (const selectedItem of selected) {
+          const selectedVector = vectors.get(Number(selectedItem.id)) ?? [];
+
+          const similarity = this.cosineSimilarity(
+            candidateVector,
+            selectedVector,
+          );
+
+          maxSimilarity = Math.max(maxSimilarity, similarity);
         }
-        const diversity = 1 - maxSim;
-        const mmr = lambda * relevance + (1 - lambda) * diversity;
-        if (mmr > bestScore) {
-          bestScore = mmr;
-          bestIdx = i;
+
+        // ─────────────────────────────────────────
+        // Diversity
+        // ─────────────────────────────────────────
+
+        const diversity = 1 - maxSimilarity;
+
+        // ─────────────────────────────────────────
+        // MMR
+        // ─────────────────────────────────────────
+
+        const mmr = safeLambda * relevance + (1 - safeLambda) * diversity;
+
+        if (mmr > bestMMR) {
+          bestMMR = mmr;
+          bestIndex = i;
         }
       }
-      if (bestIdx !== -1) {
-        selected.push(remaining[bestIdx]);
-        remaining.splice(bestIdx, 1);
-      } else break;
+
+      if (bestIndex === -1) {
+        break;
+      }
+
+      selected.push(remaining[bestIndex]);
+
+      remaining.splice(bestIndex, 1);
     }
+
     return selected;
   }
 
-  getAdaptiveEpsilon(userInteractions: number): number {
-    if (userInteractions < 10) return 0.3; // کاربر جدید: کاوش بیشتر
-    if (userInteractions < 50) return 0.15; // کاربر متوسط
-    if (userInteractions < 200) return 0.08; // کاربر با تجربه
-    return 0.04; // کاربر حرفه‌ای: کاوش کم
-  }
-  exploreExploit(items: any[]): any[] {
-    return [...items].sort(() => Math.random() - 0.5);
+  /**
+   * Representation کامل 32D.
+   *
+   * نکته:
+   * اینجا دوباره وزن‌دهی انجام نمی‌دهیم.
+   * FeatureStore/Qdrant مسئول representation اصلی است.
+   *
+   * MMR فقط برای اندازه‌گیری شباهت
+   * از feature representation استفاده می‌کند.
+   */
+  private buildRepresentation(snapshot: {
+    profileVector?: number[];
+    preferenceVector?: number[];
+    behaviorVector?: number[];
+    personalityVector?: number[];
+    geoVector?: number[];
+  }): number[] {
+    const profile = this.normalizeVector(snapshot.profileVector, 10);
+
+    const preference = this.normalizeVector(
+      snapshot.preferenceVector?.length
+        ? snapshot.preferenceVector
+        : snapshot.profileVector,
+      10,
+    );
+
+    const behavior = this.normalizeVector(snapshot.behaviorVector, 5);
+
+    const personality = this.normalizeVector(snapshot.personalityVector, 5);
+
+    const geo = this.normalizeVector(snapshot.geoVector, 2);
+
+    return [...profile, ...preference, ...behavior, ...personality, ...geo];
   }
 
+  /**
+   * نرمال‌سازی relevance بین 0 و 1.
+   */
+  private normalizeScore(score: number, items: ScoredItem[]): number {
+    if (!items.length) {
+      return 0;
+    }
+
+    const max = Math.max(
+      ...items.map((item) => (Number.isFinite(item.score) ? item.score : 0)),
+    );
+
+    const min = Math.min(
+      ...items.map((item) => (Number.isFinite(item.score) ? item.score : 0)),
+    );
+
+    if (max === min) {
+      return 1;
+    }
+
+    return Math.max(0, Math.min(1, (score - min) / (max - min)));
+  }
+
+  /**
+   * Adaptive exploration.
+   *
+   * کاربر جدید:
+   * exploration بیشتر
+   *
+   * کاربر mature:
+   * exploitation بیشتر
+   */
+  getAdaptiveEpsilon(userInteractions: number): number {
+    const count = Math.max(0, userInteractions);
+
+    if (count < 10) {
+      return 0.3;
+    }
+
+    if (count < 50) {
+      return 0.15;
+    }
+
+    if (count < 200) {
+      return 0.08;
+    }
+
+    return 0.04;
+  }
+
+  /**
+   * Exploration کنترل‌شده.
+   *
+   * random shuffle کامل باعث می‌شود
+   * quality candidateها کاملاً از بین برود.
+   *
+   * بنابراین فقط top portion را
+   * کمی جابه‌جا می‌کنیم.
+   */
+  exploreExploit<T extends { score: number }>(items: T[]): T[] {
+    if (items.length <= 2) {
+      return [...items];
+    }
+
+    const sorted = [...items].sort((a, b) => b.score - a.score);
+
+    const explorationWindow = Math.max(
+      2,
+      Math.min(10, Math.ceil(sorted.length * 0.2)),
+    );
+
+    const head = sorted.slice(0, explorationWindow);
+
+    const tail = sorted.slice(explorationWindow);
+
+    // Fisher-Yates
+    for (let i = head.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+
+      [head[i], head[j]] = [head[j], head[i]];
+    }
+
+    return [...head, ...tail];
+  }
+
+  /**
+   * Cosine similarity
+   */
   private cosineSimilarity(a: number[], b: number[]): number {
-    if (!a || !b || a.length === 0 || b.length === 0) return 0.5;
-    let dot = 0,
-      normA = 0,
-      normB = 0;
-    const len = Math.max(a.length, b.length);
-    for (let i = 0; i < len; i++) {
-      const av = a[i] ?? 0,
-        bv = b[i] ?? 0;
+    if (!a.length || !b.length) {
+      return 0;
+    }
+
+    const length = Math.min(a.length, b.length);
+
+    let dot = 0;
+    let normA = 0;
+    let normB = 0;
+
+    for (let i = 0; i < length; i++) {
+      const av = Number.isFinite(a[i]) ? a[i] : 0;
+
+      const bv = Number.isFinite(b[i]) ? b[i] : 0;
+
       dot += av * bv;
       normA += av * av;
       normB += bv * bv;
     }
-    const denom = Math.sqrt(normA) * Math.sqrt(normB);
-    return denom ? dot / denom : 0;
+
+    const denominator = Math.sqrt(normA) * Math.sqrt(normB);
+
+    if (denominator === 0) {
+      return 0;
+    }
+
+    return Math.max(-1, Math.min(1, dot / denominator));
+  }
+
+  private normalizeVector(
+    vector: number[] | undefined,
+    dimension: number,
+  ): number[] {
+    const result = (vector ?? [])
+      .slice(0, dimension)
+      .map((value) => (Number.isFinite(value) ? value : 0));
+
+    while (result.length < dimension) {
+      result.push(0);
+    }
+
+    return result;
   }
 }

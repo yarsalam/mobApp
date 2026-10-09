@@ -38,18 +38,24 @@ export class VectorSearchService {
   /**
    * Retrieval مرکزی یارسلام.
    *
-   * ترتیب:
+   * Architecture:
    *
-   * 1. ساخت canonical search vector از FeatureStore
-   * 2. Retrieval از Qdrant
-   * 3. hard filter برای active + target gender
-   * 4. اضافه کردن boosted users
-   * 5. حذف خود کاربر
-   * 6. deduplicate
+   * User FeatureStore 32D
+   *        ↓
+   * Canonical merged vector
+   *        ↓
+   * Qdrant similarity retrieval
+   *        ↓
+   * Gender filter
+   *        ↓
+   * DB active-status validation
+   *        ↓
+   * Boost candidates
+   *        ↓
+   * Deduplicate
    *
    * توجه:
-   * relation/block/moderation در لایه بالاتر انجام می‌شود،
-   * چون این سرویس نباید به آن ماژول‌ها وابسته شود.
+   * relation / block / moderation در SuggestionService انجام می‌شود.
    */
   async findCandidates(
     userId: number,
@@ -65,19 +71,33 @@ export class VectorSearchService {
     let searchVector: number[] | null = null;
 
     // ─────────────────────────────────────────────────────────────
-    // مسیر اصلی: FeatureStore
+    // مسیر اصلی: FeatureStore 32D
     // ─────────────────────────────────────────────────────────────
 
     if (userFeatures) {
-      const profile = userFeatures.profileVector ?? [];
+      const profile = this.normalizeVector(
+        userFeatures.profileVector ?? [],
+        10,
+      );
 
-      const preference = userFeatures.preferenceVector ?? profile;
+      const preference = this.normalizeVector(
+        userFeatures.preferenceVector?.length
+          ? userFeatures.preferenceVector
+          : profile,
+        10,
+      );
 
-      const behavior = userFeatures.behaviorVector ?? [];
+      const behavior = this.normalizeVector(
+        userFeatures.behaviorVector ?? [],
+        5,
+      );
 
-      const personality = userFeatures.personalityVector ?? [];
+      const personality = this.normalizeVector(
+        userFeatures.personalityVector ?? [],
+        5,
+      );
 
-      const geo = userFeatures.geoVector ?? [];
+      const geo = this.normalizeVector(userFeatures.geoVector ?? [], 2);
 
       searchVector = this.featureStore.buildMergedVector(
         profile,
@@ -92,7 +112,7 @@ export class VectorSearchService {
     // fallback
     // ─────────────────────────────────────────────────────────────
 
-    if (!searchVector || searchVector.length === 0) {
+    if (!searchVector || searchVector.length !== 32) {
       const user = await this.userRepo.findOne({
         where: {
           id: userId,
@@ -107,21 +127,19 @@ export class VectorSearchService {
           profileVector,
           profileVector,
           [0, 0, 0, 0, 0],
-          [0, 0, 0, 0, 0],
+          [0.5, 0.5, 0.5, 0.5, 0.5],
           [0, 0],
         );
       }
     }
 
-    if (!searchVector || searchVector.length === 0) {
+    if (!searchVector || searchVector.length !== 32) {
       return this.getFallbackCandidates(userId, safeLimit, targetGender);
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // Retrieval
-    // ─────────────────────────────────────────────────────────────
-
-    const retrievalLimit = Math.min(safeLimit * 2, 500);
+    // Retrieval بیشتر از limit نهایی است تا
+    // لایه ranking و MMR فضای کافی داشته باشند.
+    const retrievalLimit = Math.min(Math.max(safeLimit * 5, 100), 500);
 
     const similarIds = await this.findSimilarUsers(
       searchVector,
@@ -132,31 +150,32 @@ export class VectorSearchService {
 
     // ─────────────────────────────────────────────────────────────
     // Boost
-    //
-    // Boost دیگر bypass برای active/gender نیست.
-    // ابتدا candidate می‌شود، سپس validate می‌شود.
     // ─────────────────────────────────────────────────────────────
 
     const boostedIds = await this.getValidBoostedUsers(
       userId,
       targetGender,
-      safeLimit,
+      Math.min(safeLimit * 2, 100),
     );
 
+    // Boost فقط candidate pool را enrich می‌کند.
+    // ranking نهایی بعداً انجام می‌شود.
     const merged = [...boostedIds, ...similarIds];
 
-    const uniqueIds = [...new Set(merged)]
+    return [...new Set(merged)]
       .filter((id) => id !== userId)
       .slice(0, safeLimit);
-
-    return uniqueIds;
   }
 
   /**
-   * Retrieval واقعی از Qdrant.
+   * Qdrant retrieval.
    *
-   * gender و active در خود Qdrant فیلتر می‌شوند،
-   * بنابراین تعداد candidateهای بی‌استفاده کاهش پیدا می‌کند.
+   * نکته مهم:
+   * status داخل payload فعلی FeatureStore وجود ندارد.
+   * بنابراین status را اینجا filter نمی‌کنیم.
+   *
+   * active بودن در DB authoritative source است
+   * و بعد از Qdrant validation می‌شود.
    */
   private async findSimilarUsers(
     searchVector: number[],
@@ -181,15 +200,6 @@ export class VectorSearchService {
     try {
       const must: Array<Record<string, unknown>> = [];
 
-      // فقط کاربران active
-      must.push({
-        key: 'status',
-        match: {
-          value: 'active',
-        },
-      });
-
-      // target gender
       if (targetGender) {
         must.push({
           key: 'gender',
@@ -222,18 +232,15 @@ export class VectorSearchService {
         .map((item) => Number(item.id))
         .filter((id) => Number.isFinite(id) && id !== excludeUserId);
 
-      // ─────────────────────────────────────────────
-      // DB validation
-      //
-      // Qdrant payload ممکن است stale باشد.
-      // DB آخرین مرجع وضعیت کاربر است.
-      // ─────────────────────────────────────────────
-
       if (ids.length === 0) {
         await this.redis.set(cacheKey, JSON.stringify([]), 'EX', 30);
 
         return [];
       }
+
+      // ─────────────────────────────────────────────────────────
+      // DB authoritative validation
+      // ─────────────────────────────────────────────────────────
 
       const where: Record<string, unknown> = {
         id: In(ids),
@@ -251,7 +258,7 @@ export class VectorSearchService {
 
       const activeSet = new Set(activeUsers.map((user) => user.id));
 
-      // ترتیب Qdrant حفظ می‌شود
+      // ترتیب Qdrant حفظ می‌شود.
       const activeIds = ids.filter((id) => activeSet.has(id));
 
       await this.redis.set(cacheKey, JSON.stringify(activeIds), 'EX', 60);
@@ -268,8 +275,7 @@ export class VectorSearchService {
   }
 
   /**
-   * Boost فقط زمانی وارد candidate pool می‌شود
-   * که واقعاً active و targetGender صحیح باشد.
+   * Boost candidateها نیز باید از همان hard filter عبور کنند.
    */
   private async getValidBoostedUsers(
     excludeUserId: number,
@@ -309,7 +315,6 @@ export class VectorSearchService {
 
       const valid = new Set(users.map((user) => user.id));
 
-      // ترتیب BoostQueue حفظ می‌شود
       return ids.filter((id) => valid.has(id)).slice(0, limit);
     } catch (error) {
       this.logger.warn(
@@ -323,8 +328,7 @@ export class VectorSearchService {
   }
 
   /**
-   * اگر FeatureStore هنوز برای کاربر ساخته نشده باشد،
-   * یک fallback سبک از DB استفاده می‌کنیم.
+   * Fallback فقط برای زمانی که FeatureStore هنوز آماده نیست.
    */
   private async getFallbackCandidates(
     userId: number,
@@ -364,9 +368,22 @@ export class VectorSearchService {
   }
 
   /**
-   * فقط fallback اولیه.
-   *
-   * مسیر اصلی Retrieval نباید از این استفاده کند.
+   * تضمین dimension صحیح برای FeatureStore.
+   */
+  private normalizeVector(vector: number[], dimension: number): number[] {
+    const result = vector
+      .slice(0, dimension)
+      .map((value) => (Number.isFinite(value) ? value : 0));
+
+    while (result.length < dimension) {
+      result.push(0);
+    }
+
+    return result;
+  }
+
+  /**
+   * fallback profile vector.
    */
   private buildProfileVectorFromUser(user: User): number[] {
     const birthYear = user.birth_year
