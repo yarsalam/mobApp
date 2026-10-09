@@ -4,28 +4,24 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { UserFeatureSnapshot } from './entities/user-feature.entity';
 import { FeatureStoreService } from './feature-store.service';
 import { FeatureStoreController } from './feature-store.controller';
+import { SemanticEmbeddingService } from './semantic-embedding.service';
 
 import { PersonalityModule } from '../personality/personality.module';
 import { RedisModule } from '../redis/redis.module';
 import { User } from '../users/entities/user.entity';
 import { UserMetricsModule } from '../user-metrics/user-metrics.module';
-import { FeatureWeightState } from './entities/feature-weight-state.entity';
-import { FeatureLearningReceipt } from './entities/feature-learning-receipt.entity';
+import { AiModule } from '../ai/ai.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([
-      UserFeatureSnapshot,
-      User,
-      FeatureLearningReceipt,
-      FeatureWeightState,
-    ]),
+    TypeOrmModule.forFeature([UserFeatureSnapshot, User]),
     PersonalityModule,
     RedisModule,
     UserMetricsModule,
+    AiModule,
   ],
-  providers: [FeatureStoreService],
-  exports: [FeatureStoreService],
+  providers: [FeatureStoreService, SemanticEmbeddingService],
+  exports: [FeatureStoreService, SemanticEmbeddingService],
   controllers: [FeatureStoreController],
 })
 export class FeatureStoreModule {}

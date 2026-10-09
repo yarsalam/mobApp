@@ -31,6 +31,7 @@ export const VECTOR_DIMS = {
   },
 } as const;
 
+export const SEMANTIC_VECTOR_DIMS = 384;
 // ─────────────────────────────────────────────────────────────
 // Segment weights
 // ─────────────────────────────────────────────────────────────
