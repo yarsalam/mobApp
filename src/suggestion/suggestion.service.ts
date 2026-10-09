@@ -22,13 +22,13 @@ export interface EnrichedSuggestion extends SuggestionEntity {
   /** امتیاز درآمدی؛ برای تحلیل و یادگیری، نه رتبه‌بندی اصلی */
   rawRevenue: number;
 
-  /** امتیاز سازگاری رابطه‌ای با freshness در بازه تقریبی 0..100 */
+  /** امتیاز سازگاری نمایشی با freshness، در بازه 0..100 */
   compatibilityScore: number;
 
-  /** امتیاز خالص سازگاری، پیش از freshness */
+  /** امتیاز خالص سازگاری مدل، در بازه 0..1 */
   intelligenceScore: number;
 
-  /** confidence مدل در بازه 0..1 */
+  /** اطمینان مدل، در بازه 0..1 */
   intelligenceConfidence: number;
 
   trustScore: number;
@@ -60,14 +60,20 @@ export class SuggestionService {
     const startTime = Date.now();
     const limit = Math.max(1, Math.min(Math.floor(opts?.limit ?? 20), 100));
 
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      return [];
+    }
+
     let targetGender = opts?.targetGender;
 
     if (!targetGender) {
       const currentUser = await this.usersService.findById(userId);
+
       if (!currentUser) {
         this.logger.warn(`Suggestion request: user ${userId} not found`);
         return [];
       }
+
       targetGender = getTargetGender(currentUser.gender);
     }
 
@@ -77,10 +83,15 @@ export class SuggestionService {
       targetGender,
     );
 
-    if (!candidates.length) return [];
+    if (candidates.length === 0) {
+      return [];
+    }
 
     const scores = await this.revenueScorer.scoreBatch(userId, candidates);
-    if (!scores.length) return [];
+
+    if (scores.length === 0) {
+      return [];
+    }
 
     const scoreMap = new Map<number, RevenueScore>(
       scores.map((score) => [score.candidateId, score]),
@@ -94,29 +105,31 @@ export class SuggestionService {
     );
 
     /*
-     * Exploration must not replace scoring with a random shuffle.
-     * It only changes candidate ordering before MMR; the score remains
-     * attached to each candidate and is still used by the optimizer.
+     * Exploration به‌جای به‌هم‌ریختن تصادفی ترتیب:
+     * وزن diversity را در MMR بیشتر می‌کند.
+     *
+     * exploitation: تاکید بیشتر بر relevance
+     * exploration: تاکید بیشتر بر تنوع
      */
+    const explore = Math.random() < epsilon;
+    const mmrLambda = explore ? 0.58 : 0.72;
 
-    const explorationPool =
-      Math.random() < epsilon
-        ? this.diversityOptimizer
-            .exploreExploit(
-              scores.map((item) => ({
-                ...item,
-                score: item.decisionScore,
-              })),
-            )
-            .map(({ score: _score, ...item }) => item)
-        : scores;
+    /*
+     * کمی بیشتر از تعداد نهایی انتخاب می‌کنیم تا اگر بعضی کاربران
+     * به‌دلیل شهر، بلاک یا moderation حذف شدند، فید خالی نماند.
+     */
+    const optimizationLimit = Math.min(
+      scores.length,
+      Math.max(limit * 3, limit),
+    );
 
     const optimized = await this.diversityOptimizer.optimizeWithMMR(
-      explorationPool.map((score) => ({
+      scores.map((score) => ({
         id: score.candidateId,
         score: score.decisionScore,
       })),
-      limit,
+      optimizationLimit,
+      mmrLambda,
     );
 
     const orderedIds = [
@@ -127,7 +140,7 @@ export class SuggestionService {
       ),
     ];
 
-    const result = await this.enrichResults(
+    const enriched = await this.enrichResults(
       userId,
       orderedIds,
       scoreMap,
@@ -135,12 +148,17 @@ export class SuggestionService {
       opts?.city,
     );
 
+    // ترتیب MMR حفظ می‌شود؛ مرتب‌سازی دوباره بر اساس compatibility ممنوع است.
+    const result = enriched.slice(0, limit);
+
     this.userEventService
       .log({
         userId,
         type: EventType.AI_SUGGESTION_SHOWN,
         metadata: {
           count: result.length,
+          exploration: explore,
+          mmrLambda,
           scores: result.map((item) => ({
             candidateId: item.id,
             compatibility: item.intelligenceScore,
@@ -168,7 +186,9 @@ export class SuggestionService {
     targetGender: string,
     city?: string,
   ): Promise<EnrichedSuggestion[]> {
-    if (!candidateIds.length) return [];
+    if (candidateIds.length === 0) {
+      return [];
+    }
 
     const users = await this.usersService.findByIds(candidateIds, {
       relations: ['userImages', 'boost', 'devices'],
@@ -198,17 +218,21 @@ export class SuggestionService {
 
     const results: EnrichedSuggestion[] = [];
 
-    // Iterate candidateIds to preserve the scorer/MMR order.
+    /*
+     * مهم:
+     * پیمایش دقیقاً بر اساس candidateIds انجام می‌شود.
+     * این ترتیب از خروجی MMR آمده و باید حفظ شود.
+     */
     for (const candidateId of candidateIds) {
       const user = userMap.get(candidateId);
       const score = scoreMap.get(candidateId);
 
       if (!user || !score) continue;
       if (user.id === userId || user.gender !== targetGender) continue;
-
       if (city && user.city !== city) continue;
 
       const relation = relationsMap.get(user.id);
+
       if (relation?.isBlocked) continue;
       if (!canAppearInFeed(user)) continue;
 
@@ -216,7 +240,12 @@ export class SuggestionService {
       const trustScore = user.trustScore ?? 50;
       const trustMultiplier = calculateTrustMultiplier(trustScore);
 
-      // Freshness affects display ordering, not the underlying model score.
+      /*
+       * compatibilityScore برای سازگاری با مصرف‌کنندگان قدیمی API
+       * همچنان در بازه 0..100 باقی می‌ماند.
+       *
+       * intelligenceScore امتیاز خام مدل و در بازه 0..1 است.
+       */
       const displayScore = Math.max(
         0,
         Math.min(100, score.compatibilityScore * freshnessBoost * 100),
@@ -245,6 +274,7 @@ export class SuggestionService {
       });
     }
 
-    return results.sort((a, b) => b.compatibilityScore - a.compatibilityScore);
+    // مرتب‌سازی مجدد در اینجا عمداً انجام نمی‌شود.
+    return results;
   }
 }
