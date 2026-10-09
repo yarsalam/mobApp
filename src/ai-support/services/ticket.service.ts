@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -402,5 +407,63 @@ export class TicketService {
     } catch {
       return null;
     }
+  }
+
+  // داخل TicketService:
+
+  async getTicketForUser(
+    ticketId: number,
+    userId: number,
+  ): Promise<SupportTicket> {
+    const ticket = await this.ticketRepo.findOne({
+      where: {
+        id: ticketId,
+        user: { id: userId },
+      },
+      relations: ['messages', 'messages.sender'],
+    });
+
+    // برای جلوگیری از افشای وجود تیکت متعلق به دیگران
+    if (!ticket) {
+      throw new NotFoundException('Ticket not found');
+    }
+
+    return ticket;
+  }
+
+  async addUserMessage(
+    ticketId: number,
+    userId: number,
+    content: string,
+  ): Promise<TicketMessage> {
+    const normalized = typeof content === 'string' ? content.trim() : '';
+
+    if (!normalized || normalized.length > 5000) {
+      throw new BadRequestException(
+        'Message must contain 1 to 5000 characters',
+      );
+    }
+
+    const ticket = await this.ticketRepo.findOne({
+      where: {
+        id: ticketId,
+        user: { id: userId },
+      },
+    });
+
+    if (!ticket) {
+      throw new NotFoundException('Ticket not found');
+    }
+
+    if (
+      ticket.status === TicketStatus.RESOLVED ||
+      ticket.status === TicketStatus.CLOSED
+    ) {
+      throw new BadRequestException(
+        'This ticket is no longer accepting messages',
+      );
+    }
+
+    return this.addMessage(ticketId, userId, normalized, MessageType.USER);
   }
 }

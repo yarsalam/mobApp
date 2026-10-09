@@ -1,76 +1,78 @@
-// ticket.controller.ts
 import {
   Controller,
   Get,
   Post,
-  Patch,
   Param,
   Body,
   Req,
   ParseIntPipe,
   UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import { TicketService } from './services/ticket.service';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+
+type AuthenticatedRequest = {
+  user: {
+    id?: number;
+    sub?: number;
+  };
+};
 
 @Controller('tickets')
 @UseGuards(JwtAuthGuard)
 export class TicketController {
   constructor(private readonly ticketService: TicketService) {}
 
-  // POST /tickets
+  private getUserId(req: AuthenticatedRequest): number {
+    const id = Number(req.user?.id ?? req.user?.sub);
+
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      throw new ForbiddenException('Invalid authenticated user');
+    }
+
+    return id;
+  }
+
   @Post()
-  create(@Req() req: any, @Body() dto: CreateTicketDto) {
-    return this.ticketService.createTicket(req.user, dto);
+  create(@Req() req: AuthenticatedRequest, @Body() dto: CreateTicketDto) {
+    return this.ticketService.createTicket({ id: this.getUserId(req) }, dto);
   }
 
-  // GET /tickets/user/:userId
-  @Get('user/:userId')
-  getUserTickets(@Param('userId', ParseIntPipe) userId: number) {
-    return this.ticketService.getUserTickets(userId);
+  // کاربر فقط تیکت‌های خودش را می‌بیند.
+  @Get('me')
+  getMyTickets(@Req() req: AuthenticatedRequest) {
+    return this.ticketService.getUserTickets(this.getUserId(req));
   }
 
-  // GET /tickets/:id
+  // دریافت تیکت فقط با کنترل مالکیت
   @Get(':id')
-  getTicket(@Param('id', ParseIntPipe) id: number) {
-    return this.ticketService.getTicket(id);
+  getTicket(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.ticketService.getTicketForUser(id, this.getUserId(req));
   }
 
-  // POST /tickets/:id/messages
   @Post(':id/messages')
   addMessage(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @Body('content') content: string,
   ) {
-    return this.ticketService.addMessage(
-      id,
-      req.user.id,
-      content,
-      'user' as any,
-    );
+    return this.ticketService.addUserMessage(id, this.getUserId(req), content);
   }
 
-  // PATCH /tickets/:id/resolve
-  @Patch(':id/resolve')
-  resolve(
-    @Param('id', ParseIntPipe) id: number,
-    @Body('resolution') resolution: string,
-  ) {
-    return this.ticketService.resolveTicket(id, resolution);
-  }
-
-  // POST /tickets/:id/feedback
   @Post(':id/feedback')
   feedback(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @Body() body: { rating: number; comment?: string },
   ) {
     return this.ticketService.submitFeedback(
       id,
-      req.user.id,
+      this.getUserId(req),
       body.rating,
       body.comment,
     );
