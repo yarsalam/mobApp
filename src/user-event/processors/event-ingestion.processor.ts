@@ -9,6 +9,9 @@ import { EventType } from '../type/event-type.enum';
 
 import { UserMetricsService } from 'src/user-metrics/user-metrics.service';
 import { FeatureStoreService } from 'src/feature-store/feature-store.service';
+import { Inject } from '@nestjs/common';
+import Redis from 'ioredis';
+import { REDIS_CLIENT } from 'src/redis/redis.constants';
 
 interface EventIngestionJob {
   eventId: number;
@@ -42,6 +45,9 @@ export class EventIngestionProcessor extends WorkerHost {
     private readonly userMetricsService: UserMetricsService,
 
     private readonly featureStore: FeatureStoreService,
+
+    @Inject(REDIS_CLIENT)
+    private readonly redis: Redis,
   ) {
     super();
   }
@@ -49,38 +55,78 @@ export class EventIngestionProcessor extends WorkerHost {
   async process(job: Job<EventIngestionJob>): Promise<void> {
     const { eventId, userId } = job.data;
 
-    if (!eventId || !userId) {
+    if (
+      !Number.isSafeInteger(eventId) ||
+      eventId <= 0 ||
+      !Number.isSafeInteger(userId) ||
+      userId <= 0
+    ) {
       throw new Error(
         `Invalid event-ingestion job: ${JSON.stringify(job.data)}`,
       );
     }
 
-    const event = await this.eventRepo.findOne({
-      where: {
-        id: eventId,
-        userId,
-      },
-    });
+    const completedKey = `event-ingestion:completed:${eventId}`;
+    const lockKey = `event-ingestion:lock:${eventId}`;
 
-    if (!event) {
-      throw new Error(`Event ${eventId} for user ${userId} was not found`);
+    // رویدادی که قبلاً کامل شده، نباید دوباره یادگیری شود.
+    if (await this.redis.exists(completedKey)) {
+      this.logger.debug(`Skipping completed event=${eventId}`);
+      return;
     }
 
-    // ─────────────────────────────────────────────────────────
-    // 1. Canonical metrics
-    // ─────────────────────────────────────────────────────────
+    // توکن اختصاصی برای جلوگیری از آزاد کردن قفل متعلق به worker دیگر.
+    const lockToken = `${String(job.id ?? eventId)}:${Date.now()}:${Math.random()}`;
 
-    await this.processMetrics(event);
+    const acquired = await this.redis.set(lockKey, lockToken, 'EX', 300, 'NX');
 
-    // ─────────────────────────────────────────────────────────
-    // 2. Learning Loop
-    // ─────────────────────────────────────────────────────────
+    if (acquired !== 'OK') {
+      // اجازه بده BullMQ پس از تأخیر، دوباره تلاش کند.
+      throw new Error(`Event ${eventId} is already being processed`);
+    }
 
-    await this.learnFromEvent(event);
+    try {
+      // ممکن است اجرای دیگری پیش از گرفتن قفل، پردازش را تمام کرده باشد.
+      if (await this.redis.exists(completedKey)) {
+        this.logger.debug(`Skipping completed event=${eventId}`);
+        return;
+      }
 
-    this.logger.debug(
-      `Learning loop processed event=${event.id} type=${event.type} user=${event.userId}`,
-    );
+      const event = await this.eventRepo.findOne({
+        where: {
+          id: eventId,
+          userId,
+        },
+      });
+
+      if (!event) {
+        throw new Error(`Event ${eventId} for user ${userId} was not found`);
+      }
+
+      await this.processMetrics(event);
+      await this.learnFromEvent(event);
+
+      // فقط پس از اتمام موفق مراحل بالا، رویداد کامل‌شده علامت‌گذاری می‌شود.
+      await this.redis.set(completedKey, '1', 'EX', 90 * 24 * 60 * 60);
+
+      this.logger.debug(
+        `Learning loop processed event=${event.id} ` +
+          `type=${event.type} user=${event.userId}`,
+      );
+    } finally {
+      // فقط مالک قفل اجازه آزاد کردن آن را دارد.
+      await this.redis.eval(
+        `
+        if redis.call("GET", KEYS[1]) == ARGV[1] then
+          return redis.call("DEL", KEYS[1])
+        end
+        return 0
+      `,
+        1,
+        lockKey,
+        lockToken,
+      );
+    }
   }
 
   // ───────────────────────────────────────────────────────────
