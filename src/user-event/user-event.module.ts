@@ -8,17 +8,17 @@ import { User } from '../users/entities/user.entity';
 
 import { UserEventService } from './user-event.service';
 import { EventIngestionProcessor } from './processors/event-ingestion.processor';
-
 import { ChurnPredictorService } from './analytics/churn-predictor.service';
 
 import { FeatureStoreModule } from '../feature-store/feature-store.module';
-import { UserMetricsService } from 'src/user-metrics/user-metrics.service';
+import { UserMetricsModule } from '../user-metrics/user-metrics.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([PartitionedEvent, Payment, User]),
 
     forwardRef(() => FeatureStoreModule),
+    UserMetricsModule,
 
     BullModule.registerQueue(
       { name: 'event-ingestion' },
@@ -27,13 +27,8 @@ import { UserMetricsService } from 'src/user-metrics/user-metrics.service';
     ),
   ],
 
-  providers: [
-    UserEventService,
-    UserMetricsService,
-    EventIngestionProcessor,
-    ChurnPredictorService,
-  ],
+  providers: [UserEventService, EventIngestionProcessor, ChurnPredictorService],
 
-  exports: [UserEventService, UserMetricsService, ChurnPredictorService],
+  exports: [UserEventService, UserMetricsModule, ChurnPredictorService],
 })
 export class UserEventModule {}
