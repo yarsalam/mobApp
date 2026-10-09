@@ -11,7 +11,12 @@ import { User } from '../../users/entities/user.entity';
 import { REDIS_CLIENT } from 'src/redis/redis.constants';
 import { QDRANT_CLIENT } from 'src/qdrant/qdrant.provider';
 import { FeatureStoreService } from 'src/feature-store/feature-store.service';
-import { QDRANT_COLLECTION } from 'src/feature-store/feature-store.constan';
+import {
+  QDRANT_COLLECTION,
+  QDRANT_SEMANTIC_COLLECTION,
+} from 'src/feature-store/feature-store.constan';
+
+import { SemanticEmbeddingService } from 'src/feature-store/semantic-embedding.service';
 
 @Injectable()
 export class VectorSearchService {
@@ -32,6 +37,7 @@ export class VectorSearchService {
 
     private readonly boostQueue: BoostQueueService,
     private readonly featureStore: FeatureStoreService,
+    private readonly semanticEmbedding: SemanticEmbeddingService,
   ) {}
 
   async findCandidates(
@@ -109,22 +115,21 @@ export class VectorSearchService {
 
     const retrievalLimit = Math.min(Math.max(safeLimit * 5, 100), 500);
 
-    const [similarIds, boostedIds] = await Promise.all([
+    const [similarIds, boostedIds, semanticIds] = await Promise.all([
       this.findSimilarUsers(searchVector, retrievalLimit, userId, targetGender),
       this.getValidBoostedUsers(
         userId,
         targetGender,
         Math.min(safeLimit * 2, 100),
       ),
+      this.findSemanticUsers(userId, retrievalLimit, targetGender),
     ]);
 
-    /*
-     * ترتیب اولیه فقط برای بازیابی است؛ رتبه‌بندی نهایی
-     * توسط RevenueScorerService و MMR انجام می‌شود.
-     */
-    const merged = this.uniqueIds([...similarIds, ...boostedIds]).filter(
-      (id) => id !== userId,
-    );
+    const merged = this.uniqueIds([
+      ...similarIds,
+      ...semanticIds,
+      ...boostedIds,
+    ]).filter((id) => id !== userId);
 
     if (merged.length >= safeLimit) {
       return merged.slice(0, safeLimit);
@@ -418,5 +423,83 @@ export class VectorSearchService {
       user.marital ? 1 : 0,
       user.education ? 1 : 0,
     ];
+  }
+
+  private async findSemanticUsers(
+    userId: number,
+    limit: number,
+    targetGender?: string,
+  ): Promise<number[]> {
+    try {
+      const user = await this.userRepo.findOne({
+        where: { id: userId, status: 'active' },
+        select: [
+          'id',
+          'nickname',
+          'aboutme',
+          'hobbies_self',
+          'values_self',
+          'city',
+          'education',
+        ],
+      });
+
+      if (!user) return [];
+
+      const text = [
+        user.nickname ? `نام نمایشی: ${user.nickname}` : '',
+        user.aboutme ? `درباره من: ${user.aboutme}` : '',
+        user.hobbies_self ? `علایق: ${String(user.hobbies_self)}` : '',
+        user.values_self ? `ارزش‌ها: ${String(user.values_self)}` : '',
+        user.city ? `شهر: ${user.city}` : '',
+        user.education ? `تحصیلات: ${String(user.education)}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n')
+        .slice(0, 6000);
+
+      if (!text.trim()) return [];
+
+      const vector = await this.semanticEmbedding.embedText(text);
+
+      const must: Array<Record<string, unknown>> = [];
+
+      if (targetGender) {
+        must.push({
+          key: 'gender',
+          match: { value: targetGender },
+        });
+      }
+
+      const result = await this.qdrant.search(QDRANT_SEMANTIC_COLLECTION, {
+        vector,
+        limit: Math.min(limit + 1, 500),
+        filter: {
+          must,
+          must_not: [
+            {
+              key: 'userId',
+              match: { value: userId },
+            },
+          ],
+        },
+        with_payload: false,
+      });
+
+      const ids = this.uniqueIds(
+        result.map((point) => Number(point.id)).filter((id) => id !== userId),
+      );
+
+      return this.validateActiveUsers(ids, targetGender);
+    } catch (error) {
+      this.logger.warn(
+        `Semantic retrieval unavailable: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+
+      // بازیابی ساختاریافته و fallback دیتابیس همچنان کار می‌کنند.
+      return [];
+    }
   }
 }

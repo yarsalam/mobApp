@@ -209,24 +209,25 @@ export class RevenueScorerService {
 
         const ltv = Math.max(0, this.safeNumber(candidate.avgLTV, 0));
 
+        // اگر LTV معتبر نداریم، درآمد موردانتظار را صفر نگه می‌داریم.
+        // مقدار جایگزین 1 باعث ساختن سیگنال درآمد مصنوعی می‌شد.
         const expectedRevenue =
-          matchProbability *
-          responseProbability *
-          purchaseProbability *
-          (ltv > 0 ? ltv : 1);
+          ltv > 0
+            ? matchProbability * responseProbability * purchaseProbability * ltv
+            : 0;
 
-        const businessSignal = this.clamp(
-          Math.log1p(Math.max(0, expectedRevenue)) / 10,
-          0,
-          1,
-        );
+        // درآمد فقط وقتی وارد رتبه‌بندی می‌شود که دادهٔ LTV موجود باشد.
+        // log1p مانع سلطهٔ مقادیر درآمدی بسیار بزرگ بر امتیاز می‌شود.
+        const businessSignal =
+          ltv > 0 ? this.clamp(Math.log1p(expectedRevenue) / 10, 0, 1) : 0;
 
-        /*
-         * درآمد فقط 5 درصد تصمیم نهایی را تشکیل می‌دهد.
-         * امتیاز سازگاری رابطه‌ای همچنان عامل اصلی است.
-         */
+        // سازگاری رابطه‌ای همچنان عامل اصلی است.
+        // درآمد حداکثر 3 درصد وزن دارد.
+        const revenueWeight = ltv > 0 ? 0.03 : 0;
+
         const decisionScore = this.clamp(
-          compatibilityScore * 0.95 + businessSignal * 0.05,
+          compatibilityScore * (1 - revenueWeight) +
+            businessSignal * revenueWeight,
           0,
           1,
         );

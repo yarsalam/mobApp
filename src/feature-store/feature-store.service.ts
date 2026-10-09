@@ -9,9 +9,14 @@ import { PersonalityService } from '../personality/personality.service';
 import { UserMetricsService } from '../user-metrics/user-metrics.service';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from 'src/redis/redis.constants';
-import { DataSource, EntityManager } from 'typeorm';
+import { DataSource } from 'typeorm';
 import { FeatureLearningReceipt } from './entities/feature-learning-receipt.entity';
 import { FeatureWeightState } from './entities/feature-weight-state.entity';
+import { QDRANT_SEMANTIC_COLLECTION } from './feature-store.constan';
+import {
+  SemanticEmbeddingService,
+  SEMANTIC_VECTOR_DIMS,
+} from './semantic-embedding.service';
 
 import {
   CACHE_KEY_PREFIX,
@@ -74,12 +79,14 @@ export class FeatureStoreService implements OnModuleInit {
     private readonly personalityService: PersonalityService,
     private readonly userMetricsService: UserMetricsService,
     private readonly dataSource: DataSource,
+    private readonly semanticEmbedding: SemanticEmbeddingService,
   ) {}
 
   // ─── Startup ─────────────────────────────────────────────────────────────
 
   async onModuleInit(): Promise<void> {
     await this.ensureQdrantCollection();
+    await this.ensureSemanticCollection();
   }
 
   private async ensureQdrantCollection(): Promise<void> {
@@ -667,6 +674,17 @@ export class FeatureStoreService implements OnModuleInit {
       snapshot,
       user,
     );
+
+    try {
+      await this.upsertSemanticVector(userId, user);
+    } catch (error) {
+      // خطای embedding نباید snapshot و بردار ساختاریافته را از بین ببرد.
+      this.logger.warn(
+        `Semantic vector update failed for user ${userId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
 
     this.logger.debug(
       `Feature snapshot refreshed for user ${userId}; ` +
@@ -1310,5 +1328,104 @@ export class FeatureStoreService implements OnModuleInit {
         : currentYear - year;
 
     return Math.max(0, Math.min(100, age));
+  }
+
+  private async ensureSemanticCollection(): Promise<void> {
+    try {
+      const exists = await this.qdrant.collectionExists(
+        QDRANT_SEMANTIC_COLLECTION,
+      );
+
+      if (!exists.exists) {
+        await this.qdrant.createCollection(QDRANT_SEMANTIC_COLLECTION, {
+          vectors: {
+            size: SEMANTIC_VECTOR_DIMS,
+            distance: 'Cosine',
+          },
+        });
+
+        this.logger.log(
+          `Created ${QDRANT_SEMANTIC_COLLECTION} (${SEMANTIC_VECTOR_DIMS}D)`,
+        );
+        return;
+      }
+
+      const info = await this.qdrant.getCollection(QDRANT_SEMANTIC_COLLECTION);
+      const config = info.config.params.vectors;
+
+      if (
+        !config ||
+        Array.isArray(config) ||
+        !('size' in config) ||
+        config.size !== SEMANTIC_VECTOR_DIMS
+      ) {
+        this.logger.error(
+          `Semantic Qdrant collection has incompatible dimensions. ` +
+            `Expected ${SEMANTIC_VECTOR_DIMS}; refusing automatic deletion.`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        'Semantic Qdrant initialization failed',
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  private buildSemanticProfileText(user: Partial<User>): string {
+    const parts = [
+      user.nickname ? `نام نمایشی: ${user.nickname}` : '',
+      user.aboutme ? `درباره من: ${user.aboutme}` : '',
+      user.hobbies_self
+        ? `علایق و سرگرمی‌ها: ${String(user.hobbies_self)}`
+        : '',
+      user.values_self ? `ارزش‌های شخصی: ${String(user.values_self)}` : '',
+      user.city ? `شهر: ${user.city}` : '',
+      user.education ? `تحصیلات: ${String(user.education)}` : '',
+    ];
+
+    return parts
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .join('\n')
+      .slice(0, 6000);
+  }
+
+  private async upsertSemanticVector(
+    userId: number,
+    user: Partial<User>,
+  ): Promise<void> {
+    const text = this.buildSemanticProfileText(user);
+
+    // پروفایل خالی نباید embedding جعلی تولید کند.
+    if (!text) {
+      this.logger.debug(`Skipping empty semantic profile for ${userId}`);
+      return;
+    }
+
+    const vector = await this.semanticEmbedding.embedText(text);
+
+    if (
+      vector.length !== SEMANTIC_VECTOR_DIMS ||
+      !vector.every(Number.isFinite)
+    ) {
+      throw new Error(`Invalid semantic vector for user ${userId}`);
+    }
+
+    await this.qdrant.upsert(QDRANT_SEMANTIC_COLLECTION, {
+      wait: true,
+      points: [
+        {
+          id: userId,
+          vector,
+          payload: {
+            userId,
+            gender: user.gender ?? '',
+            city: user.city ?? null,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ],
+    });
   }
 }

@@ -112,3 +112,5 @@ export const GEO_LNG = {
   min: 44,
   max: 64,
 };
+
+export const QDRANT_SEMANTIC_COLLECTION = 'user_semantic_vectors_384';
