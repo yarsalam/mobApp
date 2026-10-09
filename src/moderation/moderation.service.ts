@@ -11,11 +11,15 @@ import { Message } from '../message/entities/message.entity';
 import { UserEventService } from '../user-event/user-event.service';
 import { ModerationLog } from './entities/moderation-log.entity';
 import { EventType } from 'src/user-event/type/event-type.enum';
+import { In } from 'typeorm';
+import { NotificationService } from '../notification/notification.service';
+import { NotificationType } from '../notification/entities/notification.entity';
 
 export interface ModerationResult {
   isSafe: boolean;
   confidence: number;
   flags: string[];
+  warning?: string;
   severity: 'low' | 'medium' | 'high' | 'critical';
   action: 'allow' | 'block' | 'flag_for_admin' | 'pending';
 }
@@ -40,6 +44,7 @@ export class ModerationService {
     private readonly logRepo: Repository<ModerationLog>,
     private readonly userEventService: UserEventService,
     private readonly httpService: HttpService,
+    private readonly notificationService: NotificationService,
     @InjectQueue('moderation') private moderationQueue: Queue,
   ) {}
 
@@ -48,6 +53,7 @@ export class ModerationService {
     senderId: number,
     receiverId: number,
     context?: { ip?: string; userAgent?: string },
+    acknowledged = false,
   ): Promise<ModerationResult> {
     if (this.isCircuitOpen()) {
       this.logger.warn('Circuit is open, using fallback');
@@ -66,15 +72,30 @@ export class ModerationService {
       );
 
       this.failureCount = 0;
-      const result = response.data;
+      const result = response.data as ModerationResult;
 
       await this.saveModerationLog(senderId, message, result);
 
-      if (result.severity !== 'low') {
-        await this.handleViolation(senderId, result);
+      if (!(acknowledged && result.severity === 'medium')) {
+        await this.saveModerationLog(senderId, message, result);
+
+        if (result.severity !== 'low') {
+          await this.handleViolation(senderId, result);
+        }
       }
 
-      return { ...result, action: this.determineAction(result) };
+      return {
+        ...result,
+        action: this.determineAction(result),
+        warning:
+          result.severity === 'medium'
+            ? 'هشدار: پیام شما محتوای نامناسب دارد. تکرار این رفتار می‌تواند باعث کاهش نمایش پروفایل و پیشنهادهای کمتر شود؛ حتی Boost نیز این محدودیت‌ها را خنثی نمی‌کند.'
+            : result.severity === 'high'
+              ? 'پیام به دلیل محتوای نامناسب مسدود شد. تکرار تخلف ممکن است محدودیت بیشتری ایجاد کند.'
+              : result.severity === 'critical'
+                ? 'تخلف جدی تشخیص داده شد. ممکن است محدودیت امنیتی روی حساب شما اعمال شود.'
+                : undefined,
+      };
     } catch (error: unknown) {
       this.failureCount++;
       if (this.failureCount >= this.FAILURE_THRESHOLD) {
@@ -185,7 +206,24 @@ export class ModerationService {
     } else if (result.severity === 'medium') {
       await this.adjustTrustScore(userId, -5);
     }
+    if (result.severity === 'critical') {
+      const totalViolations = await this.logRepo.count({
+        where: {
+          userId,
+          severity: In(['medium', 'high', 'critical']),
+          createdAt: MoreThan(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)),
+        },
+      });
 
+      await this.alertAdmin({
+        userId,
+        severity: result.severity,
+        totalViolations,
+        periodDays: 30,
+        flags: result.flags ?? [],
+        occurredAt: new Date().toISOString(),
+      });
+    }
     await this.userEventService.log({
       userId,
       type: EventType.USER_VIOLATION,
@@ -280,8 +318,49 @@ export class ModerationService {
     }
   }
 
-  private async alertAdmin(alert: any) {
-    this.logger.warn(`🚨 ADMIN ALERT: ${JSON.stringify(alert)}`);
+  private async alertAdmin(alert: {
+    userId: number;
+    severity: string;
+    totalViolations: number;
+    periodDays: number;
+    flags: string[];
+    occurredAt: string;
+  }): Promise<void> {
+    const adminIds = (process.env.ADMIN_USER_IDS ?? '')
+      .split(',')
+      .map((id) => Number(id.trim()))
+      .filter((id) => Number.isSafeInteger(id) && id > 0);
+
+    const message =
+      `🚨 تخلف محتوایی بحرانی\n` +
+      `شناسه کاربر: ${alert.userId}\n` +
+      `تعداد تخلفات محتوایی در ${alert.periodDays} روز اخیر: ${alert.totalViolations}\n` +
+      `شدت: ${alert.severity}\n` +
+      `پرچم‌ها: ${alert.flags.join(', ') || 'نامشخص'}\n` +
+      `زمان: ${alert.occurredAt}`;
+
+    if (adminIds.length === 0) {
+      this.logger.error(`ADMIN_USER_IDS is not configured. Alert: ${message}`);
+      return;
+    }
+
+    const results = await Promise.allSettled(
+      adminIds.map((user_id) =>
+        this.notificationService.createNotification({
+          user_id,
+          type: NotificationType.SECURITY,
+          message,
+        }),
+      ),
+    );
+
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        this.logger.error(
+          `Failed to notify admin ${adminIds[index]} about critical moderation violation`,
+        );
+      }
+    });
   }
 
   async getUserRiskProfile(userId: number) {

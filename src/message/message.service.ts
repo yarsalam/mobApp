@@ -88,13 +88,37 @@ export class MessageService {
       dto.content,
       fromUserId,
       dto.to_id,
+      undefined,
+      dto.acceptModerationWarning === true,
     );
 
+    if (
+      moderationResult.severity === 'medium' &&
+      dto.acceptModerationWarning !== true
+    ) {
+      throw new ConflictException({
+        statusCode: HttpStatus.CONFLICT,
+        code: 'MODERATION_CONFIRMATION_REQUIRED',
+        message:
+          moderationResult.warning ??
+          'این پیام محتوای نامناسب دارد. آیا مسئولیت ارسال آن را می‌پذیرید؟',
+        severity: moderationResult.severity,
+        requiresConfirmation: true,
+      });
+    }
+
     if (moderationResult.action === 'block') {
-      this.logger.warn(
-        `Message blocked by moderation: user ${fromUserId} -> ${dto.to_id}, severity: ${moderationResult.severity}`,
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
+          code: 'MESSAGE_BLOCKED_BY_MODERATION',
+          message:
+            moderationResult.warning ??
+            'پیام شما به دلیل محتوای نامناسب ارسال نشد.',
+          severity: moderationResult.severity,
+        },
+        HttpStatus.UNPROCESSABLE_ENTITY,
       );
-      throw new Error('پیام شما به دلیل محتوای نامناسب ارسال نشد.');
     }
 
     let isFree = false;
@@ -161,7 +185,14 @@ export class MessageService {
       // ✅ phaseService.learnFromFeedback حذف شد — Phase مستقل است
       this.featureStore.learnFeatureWeights(fromUserId, 'message'),
     ]);
-    return saved;
+    return {
+      ...saved,
+      moderation: {
+        severity: moderationResult.severity,
+        warning: moderationResult.warning ?? null,
+        acknowledged: dto.acceptModerationWarning === true,
+      },
+    };
   }
 
   async getInbox(userId: number, isFree?: boolean) {

@@ -10,6 +10,7 @@ import { ModerationLog } from './entities/moderation-log.entity';
 import { User } from '../users/entities/user.entity';
 import { Message } from '../message/entities/message.entity';
 import { UserEventModule } from '../user-event/user-event.module';
+import { NotificationModule } from 'src/notification/notification.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { UserEventModule } from '../user-event/user-event.module';
     HttpModule.register({ timeout: 5000, maxRedirects: 3 }),
     BullModule.registerQueue({ name: 'moderation' }),
     UserEventModule,
+    NotificationModule,
   ],
   controllers: [ModerationController],
   providers: [ModerationService, ModerationProcessor],

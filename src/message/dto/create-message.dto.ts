@@ -6,4 +6,8 @@ export class CreateMessageDto {
 
   @IsString()
   content: string;
+
+  @IsOptional()
+  @IsBoolean()
+  acceptModerationWarning?: boolean;
 }
