@@ -18,51 +18,25 @@ import {
   calculateTrustMultiplier,
 } from '../moderation/moderation.utils';
 
-export interface EnrichedSuggestion {
-  id: number;
-  nickname: string;
-  age: number;
-  city?: string;
-  gender?: string;
-  avatar?: string | null;
-  hobbies?: string[];
-  values?: string[];
-  isOnline?: boolean;
-  relation?: any;
+export interface EnrichedSuggestion extends SuggestionEntity {
+  /** امتیاز درآمدی؛ برای تحلیل و یادگیری، نه رتبه‌بندی اصلی */
+  rawRevenue: number;
 
-  /**
-   * امتیاز compatibility واقعی.
-   *
-   * دیگر Revenue score نیست.
-   */
+  /** امتیاز سازگاری رابطه‌ای با freshness در بازه تقریبی 0..100 */
   compatibilityScore: number;
 
-  /**
-   * امتیاز خام Intelligence قبل از freshness.
-   */
+  /** امتیاز خالص سازگاری، پیش از freshness */
   intelligenceScore: number;
 
-  /**
-   * Business / monetization signal.
-   */
-  expectedRevenue: number;
-
-  /**
-   * confidence مدل.
-   */
+  /** confidence مدل در بازه 0..1 */
   intelligenceConfidence: number;
 
-  /**
-   * metadata برای Feed و training.
-   */
   trustScore: number;
   trustMultiplier: number;
   freshnessBoost: number;
-
-  /**
-   * اجزای مدل برای analytics.
-   */
   scoreComponents: RevenueScore['components'];
+  isOnline?: boolean;
+  relation?: unknown;
 }
 
 @Injectable()
@@ -71,83 +45,46 @@ export class SuggestionService {
 
   constructor(
     private readonly usersService: UsersService,
-
     private readonly interactionsService: InteractionsService,
-
     private readonly userEventService: UserEventService,
-
     private readonly vectorSearch: VectorSearchService,
-
     private readonly revenueScorer: RevenueScorerService,
-
     private readonly diversityOptimizer: DiversityOptimizerService,
-
     private readonly relationStatus: RelationStatusService,
   ) {}
 
   async getSuggestionsForUser(
     userId: number,
-    opts?: {
-      limit?: number;
-      city?: string;
-      targetGender?: string;
-    },
+    opts?: { limit?: number; city?: string; targetGender?: string },
   ): Promise<EnrichedSuggestion[]> {
     const startTime = Date.now();
+    const limit = Math.max(1, Math.min(Math.floor(opts?.limit ?? 20), 100));
 
-    const limit = Math.max(1, Math.min(opts?.limit ?? 20, 100));
+    let targetGender = opts?.targetGender;
 
-    // ─────────────────────────────────────────────────────────────
-    // Target gender
-    // ─────────────────────────────────────────────────────────────
-
-    let resolvedGender: string;
-
-    if (opts?.targetGender) {
-      resolvedGender = opts.targetGender;
-    } else {
+    if (!targetGender) {
       const currentUser = await this.usersService.findById(userId);
-
       if (!currentUser) {
-        this.logger.error(`User ${userId} not found for gender resolution`);
-
+        this.logger.warn(`Suggestion request: user ${userId} not found`);
         return [];
       }
-
-      resolvedGender = getTargetGender(currentUser.gender);
+      targetGender = getTargetGender(currentUser.gender);
     }
-
-    // ─────────────────────────────────────────────────────────────
-    // 1. Retrieval
-    // ─────────────────────────────────────────────────────────────
 
     const candidates = await this.vectorSearch.findCandidates(
       userId,
-      200,
-      resolvedGender,
+      Math.max(200, limit * 5),
+      targetGender,
     );
 
-    if (candidates.length === 0) {
-      return [];
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // 2. Intelligence scoring
-    // ─────────────────────────────────────────────────────────────
+    if (!candidates.length) return [];
 
     const scores = await this.revenueScorer.scoreBatch(userId, candidates);
-
-    if (scores.length === 0) {
-      return [];
-    }
+    if (!scores.length) return [];
 
     const scoreMap = new Map<number, RevenueScore>(
       scores.map((score) => [score.candidateId, score]),
     );
-
-    // ─────────────────────────────────────────────────────────────
-    // 3. Exploration / exploitation
-    // ─────────────────────────────────────────────────────────────
 
     const interactions =
       await this.interactionsService.getUserInteractions(userId);
@@ -156,53 +93,39 @@ export class SuggestionService {
       interactions.length,
     );
 
-    let rankedCandidates = [...scores];
-
-    if (Math.random() < epsilon) {
-      rankedCandidates = this.diversityOptimizer
-        .exploreExploit(
-          rankedCandidates.map((candidate) => ({
-            ...candidate,
-            score: candidate.decisionScore,
-          })),
-        )
-        .map(({ score: _score, ...candidate }) => candidate);
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // 4. MMR
-    // ─────────────────────────────────────────────────────────────
-    //
-    // MMR relevance = decisionScore
-    //
-    // Diversity در DiversityOptimizer
-    // با FeatureStore محاسبه می‌شود.
-    // ─────────────────────────────────────────────────────────────
+    /*
+     * Exploration must not replace scoring with a random shuffle.
+     * It only changes candidate ordering before MMR; the score remains
+     * attached to each candidate and is still used by the optimizer.
+     */
+    const explorationPool =
+      Math.random() < epsilon
+        ? this.diversityOptimizer.exploreExploit(scores)
+        : scores;
 
     const optimized = await this.diversityOptimizer.optimizeWithMMR(
-      rankedCandidates.map((score) => ({
+      explorationPool.map((score) => ({
         id: score.candidateId,
         score: score.decisionScore,
       })),
       limit,
     );
 
-    const orderedIds = optimized.map((item) => Number(item.id));
-
-    // ─────────────────────────────────────────────────────────────
-    // 5. Enrichment + hard filters
-    // ─────────────────────────────────────────────────────────────
+    const orderedIds = [
+      ...new Set(
+        optimized
+          .map((item) => Number(item.id))
+          .filter((id) => Number.isSafeInteger(id) && id > 0 && id !== userId),
+      ),
+    ];
 
     const result = await this.enrichResults(
       userId,
       orderedIds,
       scoreMap,
-      resolvedGender,
+      targetGender,
+      opts?.city,
     );
-
-    // ─────────────────────────────────────────────────────────────
-    // 6. Analytics event
-    // ─────────────────────────────────────────────────────────────
 
     this.userEventService
       .log({
@@ -210,19 +133,22 @@ export class SuggestionService {
         type: EventType.AI_SUGGESTION_SHOWN,
         metadata: {
           count: result.length,
-
-          intelligenceScores: result.map((item) => item.intelligenceScore),
-
-          expectedRevenue: result.map((item) => item.expectedRevenue),
-
-          confidence: result.map((item) => item.intelligenceConfidence),
-
+          scores: result.map((item) => ({
+            candidateId: item.id,
+            compatibility: item.intelligenceScore,
+            decision: scoreMap.get(item.id)?.decisionScore ?? 0,
+            confidence: item.intelligenceConfidence,
+          })),
           duration: Date.now() - startTime,
-
-          epsilon,
         },
       })
-      .catch((err) => this.logger.error('Failed to log suggestion event', err));
+      .catch((error) => {
+        this.logger.warn(
+          `Failed to log suggestion event: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
 
     return result;
   }
@@ -232,14 +158,12 @@ export class SuggestionService {
     candidateIds: number[],
     scoreMap: Map<number, RevenueScore>,
     targetGender: string,
+    city?: string,
   ): Promise<EnrichedSuggestion[]> {
-    if (candidateIds.length === 0) {
-      return [];
-    }
+    if (!candidateIds.length) return [];
 
     const users = await this.usersService.findByIds(candidateIds, {
       relations: ['userImages', 'boost', 'devices'],
-
       select: [
         'id',
         'nickname',
@@ -266,100 +190,53 @@ export class SuggestionService {
 
     const results: EnrichedSuggestion[] = [];
 
-    // ترتیب MMR حفظ می‌شود.
-    for (const id of candidateIds) {
-      const user = userMap.get(id);
+    // Iterate candidateIds to preserve the scorer/MMR order.
+    for (const candidateId of candidateIds) {
+      const user = userMap.get(candidateId);
+      const score = scoreMap.get(candidateId);
 
-      if (!user) {
-        continue;
-      }
+      if (!user || !score) continue;
+      if (user.id === userId || user.gender !== targetGender) continue;
 
-      // ─────────────────────────────────────────
-      // Hard filters
-      // ─────────────────────────────────────────
-
-      if (user.gender !== targetGender) {
-        continue;
-      }
+      if (city && user.city !== city) continue;
 
       const relation = relationsMap.get(user.id);
-
-      if (relation?.isBlocked) {
-        continue;
-      }
-
-      if (!canAppearInFeed(user)) {
-        this.logger.debug(
-          `Suggestion filtered – user ${user.id} failed moderation check`,
-        );
-
-        continue;
-      }
-
-      // ─────────────────────────────────────────
-      // Intelligence score
-      // ─────────────────────────────────────────
-
-      const score = scoreMap.get(user.id);
-
-      if (!score) {
-        continue;
-      }
-
-      const intelligenceScore = score.decisionScore;
-
-      // ─────────────────────────────────────────
-      // Freshness
-      // ─────────────────────────────────────────
+      if (relation?.isBlocked) continue;
+      if (!canAppearInFeed(user)) continue;
 
       const freshnessBoost = calculateFreshnessBoost(user.createdAt);
-
-      /**
-       * Freshness فقط display/feed signal است.
-       *
-       * مدل ML را تغییر نمی‌دهیم.
-       */
-      const displayScore = intelligenceScore * freshnessBoost;
-
-      // ─────────────────────────────────────────
-      // Trust
-      // ─────────────────────────────────────────
-
       const trustScore = user.trustScore ?? 50;
-
       const trustMultiplier = calculateTrustMultiplier(trustScore);
 
-      const compatibilityScore = Math.round(displayScore * 100);
+      // Freshness affects display ordering, not the underlying model score.
+      const displayScore = Math.max(
+        0,
+        Math.min(100, score.compatibilityScore * freshnessBoost * 100),
+      );
+
+      const base = SuggestionEntity.fromUser(user, displayScore);
 
       results.push({
-        ...SuggestionEntity.fromUser(user, displayScore),
-
-        compatibilityScore,
-
-        intelligenceScore,
-
-        expectedRevenue: score.expectedRevenue,
-
+        ...base,
+        rawRevenue: score.expectedRevenue,
+        compatibilityScore: displayScore,
+        intelligenceScore: score.compatibilityScore,
         intelligenceConfidence: score.confidence,
-
         trustScore,
-
         trustMultiplier,
-
         freshnessBoost,
-
         scoreComponents: score.components,
-
-        isOnline: user.devices?.some((device: any) => device.isOnline) ?? false,
-
+        isOnline:
+          user.devices?.some((device: { isOnline?: boolean }) =>
+            Boolean(device.isOnline),
+          ) ?? false,
         avatar:
-          user.userImages?.find((image: any) => image.isMain)?.url ?? null,
-
+          user.userImages?.find((image: { isMain?: boolean }) => image.isMain)
+            ?.url ?? null,
         relation,
       });
     }
 
-    // ترتیب نهایی display.
     return results.sort((a, b) => b.compatibilityScore - a.compatibilityScore);
   }
 }
