@@ -9,14 +9,8 @@ export interface ScoredCandidate {
   trustMultiplier?: number;
   freshnessBoost?: number;
   phase?: string;
-
-  /** امتیاز سازگاری رابطه‌ای در بازه 0..1 */
   intelligenceScore?: number;
-
-  /** confidence مدل در بازه 0..1 */
   intelligenceConfidence?: number;
-
-  /** سیگنال تجاری؛ هرگز جایگزین سازگاری نیست */
   expectedRevenue?: number;
 }
 
@@ -30,10 +24,12 @@ export class FeedScoringService {
     const base = this.getBaseScore(source, suggestionScore);
     const multiplier = this.getQualityMultiplier(source, candidate);
 
-    return Math.round(Math.max(0, Math.min(100, base * multiplier)));
+    return Math.round(this.clamp(base * multiplier, 0, 100));
   }
 
-  /** سازگاری با فراخوانی‌های قدیمی */
+  /**
+   * سازگاری با فراخوانی‌های قدیمی.
+   */
   assignPriorityBySource(
     source: CandidateSource,
     suggestionScore?: number,
@@ -47,24 +43,23 @@ export class FeedScoringService {
   ): number {
     switch (source) {
       case 'suggestion': {
-        /*
-         * suggestionScore is compatibilityScore / 100.
-         * A good relationship match should outrank commercial placement.
-         */
+        // suggestionScore همیشه باید در بازه 0..1 باشد.
         const compatibility = this.clamp(suggestionScore ?? 0.4, 0, 1);
+
+        // بازه پیشنهادهای هوش مصنوعی: 30..90
         return 30 + compatibility * 60;
       }
 
-      /*
-       * Commercial source changes are intentionally small.
-       * These users still need to pass the same hard filters.
-       */
+      // مزیت تجاری محدود است و سازگاری واقعی را جایگزین نمی‌کند.
       case 'boost':
         return 43;
+
       case 'vip':
         return 42;
+
       case 'credit':
         return 41;
+
       default:
         return 40;
     }
@@ -74,7 +69,9 @@ export class FeedScoringService {
     source: CandidateSource,
     candidate?: ScoredCandidate,
   ): number {
-    if (!candidate) return 1;
+    if (!candidate) {
+      return 1;
+    }
 
     let multiplier = 1;
 
@@ -84,38 +81,30 @@ export class FeedScoringService {
 
     multiplier *= this.clamp(trustMultiplier, 0.7, 1.15);
 
-    /*
-     * Suggestions already include freshness in their display score.
-     * Apply freshness here only to the non-suggestion candidates.
-     */
+    // تازگی برای پیشنهادهای AI قبلاً در مرحله پیشنهاد اعمال شده است.
     if (source !== 'suggestion' && candidate.freshnessBoost !== undefined) {
       multiplier *= this.clamp(candidate.freshnessBoost, 0.85, 1.1);
     }
 
-    const phaseMultiplier: Record<string, number> = {
-      hot: 1.03,
-      warm: 1,
+    const phaseMultipliers: Record<string, number> = {
       cold: 0.97,
+      warm: 1,
+      hot: 1.03,
     };
 
-    multiplier *= phaseMultiplier[candidate.phase ?? 'cold'] ?? 1;
+    multiplier *= phaseMultipliers[candidate.phase ?? 'cold'] ?? 1;
 
-    /*
-     * Small bounded confidence adjustment:
-     * uncertainty cannot create a large ranking advantage.
-     */
+    // Confidence فقط یک تعدیل بسیار کوچک است.
     if (
       source === 'suggestion' &&
       candidate.intelligenceConfidence !== undefined
     ) {
       const confidence = this.clamp(candidate.intelligenceConfidence, 0, 1);
+
       multiplier *= 0.97 + confidence * 0.03;
     }
 
-    /*
-     * No separate Boost/VIP/credit multiplier here.
-     * Their influence is represented by the small source-base difference.
-     */
+    // درآمد، خرید، Boost و VIP حق ندارند سازگاری را دور بزنند.
     return this.clamp(multiplier, 0.75, 1.2);
   }
 
@@ -124,7 +113,10 @@ export class FeedScoringService {
   }
 
   private clamp(value: number, min: number, max: number): number {
-    if (!Number.isFinite(value)) return min;
+    if (!Number.isFinite(value)) {
+      return min;
+    }
+
     return Math.max(min, Math.min(max, value));
   }
 }

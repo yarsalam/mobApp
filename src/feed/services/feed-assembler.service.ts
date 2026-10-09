@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
 
 import { User } from '../../users/entities/user.entity';
@@ -46,7 +46,6 @@ export class FeedAssemblerService {
 
   private mapUserToFeed(user: any): FeedUser {
     const images: UserImage[] = user.userImages ?? [];
-
     const mainImage = images.find((image) => image.isMain) ?? images[0];
 
     return {
@@ -77,28 +76,39 @@ export class FeedAssemblerService {
     return Math.max(0, Math.min(100, age));
   }
 
-  private getSuggestionScore(suggestion: EnrichedSuggestion): number {
+  /**
+   * خروجی این متد همیشه در بازه 0..1 است.
+   *
+   * intelligenceScore و decisionScore از مدل:
+   *   0..1
+   *
+   * compatibilityScore قدیمی:
+   *   0..100
+   */
+  private getNormalizedSuggestionScore(suggestion: EnrichedSuggestion): number {
     const enriched = suggestion as EnrichedSuggestion & {
       intelligenceScore?: number;
       decisionScore?: number;
     };
 
-    // Prefer the new AI decision score, then intelligence,
-    // then the compatibility score retained for older callers.
-    const score =
-      enriched.decisionScore ??
-      enriched.intelligenceScore ??
-      suggestion.compatibilityScore ??
-      0;
+    if (Number.isFinite(enriched.decisionScore)) {
+      return this.clamp(enriched.decisionScore!, 0, 1);
+    }
 
-    return Number.isFinite(score) ? score : 0;
+    if (Number.isFinite(enriched.intelligenceScore)) {
+      return this.clamp(enriched.intelligenceScore!, 0, 1);
+    }
+
+    return this.clamp((suggestion.compatibilityScore ?? 0) / 100, 0, 1);
   }
 
-  private scoreSuggestion(suggestion: EnrichedSuggestion): number {
-    const score = this.getSuggestionScore(suggestion);
+  private scoreSuggestion(
+    suggestion: EnrichedSuggestion,
+    phase: FeedPhase['phase'],
+  ): number {
+    const score = this.getNormalizedSuggestionScore(suggestion);
 
     const enriched = suggestion as EnrichedSuggestion & {
-      intelligenceScore?: number;
       expectedRevenue?: number;
       intelligenceConfidence?: number;
     };
@@ -106,16 +116,16 @@ export class FeedAssemblerService {
     return this.scoringService.assignPriority(
       'suggestion',
       {
-        intelligenceScore: enriched.intelligenceScore ?? score,
+        intelligenceScore: score,
         expectedRevenue: enriched.expectedRevenue,
         intelligenceConfidence: enriched.intelligenceConfidence,
         trustScore: suggestion.trustScore,
         trustMultiplier: suggestion.trustMultiplier,
-        freshnessBoost: suggestion.freshnessBoost,
-        phase: 'warm',
+        // در SuggestionService تازگی قبلاً لحاظ شده است.
+        phase,
         boostActive: false,
       },
-      score / 100,
+      score,
     );
   }
 
@@ -126,10 +136,11 @@ export class FeedAssemblerService {
     source: 'boost' | 'vip' | 'credit',
     targetGender: string,
     excludeUserIds: Set<number>,
+    phase: FeedPhase['phase'],
   ): Promise<void> {
-    const newIds = [...new Set(userIds)].filter(
-      (id) => !usedUserIds.has(id) && !excludeUserIds.has(id),
-    );
+    const newIds = [
+      ...new Set(userIds.filter((id) => Number.isSafeInteger(id) && id > 0)),
+    ].filter((id) => !usedUserIds.has(id) && !excludeUserIds.has(id));
 
     if (newIds.length === 0) return;
 
@@ -137,27 +148,22 @@ export class FeedAssemblerService {
 
     for (const user of users) {
       if (user.gender !== targetGender) continue;
-      if (excludeUserIds.has(user.id)) continue;
+      if (excludeUserIds.has(user.id) || usedUserIds.has(user.id)) continue;
       if (!canAppearInFeed(user)) continue;
 
       const freshnessBoost = calculateFreshnessBoost(user.createdAt);
-
       const trustScore = user.trustScore ?? 50;
       const trustMultiplier = calculateTrustMultiplier(trustScore);
 
       /*
-       * These candidates may enter the feed because of a
-       * monetization feature, but that feature must not be
-       * treated as proof of relationship compatibility.
-       *
-       * FeedScoringService applies the source's limited
-       * fallback score and quality multipliers.
+       * این کاربر به دلیل Boost/VIP/اعتبار وارد candidate pool شده است.
+       * این موضوع به‌تنهایی نشان‌دهنده سازگاری رابطه‌ای نیست.
        */
       const priority = this.scoringService.assignPriority(source, {
         trustScore,
         trustMultiplier,
         freshnessBoost,
-        phase: 'warm',
+        phase,
         boostActive: source === 'boost',
       });
 
@@ -179,18 +185,19 @@ export class FeedAssemblerService {
     excludeUserIds: Set<number>,
     targetGender: string,
     maximumItems: number,
+    phase: FeedPhase['phase'],
   ): void {
     for (const suggestion of suggestions) {
       if (feed.length >= maximumItems) break;
 
-      const userId = suggestion.id;
+      const userId = Number(suggestion.id);
 
-      if (!userId || usedUserIds.has(userId)) continue;
-      if (excludeUserIds.has(userId)) continue;
+      if (!Number.isSafeInteger(userId) || userId <= 0) continue;
+      if (usedUserIds.has(userId) || excludeUserIds.has(userId)) continue;
       if (suggestion.gender !== targetGender) continue;
       if (!canAppearInFeed(suggestion)) continue;
 
-      const priority = this.scoreSuggestion(suggestion);
+      const priority = this.scoreSuggestion(suggestion, phase);
 
       feed.push({
         id: randomUUID(),
@@ -215,7 +222,7 @@ export class FeedAssemblerService {
       ...(options.excludeUserIds ?? []),
     ]);
 
-    const [user, phase] = await Promise.all([
+    const [user, phaseData] = await Promise.all([
       this.userRepo.findOne({
         where: { id: userId, status: 'active' },
         relations: ['userImages', 'boost'],
@@ -232,16 +239,20 @@ export class FeedAssemblerService {
       this.creditsService.get(userId),
     ]);
 
+    const phaseName: FeedPhase['phase'] = (
+      ['cold', 'warm', 'hot'].includes(phaseData.phase)
+        ? phaseData.phase
+        : 'cold'
+    ) as FeedPhase['phase'];
+
     const enrichedPhase: FeedPhase = {
-      phase: (['cold', 'warm', 'hot'].includes(phase.phase)
-        ? phase.phase
-        : 'cold') as FeedPhase['phase'],
+      phase: phaseName,
       vipActive: isVip,
       boostActive: Boolean(
         user.boost?.activeUntil &&
         new Date(user.boost.activeUntil) > new Date(),
       ),
-      everPaid: phase.everPaid,
+      everPaid: phaseData.everPaid,
       isCompleted: user.isCompleted,
     };
 
@@ -259,10 +270,7 @@ export class FeedAssemblerService {
     const feed: FeedItem[] = [];
     const usedUserIds = new Set<number>(excludedIds);
 
-    /*
-     * Add the AI-ranked suggestions first. This makes the
-     * relationship-intelligence score the main ranking signal.
-     */
+    // پیشنهادهای AI در اولویت candidate pool قرار می‌گیرند.
     this.addSuggestionsToFeed(
       feed,
       suggestions as EnrichedSuggestion[],
@@ -270,13 +278,9 @@ export class FeedAssemblerService {
       excludedIds,
       targetGender,
       limit * 2,
+      phaseName,
     );
 
-    /*
-     * Add eligible monetized candidates only when they have
-     * not already appeared in the AI suggestion list.
-     * The scoring service controls their limited fallback score.
-     */
     await this.addMonetizedCandidates(
       feed,
       boostedIds,
@@ -284,6 +288,7 @@ export class FeedAssemblerService {
       'boost',
       targetGender,
       excludedIds,
+      phaseName,
     );
 
     await this.addMonetizedCandidates(
@@ -293,6 +298,7 @@ export class FeedAssemblerService {
       'vip',
       targetGender,
       excludedIds,
+      phaseName,
     );
 
     await this.addMonetizedCandidates(
@@ -302,39 +308,40 @@ export class FeedAssemblerService {
       'credit',
       targetGender,
       excludedIds,
+      phaseName,
     );
 
-    // Apply the same final ordering to every candidate source.
+    // ابتدا اولویت مشترک را روی تمام منابع اعمال می‌کنیم.
     const sortedFeed = this.scoringService.sortByPriority(feed);
 
-    const limitedFeed = sortedFeed.slice(0, limit);
-
-    const targetIds = limitedFeed
+    /*
+     * فیلتر بلاک/رابطه را پیش از slice نهایی اجرا می‌کنیم؛
+     * در غیر این صورت چند کاربر مسدود می‌توانند ظرفیت صفحه را هدر دهند.
+     */
+    const allCandidateIds = sortedFeed
       .filter((item) => item.type === 'user')
       .map((item) => (item.data as FeedUser).id);
 
     const relationsMap = await this.relationService.filterBlockedUsers(
       userId,
-      targetIds,
+      allCandidateIds,
     );
 
-    const filteredFeed = this.relationService.applyRelationFilter(
-      limitedFeed,
+    const relationFilteredFeed = this.relationService.applyRelationFilter(
+      sortedFeed,
       relationsMap,
     );
+
+    const limitedFeed = relationFilteredFeed.slice(0, limit);
 
     const allowedTypes =
       this.promotionService.getAllowedPromotionTypes(enrichedPhase);
 
     const maxPromotions =
-      enrichedPhase.phase === 'cold'
-        ? 1
-        : enrichedPhase.phase === 'warm'
-          ? 2
-          : 3;
+      phaseName === 'cold' ? 1 : phaseName === 'warm' ? 2 : 3;
 
     const promoPositions = [0, 3, 6, 9]
-      .filter((position) => position < filteredFeed.length)
+      .filter((position) => position < limitedFeed.length)
       .slice(0, maxPromotions);
 
     const promotions = await this.promotionService.decideBatch(
@@ -348,8 +355,8 @@ export class FeedAssemblerService {
     let promotionIndex = 0;
     let promotionsShown = 0;
 
-    for (let index = 0; index < filteredFeed.length; index++) {
-      finalFeed.push(filteredFeed[index]);
+    for (let index = 0; index < limitedFeed.length; index++) {
+      finalFeed.push(limitedFeed[index]);
 
       if (
         promotionIndex < promoPositions.length &&
@@ -376,10 +383,15 @@ export class FeedAssemblerService {
       });
 
     this.logger.log(
-      `Feed built: user=${userId}, users=${filteredFeed.length}, ` +
+      `Feed built: user=${userId}, users=${limitedFeed.length}, ` +
         `promotions=${promotionsShown}, duration=${Date.now() - startedAt}ms`,
     );
 
     return finalFeed.slice(0, limit);
+  }
+
+  private clamp(value: number, min: number, max: number): number {
+    if (!Number.isFinite(value)) return min;
+    return Math.max(min, Math.min(max, value));
   }
 }
