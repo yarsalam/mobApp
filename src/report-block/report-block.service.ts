@@ -70,9 +70,6 @@ export class ReportBlockService {
       metadata: { source: 'manual' },
     });
 
-    // 🆕 (اختیاری) یادگیری وزن‌ها
-    await this.featureStore.learnFeatureWeights(userId, 'block');
-
     return saved;
   }
 

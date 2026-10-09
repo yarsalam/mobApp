@@ -9,6 +9,9 @@ import { PersonalityService } from '../personality/personality.service';
 import { UserMetricsService } from '../user-metrics/user-metrics.service';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from 'src/redis/redis.constants';
+import { DataSource, EntityManager } from 'typeorm';
+import { FeatureLearningReceipt } from './entities/feature-learning-receipt.entity';
+import { FeatureWeightState } from './entities/feature-weight-state.entity';
 
 import {
   CACHE_KEY_PREFIX,
@@ -70,6 +73,7 @@ export class FeatureStoreService implements OnModuleInit {
 
     private readonly personalityService: PersonalityService,
     private readonly userMetricsService: UserMetricsService,
+    private readonly dataSource: DataSource,
   ) {}
 
   // ─── Startup ─────────────────────────────────────────────────────────────
@@ -172,39 +176,51 @@ export class FeatureStoreService implements OnModuleInit {
       Number.isFinite(value) && value >= 0.1 && value <= 10 ? value : 1,
     );
 
-    const stored = await this.redis.get(redisKey);
+    const state = await this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(FeatureWeightState);
 
-    if (stored) {
-      try {
-        const parsed: unknown = JSON.parse(stored);
+      await manager
+        .createQueryBuilder()
+        .insert()
+        .into(FeatureWeightState)
+        .values({
+          key: redisKey,
+          weights: [...safeDefaults],
+        })
+        .orIgnore()
+        .execute();
 
-        if (
-          Array.isArray(parsed) &&
-          parsed.length === safeDefaults.length &&
-          parsed.every(
-            (value) =>
-              typeof value === 'number' &&
-              Number.isFinite(value) &&
-              value >= 0.1 &&
-              value <= 10,
-          )
-        ) {
-          return parsed as number[];
-        }
+      const stored = await repo.findOne({
+        where: { key: redisKey },
+        lock: { mode: 'pessimistic_write' },
+      });
 
-        this.logger.warn(
-          `Invalid feature weights in Redis key "${redisKey}"; restoring defaults`,
-        );
-      } catch {
-        this.logger.warn(
-          `Malformed feature weights in Redis key "${redisKey}"; restoring defaults`,
-        );
+      if (!stored) {
+        throw new Error(`Could not initialize feature weights: ${redisKey}`);
       }
-    }
 
-    await this.redis.set(redisKey, JSON.stringify(safeDefaults));
+      if (
+        stored.weights.length !== safeDefaults.length ||
+        !stored.weights.every(
+          (value) => Number.isFinite(value) && value >= 0.1 && value <= 10,
+        )
+      ) {
+        throw new Error(`Invalid persisted feature weights: ${redisKey}`);
+      }
 
-    return [...safeDefaults];
+      return stored;
+    });
+
+    // شکست Redis نباید مقدار پایدار دیتابیس را خراب کند.
+    // اما خطا را پنهان نمی‌کنیم تا مشکل زیرساختی قابل مشاهده باشد.
+    await this.redis.set(
+      redisKey,
+      JSON.stringify(state.weights),
+      'EX',
+      FEATURE_CACHE_TTL,
+    );
+
+    return [...state.weights];
   }
 
   // ─── Public Read API ──────────────────────────────────────────────────────
@@ -774,196 +790,210 @@ export class FeatureStoreService implements OnModuleInit {
     return new Array(VECTOR_DIMS.preference).fill(0);
   }
 
-  /**
-   * یادگیری مثبت.
-   *
-   * مثال:
-   *
-   * LIKE candidate
-   *     ↓
-   * candidate profile vector
-   *     ↓
-   * positive preference
-   */
   async learnPositivePreference(
     userId: number,
     targetProfileVector: number[],
     weight = 0.5,
+    eventId?: number,
   ): Promise<void> {
     await this.learnPreferenceSignal(
       userId,
       targetProfileVector,
       Math.abs(weight),
       'positive',
+      eventId,
     );
   }
 
-  /**
-   * یادگیری منفی.
-   *
-   * مثال:
-   *
-   * SKIP candidate
-   *     ↓
-   * candidate profile vector
-   *     ↓
-   * negative preference
-   */
   async learnNegativePreference(
     userId: number,
     targetProfileVector: number[],
     weight = 0.35,
+    eventId?: number,
   ): Promise<void> {
     await this.learnPreferenceSignal(
       userId,
       targetProfileVector,
       Math.abs(weight),
       'negative',
+      eventId,
     );
   }
 
-  /**
-   * هسته مشترک یادگیری.
-   */
   private async learnPreferenceSignal(
     userId: number,
     targetProfileVector: number[],
     weight: number,
     direction: 'positive' | 'negative',
+    eventId?: number,
   ): Promise<void> {
-    const features = await this.getUserFeatures(userId);
+    if (
+      !Number.isSafeInteger(userId) ||
+      userId <= 0 ||
+      !Array.isArray(targetProfileVector) ||
+      !targetProfileVector.every(Number.isFinite) ||
+      !Number.isFinite(weight) ||
+      weight < 0
+    ) {
+      throw new Error('Invalid preference learning input');
+    }
 
-    if (!features) {
-      return;
+    // برای یادگیری از event، شناسهٔ پایدار الزامی است.
+    if (!Number.isSafeInteger(eventId) || (eventId ?? 0) <= 0) {
+      throw new Error('eventId is required for idempotent preference learning');
     }
 
     const dimension = VECTOR_DIMS.preference;
 
-    const targetVector = targetProfileVector.slice(0, dimension);
+    const target = targetProfileVector.slice(0, dimension);
+    while (target.length < dimension) target.push(0);
 
-    while (targetVector.length < dimension) {
-      targetVector.push(0);
-    }
+    const result = await this.dataSource.transaction(async (manager) => {
+      const featureRepo = manager.getRepository(UserFeatureSnapshot);
+      const receiptRepo = manager.getRepository(FeatureLearningReceipt);
 
-    const currentPositive = (
-      features.positivePreferenceVector ??
-      features.preferenceVector ??
-      features.profileVector ??
-      new Array(dimension).fill(0)
-    ).slice(0, dimension);
+      // قفل ردیف کاربر برای جلوگیری از lost update.
+      const features = await featureRepo.findOne({
+        where: { userId },
+        lock: { mode: 'pessimistic_write' },
+      });
 
-    const currentNegative = (
-      features.negativePreferenceVector ?? new Array(dimension).fill(0)
-    ).slice(0, dimension);
+      if (!features) {
+        throw new Error(`Feature snapshot not found for user ${userId}`);
+      }
 
-    while (currentPositive.length < dimension) {
-      currentPositive.push(0);
-    }
+      const effectType = `preference:${direction}`;
 
-    while (currentNegative.length < dimension) {
-      currentNegative.push(0);
-    }
+      const previousReceipt = await receiptRepo.findOne({
+        where: { eventId: eventId!, effectType },
+      });
 
-    const isPositive = direction === 'positive';
+      if (previousReceipt) {
+        return {
+          changed: false,
+          features,
+        };
+      }
 
-    /**
-     * تعداد سیگنال‌های قبلی برای محاسبه Confidence.
-     */
-    const previousCount = isPositive
-      ? Math.max(0, features.positivePreferenceCount ?? 0)
-      : Math.max(0, features.negativePreferenceCount ?? 0);
+      const positive = (
+        features.positivePreferenceVector ??
+        features.preferenceVector ??
+        features.profileVector ??
+        new Array(dimension).fill(0)
+      ).slice(0, dimension);
 
-    /**
-     * اعتماد حاصل از سابقه رفتار.
-     *
-     * اولین Like: multiplier ≈ 0.55
-     * بعد از چند Like: multiplier به 1 نزدیک می‌شود
-     */
-    const historyMultiplier = this.calculatePreferenceConfidence(previousCount);
+      const negative = (
+        features.negativePreferenceVector ?? new Array(dimension).fill(0)
+      ).slice(0, dimension);
 
-    /**
-     * weight از EventIngestionProcessor می‌آید و شامل:
-     * event strength × recency decay × event confidence
-     */
-    const effectiveWeight = Math.abs(weight) * historyMultiplier;
+      while (positive.length < dimension) positive.push(0);
+      while (negative.length < dimension) negative.push(0);
 
-    const learningRate = Math.min(
-      PREFERENCE_LEARNING_RATE * effectiveWeight,
-      MAX_PREFERENCE_SIGNAL,
-    );
+      const isPositive = direction === 'positive';
 
-    const decay = Math.max(0, Math.min(1, PREFERENCE_DECAY));
+      const previousCount = Math.max(
+        0,
+        isPositive
+          ? (features.positivePreferenceCount ?? 0)
+          : (features.negativePreferenceCount ?? 0),
+      );
 
-    /**
-     * EMA:
-     *   current × decay + target × learningRate
-     */
-    const current = isPositive ? currentPositive : currentNegative;
+      const historyMultiplier =
+        this.calculatePreferenceConfidence(previousCount);
 
-    const updated = current.map((value, index) => {
-      const target = targetVector[index] ?? 0;
+      const effectiveWeight = Math.abs(weight) * historyMultiplier;
 
-      const next = value * decay + target * learningRate;
+      const learningRate = Math.min(
+        PREFERENCE_LEARNING_RATE * effectiveWeight,
+        MAX_PREFERENCE_SIGNAL,
+      );
 
-      return Math.max(0, Math.min(1, next));
+      const decay = Math.max(0, Math.min(1, PREFERENCE_DECAY));
+
+      const current = isPositive ? positive : negative;
+
+      const updated = current.map((value, index) =>
+        Math.max(
+          0,
+          Math.min(1, value * decay + (target[index] ?? 0) * learningRate),
+        ),
+      );
+
+      const updatedPositive = isPositive ? updated : positive;
+      const updatedNegative = isPositive ? negative : updated;
+
+      features.positivePreferenceVector = updatedPositive;
+      features.negativePreferenceVector = updatedNegative;
+      features.preferenceVector = this.buildPreferenceVector(
+        updatedPositive,
+        updatedNegative,
+      );
+
+      if (isPositive) {
+        features.positivePreferenceCount = previousCount + 1;
+      } else {
+        features.negativePreferenceCount = previousCount + 1;
+      }
+
+      // ثبت تغییر و receipt در یک تراکنش دیتابیس.
+      await featureRepo.save(features);
+      await receiptRepo.save(
+        receiptRepo.create({
+          eventId: eventId!,
+          effectType,
+          userId,
+        }),
+      );
+
+      return {
+        changed: true,
+        features,
+      };
     });
 
-    const updatedPositive = isPositive ? updated : currentPositive;
-    const updatedNegative = !isPositive ? updated : currentNegative;
-
-    const preferenceVector = this.buildPreferenceVector(
-      updatedPositive,
-      updatedNegative,
-    );
-
-    const updatePayload: Partial<UserFeatureSnapshot> = {
-      positivePreferenceVector: updatedPositive,
-      negativePreferenceVector: updatedNegative,
-      preferenceVector,
-    };
-
-    if (isPositive) {
-      updatePayload.positivePreferenceCount = previousCount + 1;
-    } else {
-      updatePayload.negativePreferenceCount = previousCount + 1;
-    }
-
-    await this.featureRepo.update({ userId }, updatePayload);
-
+    // Cache و Qdrant خارج از تراکنش SQL هستند؛
+    // تکرار همان event هم باید فرصت repair داشته باشد.
     await this.redis.del(this.cacheKey(userId));
 
-    /**
-     * Retrieval باید بلافاصله تغییر preference را ببیند.
-     */
+    const features = result.features;
+    const preferenceVector =
+      features.preferenceVector ??
+      this.buildPreferenceVector(
+        features.positivePreferenceVector ?? [],
+        features.negativePreferenceVector ?? [],
+      );
+
     await this.upsertPreferenceToQdrant(userId, preferenceVector);
 
     this.logger.debug(
-      `Preference signal (${direction}) for user ${userId}: ` +
-        `count=${previousCount + 1}, multiplier=${historyMultiplier.toFixed(3)}, ` +
-        `learningRate=${learningRate.toFixed(4)}`,
+      `Preference ${direction} event=${eventId} user=${userId} ` +
+        `changed=${result.changed}`,
     );
   }
 
-  /**
-   * backward-compatible wrapper.
-   *
-   * فعلاً برای سرویس‌های قدیمی نگه داشته می‌شود.
-   *
-   * نکته:
-   * دیگر negative را با 1-targetVal خراب نمی‌کنیم.
-   */
   async updatePreferenceVector(
     userId: number,
     targetProfileVector: number[],
     weight: number,
+    eventId: number,
   ): Promise<void> {
+    if (!Number.isSafeInteger(eventId) || eventId <= 0) {
+      throw new Error('eventId is required');
+    }
+
     if (weight >= 0) {
-      await this.learnPositivePreference(userId, targetProfileVector, weight);
+      await this.learnPositivePreference(
+        userId,
+        targetProfileVector,
+        weight,
+        eventId,
+      );
     } else {
       await this.learnNegativePreference(
         userId,
         targetProfileVector,
         Math.abs(weight),
+        eventId,
       );
     }
   }
@@ -1030,39 +1060,132 @@ export class FeatureStoreService implements OnModuleInit {
    * - فقط وزن‌ها در Redis آپدیت می‌شوند
    * - refresh باید توسط Cron یا Event handler بعداً انجام شود
    */
+
   async learnFeatureWeights(
     userId: number,
     event: 'purchase' | 'match' | 'message' | 'profile_completed' | 'block',
+    eventId: number,
   ): Promise<void> {
-    const weightConfig: Record<
+    if (
+      !Number.isSafeInteger(userId) ||
+      userId <= 0 ||
+      !Number.isSafeInteger(eventId) ||
+      eventId <= 0
+    ) {
+      throw new Error('Valid userId and eventId are required');
+    }
+
+    const config: Record<
       string,
-      { key: string; index: number; delta: number }
+      { key: string; index: number; delta: number; defaults: number[] }
     > = {
-      purchase: { key: 'feature:weights:behavior', index: 2, delta: +0.01 },
-      match: { key: 'feature:weights:behavior', index: 4, delta: +0.01 },
-      message: { key: 'feature:weights:behavior', index: 3, delta: +0.01 },
+      purchase: {
+        key: 'feature:weights:behavior',
+        index: 2,
+        delta: 0.01,
+        defaults: DEFAULT_BEHAVIOR_WEIGHTS,
+      },
+      match: {
+        key: 'feature:weights:behavior',
+        index: 4,
+        delta: 0.01,
+        defaults: DEFAULT_BEHAVIOR_WEIGHTS,
+      },
+      message: {
+        key: 'feature:weights:behavior',
+        index: 3,
+        delta: 0.01,
+        defaults: DEFAULT_BEHAVIOR_WEIGHTS,
+      },
       profile_completed: {
         key: 'feature:weights:profile',
         index: 5,
-        delta: +0.01,
+        delta: 0.01,
+        defaults: DEFAULT_PROFILE_WEIGHTS,
       },
-      block: { key: 'feature:weights:behavior', index: 3, delta: -0.01 },
+      block: {
+        key: 'feature:weights:behavior',
+        index: 3,
+        delta: -0.01,
+        defaults: DEFAULT_BEHAVIOR_WEIGHTS,
+      },
     };
 
-    const config = weightConfig[event];
-    if (!config) return;
+    const item = config[event];
+    if (!item) return;
 
-    const defaults = config.key.includes('profile')
-      ? DEFAULT_PROFILE_WEIGHTS
-      : DEFAULT_BEHAVIOR_WEIGHTS;
+    await this.dataSource.transaction(async (manager) => {
+      const stateRepo = manager.getRepository(FeatureWeightState);
+      const receiptRepo = manager.getRepository(FeatureLearningReceipt);
 
-    const weights = await this.getWeightArray(config.key, defaults);
-    weights[config.index] = Math.max(0.1, weights[config.index] + config.delta);
-    await this.redis.set(config.key, JSON.stringify(weights));
+      const effectType = `weight:${event}`;
 
-    this.logger.log(
-      `Weight ${config.key}[${config.index}] adjusted (${config.delta > 0 ? '+' : ''}${config.delta}) for event: ${event}`,
-    );
+      // ایجاد امن ردیف اولیه؛ برای MySQL/MariaDB.
+      await manager
+        .createQueryBuilder()
+        .insert()
+        .into(FeatureWeightState)
+        .values({
+          key: item.key,
+          weights: [...item.defaults],
+        })
+        .orIgnore()
+        .execute();
+
+      // سریال‌سازی تغییرات هم‌زمان روی یک مجموعه وزن.
+      const state = await stateRepo.findOne({
+        where: { key: item.key },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!state) {
+        throw new Error(`Feature weight state ${item.key} not found`);
+      }
+
+      // بررسی receipt باید پس از گرفتن قفل وزن انجام شود.
+      const previousReceipt = await receiptRepo.findOne({
+        where: { eventId, effectType },
+      });
+
+      if (previousReceipt) return;
+
+      const weights = [...state.weights];
+
+      if (
+        weights.length !== item.defaults.length ||
+        !weights.every(
+          (value) => Number.isFinite(value) && value >= 0.1 && value <= 10,
+        )
+      ) {
+        throw new Error(`Invalid persisted weights for ${item.key}`);
+      }
+
+      weights[item.index] = Math.max(
+        0.1,
+        Math.min(10, weights[item.index] + item.delta),
+      );
+
+      state.weights = weights;
+
+      await stateRepo.save(state);
+
+      await receiptRepo.save(
+        receiptRepo.create({
+          eventId,
+          effectType,
+          userId,
+        }),
+      );
+    });
+
+    // Redis فقط cache است؛ دیتابیس مرجع پایدار است.
+    const state = await this.featureRepo.manager
+      .getRepository(FeatureWeightState)
+      .findOne({ where: { key: item.key } });
+
+    if (state) {
+      await this.redis.set(item.key, JSON.stringify(state.weights));
+    }
   }
 
   // ─── Phase Score Sync ─────────────────────────────────────────────────────

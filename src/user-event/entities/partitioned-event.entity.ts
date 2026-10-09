@@ -14,6 +14,7 @@ import { User } from 'src/users/entities/user.entity';
 @Index(['userId', 'createdAt'])
 @Index(['type', 'createdAt'])
 @Index(['sessionId'])
+@Index(['userId', 'idempotencyKey'], { unique: true })
 export class PartitionedEvent {
   @PrimaryGeneratedColumn()
   id: number;
@@ -57,6 +58,9 @@ export class PartitionedEvent {
   @ManyToOne(() => User, (user) => user.userEvents, { nullable: true })
   @JoinColumn({ name: 'userId' })
   user?: User;
+
+  @Column({ type: 'varchar', length: 128, nullable: true })
+  idempotencyKey?: string | null;
 
   @CreateDateColumn()
   createdAt: Date;

@@ -332,10 +332,6 @@ export class PhaseService {
 
     await this.setWeight(targetWeight, newWeight);
 
-    if (['purchase', 'match', 'message', 'profile_completed'].includes(event)) {
-      await this.featureStore.learnFeatureWeights(userId, event as any);
-    }
-
     this.logger.log(
       `Weight "${targetWeight}": ${currentWeight.toFixed(2)} → ${newWeight.toFixed(2)} (${event})`,
     );

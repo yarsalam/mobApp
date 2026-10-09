@@ -97,7 +97,11 @@ export class InteractionsService {
       await this.userEventService.log({
         userId: fromId,
         type: eventType,
-        metadata: { source: 'interaction', interactionType: type },
+        targetUserId: toId,
+        metadata: {
+          source: 'interaction',
+          interactionType: type,
+        },
       });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -127,15 +131,6 @@ export class InteractionsService {
     }
 
     if (type === 'like' || type === 'superlike') {
-      const targetFeatures = await this.featureStore.getUserFeatures(toId);
-      if (targetFeatures?.profileVector) {
-        await this.featureStore.updatePreferenceVector(
-          fromId,
-          targetFeatures.profileVector,
-          type === 'superlike' ? 2.0 : 1.0,
-        );
-      }
-
       const isMutual = await this.isMutualLike(fromId, toId);
       if (isMutual) {
         try {
@@ -143,11 +138,13 @@ export class InteractionsService {
             this.userEventService.log({
               userId: fromId,
               type: EventType.MATCH,
+              targetUserId: toId,
               metadata: { matchedWith: toId, source: 'mutual_like' },
             }),
             this.userEventService.log({
               userId: toId,
               type: EventType.MATCH,
+              targetUserId: fromId,
               metadata: { matchedWith: fromId, source: 'mutual_like' },
             }),
           ]);
@@ -175,10 +172,6 @@ export class InteractionsService {
               ),
             ]);
           }
-          await Promise.all([
-            this.featureStore.learnFeatureWeights(fromId, 'match'),
-            this.featureStore.learnFeatureWeights(toId, 'match'),
-          ]);
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e);
           this.logger.error(`Match learning failed: ${msg}`);

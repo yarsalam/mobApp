@@ -11,4 +11,5 @@ export class LogEventDto {
   duration?: number;
   platform?: string;
   country?: string;
+  idempotencyKey?: string;
 }

@@ -66,7 +66,6 @@ export class PaymentsService {
           amount: bundle.price,
           productType: bundleCode,
         });
-        await this.featureStore.learnFeatureWeights(userId, 'purchase');
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         this.logger.warn(`یادگیری خرید ناموفق بود: ${msg}`);

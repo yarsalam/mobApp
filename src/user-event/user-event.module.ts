@@ -12,10 +12,19 @@ import { ChurnPredictorService } from './analytics/churn-predictor.service';
 
 import { FeatureStoreModule } from '../feature-store/feature-store.module';
 import { UserMetricsModule } from '../user-metrics/user-metrics.module';
+import { EventOutbox } from './entities/event-outbox.entity';
+import { EventOutboxDispatcher } from './processors/event-outbox-dispatcher.service';
+import { EventProcessingReceipt } from './entities/event-processing-receipt.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([PartitionedEvent, Payment, User]),
+    TypeOrmModule.forFeature([
+      PartitionedEvent,
+      Payment,
+      User,
+      EventOutbox,
+      EventProcessingReceipt,
+    ]),
 
     forwardRef(() => FeatureStoreModule),
     UserMetricsModule,
@@ -27,7 +36,12 @@ import { UserMetricsModule } from '../user-metrics/user-metrics.module';
     ),
   ],
 
-  providers: [UserEventService, EventIngestionProcessor, ChurnPredictorService],
+  providers: [
+    UserEventService,
+    EventIngestionProcessor,
+    ChurnPredictorService,
+    EventOutboxDispatcher,
+  ],
 
   exports: [UserEventService, UserMetricsModule, ChurnPredictorService],
 })

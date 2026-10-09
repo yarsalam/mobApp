@@ -176,7 +176,11 @@ export class EventIngestionProcessor extends WorkerHost {
       case EventType.LIKE:
       case EventType.SUPERLIKE:
       case EventType.MATCH:
-        await this.featureStore.learnFeatureWeights(event.userId, 'match');
+        await this.featureStore.learnFeatureWeights(
+          event.userId,
+          'match',
+          event.id,
+        );
         break;
 
       // ────────────────────────────────────────────────────────
@@ -184,7 +188,11 @@ export class EventIngestionProcessor extends WorkerHost {
       // ────────────────────────────────────────────────────────
 
       case EventType.USER_BLOCKED:
-        await this.featureStore.learnFeatureWeights(event.userId, 'block');
+        await this.featureStore.learnFeatureWeights(
+          event.userId,
+          'block',
+          event.id,
+        );
         break;
 
       // ────────────────────────────────────────────────────────
@@ -192,7 +200,11 @@ export class EventIngestionProcessor extends WorkerHost {
       // ────────────────────────────────────────────────────────
 
       case EventType.MESSAGE_SENT:
-        await this.featureStore.learnFeatureWeights(event.userId, 'message');
+        await this.featureStore.learnFeatureWeights(
+          event.userId,
+          'message',
+          event.id,
+        );
         break;
 
       // ────────────────────────────────────────────────────────
@@ -202,7 +214,11 @@ export class EventIngestionProcessor extends WorkerHost {
       case EventType.PURCHASE:
       case EventType.PAYMENT_CONFIRMED:
       case EventType.BOOST_USED:
-        await this.featureStore.learnFeatureWeights(event.userId, 'purchase');
+        await this.featureStore.learnFeatureWeights(
+          event.userId,
+          'purchase',
+          event.id,
+        );
 
         await this.refreshUserFeatures(event.userId);
         break;
@@ -215,6 +231,7 @@ export class EventIngestionProcessor extends WorkerHost {
         await this.featureStore.learnFeatureWeights(
           event.userId,
           'profile_completed',
+          event.id,
         );
 
         await this.refreshUserFeatures(event.userId);
@@ -385,6 +402,7 @@ export class EventIngestionProcessor extends WorkerHost {
       event.userId,
       targetVector,
       signedWeight,
+      event.id,
     );
 
     this.logger.debug(
@@ -469,10 +487,7 @@ export class EventIngestionProcessor extends WorkerHost {
         error instanceof Error ? error.stack : String(error),
       );
 
-      /**
-       * شکست refresh نباید باعث شود event اصلی
-       * دوباره پردازش شود.
-       */
+      throw error;
     }
   }
 

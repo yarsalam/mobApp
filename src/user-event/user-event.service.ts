@@ -8,6 +8,8 @@ import { Cron } from '@nestjs/schedule';
 import { PartitionedEvent } from './entities/partitioned-event.entity';
 import { LogEventDto } from './dto/log-event.dto';
 import { EventType } from 'src/user-event/type/event-type.enum';
+import { DataSource } from 'typeorm';
+import { EventOutbox } from './entities/event-outbox.entity';
 
 @Injectable()
 export class UserEventService {
@@ -25,59 +27,108 @@ export class UserEventService {
 
     @InjectQueue('cohort-calculation')
     private readonly cohortQueue: Queue,
+
+    private readonly dataSource: DataSource,
   ) {}
 
   async log(eventData: LogEventDto): Promise<void> {
-    if (!eventData.userId) {
-      throw new Error('USER ID MISSING');
+    if (!Number.isSafeInteger(eventData.userId) || eventData.userId <= 0) {
+      throw new Error('Invalid userId');
     }
 
-    const result = await this.eventRepo
-      .createQueryBuilder()
-      .insert()
-      .into(PartitionedEvent)
-      .values({
-        userId: eventData.userId,
-        targetUserId: eventData.targetUserId ?? undefined,
-        type: eventData.type,
-        sessionId: eventData.sessionId,
-        metadata: eventData.metadata,
-        value: eventData.value,
-        currency: eventData.currency,
-        duration: eventData.duration,
-        platform: eventData.platform,
-        country: eventData.country,
-      })
-      .execute();
-
-    const insertedId = Number(result.identifiers[0]?.id);
-
-    if (!insertedId) {
-      throw new Error(`EVENT INSERT FAILED for user ${eventData.userId}`);
+    if (!eventData.type) {
+      throw new Error('Event type is required');
     }
 
-    await this.ingestionQueue.add(
-      'process',
-      {
-        eventId: insertedId,
-        userId: eventData.userId,
-        type: eventData.type,
-      },
-      {
-        jobId: `event-${insertedId}`,
-        attempts: 3,
-        backoff: {
-          type: 'exponential',
-          delay: 1000,
-        },
-        removeOnComplete: 1000,
-        removeOnFail: 5000,
-      },
-    );
+    const key = eventData.idempotencyKey?.trim();
 
-    this.logger.debug(
-      `Event ${insertedId} queued: ${eventData.type} user=${eventData.userId}`,
-    );
+    if (key && key.length > 128) {
+      throw new Error('idempotencyKey must not exceed 128 characters');
+    }
+
+    try {
+      await this.dataSource.transaction(async (manager) => {
+        const events = manager.getRepository(PartitionedEvent);
+        const outbox = manager.getRepository(EventOutbox);
+
+        if (key) {
+          const existing = await events.findOne({
+            where: {
+              userId: eventData.userId,
+              idempotencyKey: key,
+            },
+          });
+
+          if (existing) {
+            // در حالت عادی Outbox در همان تراکنش ثبت شده است.
+            // این بررسی برای بازیابی رکوردهای قدیمی/ناسازگار است.
+            const outboxExists = await outbox.findOne({
+              where: { eventId: existing.id },
+            });
+
+            if (!outboxExists) {
+              await outbox.save(
+                outbox.create({
+                  eventId: existing.id,
+                  userId: existing.userId,
+                  type: existing.type,
+                  status: 'pending',
+                }),
+              );
+            }
+
+            return;
+          }
+        }
+
+        const event = await events.save(
+          events.create({
+            userId: eventData.userId,
+            targetUserId: eventData.targetUserId ?? undefined,
+            type: eventData.type,
+            sessionId: eventData.sessionId,
+            metadata: eventData.metadata,
+            value: eventData.value,
+            currency: eventData.currency,
+            duration: eventData.duration,
+            platform: eventData.platform,
+            country: eventData.country,
+            idempotencyKey: key || null,
+          }),
+        );
+
+        await outbox.save(
+          outbox.create({
+            eventId: event.id,
+            userId: event.userId,
+            type: event.type,
+            status: 'pending',
+          }),
+        );
+      });
+    } catch (error: unknown) {
+      // دو درخواست هم‌زمان ممکن است به Unique Index برخورد کنند.
+      // در این حالت، اگر رکورد موجود است، عملیات از دید Producer موفق است.
+      const err = error as {
+        code?: string;
+        errno?: number;
+      };
+
+      if (key && (err.code === 'ER_DUP_ENTRY' || err.errno === 1062)) {
+        const existing = await this.eventRepo.findOne({
+          where: {
+            userId: eventData.userId,
+            idempotencyKey: key,
+          },
+        });
+
+        if (existing) {
+          return;
+        }
+      }
+
+      throw error;
+    }
   }
 
   @Cron('0 1 * * *')

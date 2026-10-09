@@ -40,6 +40,7 @@ import { TicketEvent } from 'src/ai-support/entities/ticket-event.entity';
 import { Personality } from 'src/personality/entities/personality.entity';
 import { UserDailyMetrics } from 'src/user-metrics/entities/user-daily-metrics.entity';
 import { UserWallet } from 'src/payments/wallet/entities/user-wallet.entity';
+import { EventOutbox } from 'src/user-event/entities/event-outbox.entity';
 
 const logger = new Logger('DatabaseConfig');
 
@@ -126,6 +127,7 @@ export default registerAs('database', (): TypeOrmModuleOptions => ({
     SEOActivity,
     ArchiveRequest,
     RequestLog,
+    EventOutbox,
   ],
   synchronize: resolveSynchronize(),
   // logging: resolveLogging(),

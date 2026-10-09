@@ -182,8 +182,6 @@ export class MessageService {
         message: 'شما یک پیام جدید دارید.',
         related_id: saved.id,
       }),
-      // ✅ phaseService.learnFromFeedback حذف شد — Phase مستقل است
-      this.featureStore.learnFeatureWeights(fromUserId, 'message'),
     ]);
     return {
       ...saved,
