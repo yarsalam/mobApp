@@ -48,14 +48,28 @@ export class FeedAssemblerService {
     const images: UserImage[] = user.userImages ?? [];
     const mainImage = images.find((image) => image.isMain) ?? images[0];
 
+    const hobbies = Array.isArray(user.hobbies_self)
+      ? user.hobbies_self
+      : Array.isArray(user.hobbies)
+        ? user.hobbies
+        : [];
+
+    const values = Array.isArray(user.values_self)
+      ? user.values_self
+      : Array.isArray(user.values)
+        ? user.values
+        : [];
+
     return {
-      id: user.id,
-      nickname: user.nickname,
+      id: Number(user.id),
+      nickname: user.nickname ?? '',
       city: user.city,
       gender: user.gender,
-      age: user.age ?? this.calculateAge(user.birth_year ?? ''),
-      hobbies_self: (user.hobbies_self ?? user.hobbies ?? []).slice(0, 3),
-      values_self: (user.values_self ?? user.values ?? []).slice(0, 3),
+      age: Number.isFinite(user.age)
+        ? user.age
+        : this.calculateAge(String(user.birth_year ?? '')),
+      hobbies_self: hobbies.slice(0, 3),
+      values_self: values.slice(0, 3),
       userImages: mainImage ? [{ url: mainImage.url, isMain: true }] : [],
     };
   }
@@ -76,15 +90,16 @@ export class FeedAssemblerService {
     return Math.max(0, Math.min(100, age));
   }
 
-  /**
-   * خروجی این متد همیشه در بازه 0..1 است.
-   *
-   * intelligenceScore و decisionScore از مدل:
-   *   0..1
-   *
-   * compatibilityScore قدیمی:
-   *   0..100
-   */
+  private matchesCity(userCity: unknown, requestedCity?: string): boolean {
+    if (!requestedCity?.trim()) return true;
+    if (typeof userCity !== 'string' || !userCity.trim()) return false;
+
+    return (
+      userCity.trim().toLocaleLowerCase() ===
+      requestedCity.trim().toLocaleLowerCase()
+    );
+  }
+
   private getNormalizedSuggestionScore(suggestion: EnrichedSuggestion): number {
     const enriched = suggestion as EnrichedSuggestion & {
       intelligenceScore?: number;
@@ -121,7 +136,6 @@ export class FeedAssemblerService {
         intelligenceConfidence: enriched.intelligenceConfidence,
         trustScore: suggestion.trustScore,
         trustMultiplier: suggestion.trustMultiplier,
-        // در SuggestionService تازگی قبلاً لحاظ شده است.
         phase,
         boostActive: false,
       },
@@ -137,6 +151,7 @@ export class FeedAssemblerService {
     targetGender: string,
     excludeUserIds: Set<number>,
     phase: FeedPhase['phase'],
+    requestedCity?: string,
   ): Promise<void> {
     const newIds = [
       ...new Set(userIds.filter((id) => Number.isSafeInteger(id) && id > 0)),
@@ -148,21 +163,17 @@ export class FeedAssemblerService {
 
     for (const user of users) {
       if (user.gender !== targetGender) continue;
-      if (excludeUserIds.has(user.id) || usedUserIds.has(user.id)) continue;
+      if (!this.matchesCity(user.city, requestedCity)) continue;
+      if (excludeUserIds.has(user.id) || usedUserIds.has(user.id)) {
+        continue;
+      }
       if (!canAppearInFeed(user)) continue;
 
-      const freshnessBoost = calculateFreshnessBoost(user.createdAt);
       const trustScore = user.trustScore ?? 50;
-      const trustMultiplier = calculateTrustMultiplier(trustScore);
-
-      /*
-       * این کاربر به دلیل Boost/VIP/اعتبار وارد candidate pool شده است.
-       * این موضوع به‌تنهایی نشان‌دهنده سازگاری رابطه‌ای نیست.
-       */
       const priority = this.scoringService.assignPriority(source, {
         trustScore,
-        trustMultiplier,
-        freshnessBoost,
+        trustMultiplier: calculateTrustMultiplier(trustScore),
+        freshnessBoost: calculateFreshnessBoost(user.createdAt),
         phase,
         boostActive: source === 'boost',
       });
@@ -186,6 +197,7 @@ export class FeedAssemblerService {
     targetGender: string,
     maximumItems: number,
     phase: FeedPhase['phase'],
+    requestedCity?: string,
   ): void {
     for (const suggestion of suggestions) {
       if (feed.length >= maximumItems) break;
@@ -195,15 +207,14 @@ export class FeedAssemblerService {
       if (!Number.isSafeInteger(userId) || userId <= 0) continue;
       if (usedUserIds.has(userId) || excludeUserIds.has(userId)) continue;
       if (suggestion.gender !== targetGender) continue;
+      if (!this.matchesCity(suggestion.city, requestedCity)) continue;
       if (!canAppearInFeed(suggestion)) continue;
-
-      const priority = this.scoreSuggestion(suggestion, phase);
 
       feed.push({
         id: randomUUID(),
         type: 'user',
         data: this.mapUserToFeed(suggestion),
-        priority,
+        priority: this.scoreSuggestion(suggestion, phase),
       });
 
       usedUserIds.add(userId);
@@ -215,11 +226,14 @@ export class FeedAssemblerService {
     options: BuildFeedOptions = {},
   ): Promise<FeedItem[]> {
     const startedAt = Date.now();
-    const limit = Math.max(1, Math.min(options.limit ?? 20, 100));
+    const limit = Math.max(1, Math.min(Math.floor(options.limit ?? 20), 100));
+    const requestedCity = options.city?.trim() || undefined;
 
     const excludedIds = new Set<number>([
       userId,
-      ...(options.excludeUserIds ?? []),
+      ...(options.excludeUserIds ?? []).filter(
+        (id) => Number.isSafeInteger(id) && id > 0,
+      ),
     ]);
 
     const [user, phaseData] = await Promise.all([
@@ -234,7 +248,7 @@ export class FeedAssemblerService {
 
     const targetGender = getTargetGender(user.gender);
 
-    const [isVip, _credit] = await Promise.all([
+    const [isVip] = await Promise.all([
       this.vipService.hasVip(userId),
       this.creditsService.get(userId),
     ]);
@@ -270,15 +284,15 @@ export class FeedAssemblerService {
     const feed: FeedItem[] = [];
     const usedUserIds = new Set<number>(excludedIds);
 
-    // پیشنهادهای AI در اولویت candidate pool قرار می‌گیرند.
     this.addSuggestionsToFeed(
       feed,
       suggestions as EnrichedSuggestion[],
       usedUserIds,
       excludedIds,
       targetGender,
-      limit * 2,
+      limit * 3,
       phaseName,
+      requestedCity,
     );
 
     await this.addMonetizedCandidates(
@@ -289,6 +303,7 @@ export class FeedAssemblerService {
       targetGender,
       excludedIds,
       phaseName,
+      requestedCity,
     );
 
     await this.addMonetizedCandidates(
@@ -299,6 +314,7 @@ export class FeedAssemblerService {
       targetGender,
       excludedIds,
       phaseName,
+      requestedCity,
     );
 
     await this.addMonetizedCandidates(
@@ -309,15 +325,11 @@ export class FeedAssemblerService {
       targetGender,
       excludedIds,
       phaseName,
+      requestedCity,
     );
 
-    // ابتدا اولویت مشترک را روی تمام منابع اعمال می‌کنیم.
     const sortedFeed = this.scoringService.sortByPriority(feed);
 
-    /*
-     * فیلتر بلاک/رابطه را پیش از slice نهایی اجرا می‌کنیم؛
-     * در غیر این صورت چند کاربر مسدود می‌توانند ظرفیت صفحه را هدر دهند.
-     */
     const allCandidateIds = sortedFeed
       .filter((item) => item.type === 'user')
       .map((item) => (item.data as FeedUser).id);
@@ -327,12 +339,15 @@ export class FeedAssemblerService {
       allCandidateIds,
     );
 
+    // حذف بلاک‌ها قبل از انتخاب ظرفیت نهایی
     const relationFilteredFeed = this.relationService.applyRelationFilter(
       sortedFeed,
       relationsMap,
     );
 
-    const limitedFeed = relationFilteredFeed.slice(0, limit);
+    const userItems = relationFilteredFeed
+      .filter((item) => item.type === 'user')
+      .slice(0, limit);
 
     const allowedTypes =
       this.promotionService.getAllowedPromotionTypes(enrichedPhase);
@@ -341,7 +356,7 @@ export class FeedAssemblerService {
       phaseName === 'cold' ? 1 : phaseName === 'warm' ? 2 : 3;
 
     const promoPositions = [0, 3, 6, 9]
-      .filter((position) => position < limitedFeed.length)
+      .filter((position) => position < userItems.length)
       .slice(0, maxPromotions);
 
     const promotions = await this.promotionService.decideBatch(
@@ -355,8 +370,8 @@ export class FeedAssemblerService {
     let promotionIndex = 0;
     let promotionsShown = 0;
 
-    for (let index = 0; index < limitedFeed.length; index++) {
-      finalFeed.push(limitedFeed[index]);
+    for (let index = 0; index < userItems.length; index++) {
+      finalFeed.push(userItems[index]);
 
       if (
         promotionIndex < promoPositions.length &&
@@ -383,11 +398,12 @@ export class FeedAssemblerService {
       });
 
     this.logger.log(
-      `Feed built: user=${userId}, users=${limitedFeed.length}, ` +
+      `Feed built: user=${userId}, users=${userItems.length}, ` +
         `promotions=${promotionsShown}, duration=${Date.now() - startedAt}ms`,
     );
 
-    return finalFeed.slice(0, limit);
+    // limit برای تعداد کاربران است؛ تبلیغات ظرفیت کاربران را مصرف نمی‌کند.
+    return finalFeed;
   }
 
   private clamp(value: number, min: number, max: number): number {

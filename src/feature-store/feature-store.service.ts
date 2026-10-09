@@ -80,47 +80,60 @@ export class FeatureStoreService implements OnModuleInit {
 
   private async ensureQdrantCollection(): Promise<void> {
     try {
-      const exists = await this.qdrant.collectionExists(QDRANT_COLLECTION);
-      if (exists) {
-        // اگر collection قبلاً با 22 بُعد ساخته شده، باید recreate شود
-        // در production این باید با migration انجام شود
+      const result = await this.qdrant.collectionExists(QDRANT_COLLECTION);
+      const exists = Boolean(result.exists);
+
+      if (!exists) {
+        await this.qdrant.createCollection(QDRANT_COLLECTION, {
+          vectors: {
+            size: VECTOR_DIMS.total,
+            distance: 'Cosine',
+          },
+          optimizers_config: {
+            memmap_threshold: 20_000,
+          },
+          hnsw_config: {
+            m: 16,
+            ef_construct: 200,
+          },
+        });
+
         this.logger.log(
-          `Qdrant collection "${QDRANT_COLLECTION}" already exists`,
+          `Qdrant collection "${QDRANT_COLLECTION}" created (${VECTOR_DIMS.total} dims)`,
         );
-        return;
+      } else {
+        // Collection موجود نیز باید ایندکس‌های لازم را داشته باشد.
+        const info = await this.qdrant.getCollection(QDRANT_COLLECTION);
+        const vectorConfig = info.config.params.vectors;
+
+        if (
+          !vectorConfig ||
+          Array.isArray(vectorConfig) ||
+          !('size' in vectorConfig) ||
+          vectorConfig.size !== VECTOR_DIMS.total
+        ) {
+          this.logger.error(
+            `Qdrant collection "${QDRANT_COLLECTION}" has an incompatible vector configuration. ` +
+              `Expected ${VECTOR_DIMS.total} dimensions. Do not delete production data automatically.`,
+          );
+          return;
+        }
+
+        this.logger.log(`Qdrant collection "${QDRANT_COLLECTION}" is ready`);
       }
 
-      await this.qdrant.createCollection(QDRANT_COLLECTION, {
-        vectors: {
-          size: VECTOR_DIMS.total, // 32 بُعد
-          distance: 'Cosine',
-        },
-        optimizers_config: {
-          memmap_threshold: 20_000,
-        },
-        hnsw_config: {
-          m: 16,
-          ef_construct: 200,
-        },
-      });
-
-      // ایجاد payload index برای فیلتر سریع
       await this.createPayloadIndexes();
-
-      this.logger.log(
-        `Qdrant collection "${QDRANT_COLLECTION}" created (${VECTOR_DIMS.total} dims)`,
+    } catch (error) {
+      this.logger.error(
+        'Failed to initialize Qdrant collection/indexes',
+        error instanceof Error ? error.stack : String(error),
       );
-    } catch (err) {
-      this.logger.error('Failed to init Qdrant collection:', err);
     }
   }
 
-  /**
-   * ایجاد Index روی payload fields که در فیلتر استفاده می‌شوند.
-   * بدون این Index، فیلتر روی payload کند است.
-   */
   private async createPayloadIndexes(): Promise<void> {
     const fields = [
+      { name: 'userId', schema_type: 'integer' as const },
       { name: 'gender', schema_type: 'keyword' as const },
       { name: 'phase', schema_type: 'keyword' as const },
       { name: 'city', schema_type: 'keyword' as const },
@@ -133,9 +146,14 @@ export class FeatureStoreService implements OnModuleInit {
         await this.qdrant.createPayloadIndex(QDRANT_COLLECTION, {
           field_name: field.name,
           field_schema: field.schema_type,
+          wait: true,
         });
-      } catch {
-        // اگر قبلاً ساخته شده، خطا نادیده گرفته می‌شود
+      } catch (error) {
+        this.logger.warn(
+          `Could not create/verify Qdrant payload index "${field.name}": ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
       }
     }
   }
@@ -208,6 +226,7 @@ export class FeatureStoreService implements OnModuleInit {
    * مهم: preferenceVector اینجا وارد Retrieval می‌شود.
    * بدون این، یادگیری از رفتار کاربر در جستجو اثری ندارد.
    */
+
   buildMergedVector(
     profileVector: number[],
     preferenceVector: number[],
@@ -215,17 +234,72 @@ export class FeatureStoreService implements OnModuleInit {
     personalityVector: number[],
     geoVector: number[],
   ): number[] {
+    const normalizeSegment = (
+      vector: number[] | null | undefined,
+      expectedLength: number,
+      segmentName: string,
+    ): number[] => {
+      if (!Array.isArray(vector) || vector.length !== expectedLength) {
+        throw new Error(
+          `Invalid ${segmentName} vector: expected ${expectedLength} dimensions, ` +
+            `received ${Array.isArray(vector) ? vector.length : 'non-array'}`,
+        );
+      }
+
+      return vector.map((value) => (Number.isFinite(value) ? value : 0));
+    };
+
+    const profile = normalizeSegment(
+      profileVector,
+      VECTOR_DIMS.profile,
+      'profile',
+    );
+    const preference = normalizeSegment(
+      preferenceVector,
+      VECTOR_DIMS.preference,
+      'preference',
+    );
+    const behavior = normalizeSegment(
+      behaviorVector,
+      VECTOR_DIMS.behavior,
+      'behavior',
+    );
+    const personality = normalizeSegment(
+      personalityVector,
+      VECTOR_DIMS.personality,
+      'personality',
+    );
+    const geo = normalizeSegment(geoVector, VECTOR_DIMS.geo, 'geo');
+
     const merged = [
-      ...profileVector.map((v) => v * SEGMENT_WEIGHTS.profile),
-      ...preferenceVector.map((v) => v * SEGMENT_WEIGHTS.preference),
-      ...behaviorVector.map((v) => v * SEGMENT_WEIGHTS.behavior),
-      ...personalityVector.map((v) => v * SEGMENT_WEIGHTS.personality),
-      ...geoVector.map((v) => v * SEGMENT_WEIGHTS.geo),
+      ...profile.map((value) => value * SEGMENT_WEIGHTS.profile),
+      ...preference.map((value) => value * SEGMENT_WEIGHTS.preference),
+      ...behavior.map((value) => value * SEGMENT_WEIGHTS.behavior),
+      ...personality.map((value) => value * SEGMENT_WEIGHTS.personality),
+      ...geo.map((value) => value * SEGMENT_WEIGHTS.geo),
     ];
 
-    // ✅ Normalization
-    const norm = Math.sqrt(merged.reduce((s, v) => s + v * v, 0));
-    return merged.map((v) => v / (norm || 1));
+    if (merged.length !== VECTOR_DIMS.total) {
+      throw new Error(
+        `Invalid merged vector size: expected ${VECTOR_DIMS.total}, got ${merged.length}`,
+      );
+    }
+
+    const norm = Math.sqrt(
+      merged.reduce((sum, value) => sum + value * value, 0),
+    );
+
+    if (!Number.isFinite(norm)) {
+      throw new Error('Merged vector has an invalid norm');
+    }
+
+    const normalized = merged.map((value) => value / (norm || 1));
+
+    if (!normalized.every(Number.isFinite)) {
+      throw new Error('Merged vector contains non-finite values');
+    }
+
+    return normalized;
   }
 
   // ─── Qdrant Write ─────────────────────────────────────────────────────────
@@ -249,6 +323,13 @@ export class FeatureStoreService implements OnModuleInit {
       vectors.personality,
       vectors.geo,
     );
+
+    if (
+      mergedVector.length !== VECTOR_DIMS.total ||
+      !mergedVector.every(Number.isFinite)
+    ) {
+      throw new Error(`Refusing to upsert invalid vector for user ${userId}`);
+    }
 
     const boostActive =
       !!user.boost?.expiresAt && new Date(user.boost.expiresAt) > new Date();
