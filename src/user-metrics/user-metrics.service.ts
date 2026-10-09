@@ -5,6 +5,7 @@ import { Between, EntityManager, MoreThan, Repository } from 'typeorm';
 
 import { PartitionedEvent } from 'src/user-event/entities/partitioned-event.entity';
 import { EventType } from 'src/user-event/type/event-type.enum';
+import { Message } from 'src/message/entities/message.entity';
 
 export interface UserIntelligenceMetrics {
   totalEvents: number;
@@ -38,6 +39,7 @@ export interface UserIntelligenceMetrics {
    * چون Payment می‌تواند چند currency داشته باشد.
    */
   revenueScore: number;
+  paymentAttempts: number;
 }
 
 @Injectable()
@@ -48,6 +50,9 @@ export class UserMetricsService {
 
     @InjectRepository(Payment)
     private readonly paymentRepo: Repository<Payment>,
+
+    @InjectRepository(Message)
+    private readonly messageRepo: Repository<Message>,
 
     private readonly entityManager: EntityManager,
   ) {}
@@ -221,6 +226,10 @@ export class UserMetricsService {
   async getUserIntelligenceMetrics(
     userId: number,
   ): Promise<UserIntelligenceMetrics> {
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      throw new Error('Invalid userId for intelligence metrics');
+    }
+
     const [
       totalEvents,
       activeDays,
@@ -230,6 +239,7 @@ export class UserMetricsService {
       messagesReceived,
       replies,
       purchases,
+      paymentAttempts,
       retentionDays,
     ] = await Promise.all([
       this.activityRepo.count({
@@ -252,11 +262,8 @@ export class UserMetricsService {
         },
       }),
 
-      this.activityRepo.count({
-        where: {
-          userId,
-          type: EventType.MESSAGE_SENT,
-        },
+      this.messageRepo.count({
+        where: { from_id: userId },
       }),
 
       this.getMessagesReceived(userId),
@@ -265,40 +272,27 @@ export class UserMetricsService {
 
       this.getPastPayments(userId),
 
+      this.paymentRepo.count({
+        where: { userId },
+      }),
+
       this.getRetentionDays(userId),
     ]);
 
-    /**
-     * نرخ خرید:
-     *
-     * purchases / max(activeDays, 1)
-     *
-     * عمداً smooth شده تا با چند رویداد
-     * به سرعت به 1 نرسد.
-     */
-    const purchaseRate = Math.min(
-      purchases / Math.max(activeDays * 0.25, 1),
-      1,
-    );
+    // تعداد پرداخت‌های موفق تقسیم بر تعداد تلاش‌های ثبت‌شده.
+    // اگر هیچ تلاشی وجود ندارد، نرخ صفر است.
+    const purchaseRate =
+      paymentAttempts > 0 ? Math.min(purchases / paymentAttempts, 1) : 0;
 
-    /**
-     * responseRate:
-     * پاسخ‌ها نسبت به پیام‌های ارسالی.
-     */
+    // تعداد پیام‌های ارسالی که ظرف ۲۴ ساعت پاسخ گرفته‌اند،
+    // تقسیم بر کل پیام‌های ارسالی.
     const responseRate =
       messagesSent > 0 ? Math.min(replies / messagesSent, 1) : 0;
 
-    /**
-     * matchRate:
-     * تعداد match نسبت به like.
-     */
+    // نرخ Match نسبت به Like؛ این تعریف فعلاً all-time است.
     const matchRate = likes > 0 ? Math.min(matches / likes, 1) : 0;
 
-    /**
-     * فعلاً revenueScore مستقل از مبلغ پولی است.
-     * مقدار monetary revenue در RevenueIntelligenceService
-     * محاسبه می‌شود.
-     */
+    // این امتیاز تخمینی است و معادل LTV پولی نیست.
     const revenueScore = Math.min(purchases / 5, 1);
 
     return {
@@ -310,6 +304,7 @@ export class UserMetricsService {
       messagesReceived,
       replies,
       purchases,
+      paymentAttempts,
       totalPaidTransactions: purchases,
       retentionDays,
       purchaseRate,
@@ -360,7 +355,7 @@ export class UserMetricsService {
   private async getReplies(userId: number): Promise<number> {
     const result = await this.entityManager.query(
       `
-    SELECT COUNT(*) AS replies
+    SELECT COUNT(DISTINCT m1.id) AS replies
     FROM messages m1
     WHERE m1.from_id = ?
       AND EXISTS (

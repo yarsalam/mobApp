@@ -18,12 +18,18 @@ export class DailyMetricsService {
 
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
-    const dateStr = yesterday.toISOString().split('T')[0]; // YYYY-MM-DD
 
-    // FIX: به جای DATE(createdAt) = ? از range استفاده می‌کنیم
-    // تا MySQL بتواند از index روی createdAt استفاده کند
+    const dateStr = yesterday.toISOString().split('T')[0];
+
     const dayStart = `${dateStr} 00:00:00`;
-    const dayEnd = `${dateStr} 23:59:59`;
+
+    const nextDay = new Date(`${dateStr}T00:00:00.000Z`);
+    nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+
+    const dayEndExclusive = nextDay
+      .toISOString()
+      .slice(0, 19)
+      .replace('T', ' ');
 
     try {
       await this.entityManager.query(
@@ -51,7 +57,7 @@ export class DailyMetricsService {
           SUM(CASE WHEN type = 'purchase'             THEN 1 ELSE 0 END)     AS purchases
         FROM user_events
         WHERE createdAt >= ?
-          AND createdAt <= ?
+          AND createdAt < ?
         GROUP BY userId, DATE(createdAt)
 
         ON DUPLICATE KEY UPDATE
@@ -63,12 +69,17 @@ export class DailyMetricsService {
           boostUsed    = VALUES(boostUsed),
           purchases    = VALUES(purchases)
         `,
-        [dayStart, dayEnd],
+        [dayStart, dayEndExclusive],
       );
 
       this.logger.log(`Daily metrics updated for ${dateStr}`);
     } catch (err: unknown) {
-      this.logger.error('Failed to update daily metrics', err);
+      this.logger.error(
+        'Failed to update daily metrics',
+        err instanceof Error ? err.stack : String(err),
+      );
+
+      throw err;
     }
   }
 }
