@@ -18,11 +18,6 @@ export class FeedCandidateService {
     private readonly suggestionService: SuggestionService,
   ) {}
 
-  /**
-   * Fisher–Yates shuffle.
-   * برخلاف sort(() => Math.random() - 0.5)،
-   * برای نمونه‌گیری تصادفی مناسب‌تر است.
-   */
   private shuffle<T>(items: T[]): T[] {
     const result = [...items];
 
@@ -35,7 +30,10 @@ export class FeedCandidateService {
   }
 
   private randomSample<T>(items: T[], count: number): T[] {
-    const safeCount = Math.max(0, Math.floor(count));
+    const safeCount = Math.max(
+      0,
+      Number.isFinite(count) ? Math.floor(count) : 0,
+    );
 
     if (safeCount === 0 || items.length === 0) {
       return [];
@@ -51,15 +49,13 @@ export class FeedCandidateService {
   private normalizeIds(ids: number[]): number[] {
     return [
       ...new Set(
-        ids.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0),
+        (ids ?? [])
+          .map(Number)
+          .filter((id) => Number.isSafeInteger(id) && id > 0),
       ),
     ];
   }
 
-  /**
-   * فیلتر مشترک برای کاندیداهای تجاری.
-   * عضویت در صف Boost یا VIP به‌تنهایی مجوز نمایش نیست.
-   */
   private async filterIdsByGender(
     ids: number[],
     targetGender: string,
@@ -83,7 +79,6 @@ export class FeedCandidateService {
       users.filter((user) => canAppearInFeed(user)).map((user) => user.id),
     );
 
-    // ترتیب صف ورودی حفظ می‌شود.
     return uniqueIds.filter((id) => eligibleIds.has(id));
   }
 
@@ -91,11 +86,13 @@ export class FeedCandidateService {
     targetGender: string,
     limit: number,
   ): Promise<number[]> {
-    if (limit <= 0) return [];
+    if (!Number.isFinite(limit) || limit <= 0) {
+      return [];
+    }
 
     try {
       const boostedIds = await this.boostQueueService.getBoostedUsers(
-        Math.min(Math.max(limit * 4, 10), 100),
+        Math.min(Math.max(Math.floor(limit) * 4, 10), 100),
       );
 
       const eligibleIds = await this.filterIdsByGender(
@@ -119,11 +116,13 @@ export class FeedCandidateService {
     targetGender: string,
     limit: number,
   ): Promise<number[]> {
-    if (limit <= 0) return [];
+    if (!Number.isFinite(limit) || limit <= 0) {
+      return [];
+    }
 
     try {
       const vipIds = await this.boostQueueService.getActiveVipUsers(
-        Math.min(Math.max(limit * 4, 8), 100),
+        Math.min(Math.max(Math.floor(limit) * 4, 8), 100),
       );
 
       const eligibleIds = await this.filterIdsByGender(vipIds, targetGender);
@@ -144,11 +143,13 @@ export class FeedCandidateService {
     targetGender: string,
     limit: number,
   ): Promise<number[]> {
-    if (limit <= 0) return [];
+    if (!Number.isFinite(limit) || limit <= 0) {
+      return [];
+    }
 
     try {
       const creditIds = await this.boostQueueService.getHighCreditUsers(
-        Math.min(Math.max(limit * 4, 8), 100),
+        Math.min(Math.max(Math.floor(limit) * 4, 8), 100),
       );
 
       const eligibleIds = await this.filterIdsByGender(creditIds, targetGender);
@@ -166,26 +167,32 @@ export class FeedCandidateService {
   }
 
   /**
-   * مسیر اصلی پیشنهادها همچنان از موتور AI عبور می‌کند.
-   * VIP، Boost و اعتبار نباید جایگزین این مسیر شوند.
+   * مسیر اصلی پیشنهادها باید از AI scorer و MMR عبور کند.
+   * عضویت در Boost/VIP/اعتبار جایگزین این مسیر نیست.
    */
   async getSuggestionCandidates(
     userId: number,
     targetGender: string,
     limit: number,
   ) {
-    if (limit <= 0) return [];
+    if (
+      !Number.isSafeInteger(userId) ||
+      userId <= 0 ||
+      !Number.isFinite(limit) ||
+      limit <= 0
+    ) {
+      return [];
+    }
 
     return this.suggestionService.getSuggestionsForUser(userId, {
-      limit: Math.min(limit * 2, 200),
+      limit: Math.min(Math.floor(limit) * 2, 200),
       targetGender,
     });
   }
 
   /**
-   * بارگذاری اطلاعات کاربران برای ساخت Feed.
-   * فیلتر وضعیت فعال در دیتابیس دوباره اعمال می‌شود،
-   * چون وضعیت کاربر ممکن است بعد از retrieval تغییر کرده باشد.
+   * اطلاعات کاربران فعال را بارگذاری می‌کند و ترتیب شناسه‌های
+   * ورودی را حفظ می‌کند؛ ترتیب TypeORM تضمین‌شده نیست.
    */
   async getUsersByIds(ids: number[]): Promise<User[]> {
     const uniqueIds = this.normalizeIds(ids);
@@ -194,12 +201,18 @@ export class FeedCandidateService {
       return [];
     }
 
-    return this.userRepo.find({
+    const users = await this.userRepo.find({
       where: {
         id: In(uniqueIds),
         status: 'active',
       },
       relations: ['userImages', 'boost'],
     });
+
+    const userMap = new Map(users.map((user) => [user.id, user]));
+
+    return uniqueIds
+      .map((id) => userMap.get(id))
+      .filter((user): user is User => Boolean(user));
   }
 }

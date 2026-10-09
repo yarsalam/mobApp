@@ -11,6 +11,21 @@ export interface FeedUser {
   userImages?: { url: string; isMain: boolean }[];
 }
 
+export interface FeedRelation {
+  isBlocked: boolean;
+  blockedByMe: boolean;
+  blockedMe: boolean;
+  hasLiked: boolean;
+  hasSuperLiked: boolean;
+  likedByThem: boolean;
+  superLikedByThem: boolean;
+  isMatch: boolean;
+  hasReported: boolean;
+  hasMessaged: boolean;
+  hasViewed: boolean;
+  effectiveState: 'blocked' | 'match' | 'superliked' | 'liked' | 'none';
+}
+
 export interface PromotionConfig {
   variant: 'boost' | 'vip' | 'credit' | 'profile' | 'bundle';
   title: string;
@@ -31,6 +46,7 @@ export interface FeedItem {
   priority?: number;
   score?: number;
   expiresAt?: Date;
+  relation?: FeedRelation;
 }
 
 export interface BuildFeedOptions {
