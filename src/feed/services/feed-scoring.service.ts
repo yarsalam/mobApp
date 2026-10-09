@@ -27,9 +27,6 @@ export class FeedScoringService {
     return Math.round(this.clamp(base * multiplier, 0, 100));
   }
 
-  /**
-   * سازگاری با فراخوانی‌های قدیمی.
-   */
   assignPriorityBySource(
     source: CandidateSource,
     suggestionScore?: number,
@@ -43,14 +40,13 @@ export class FeedScoringService {
   ): number {
     switch (source) {
       case 'suggestion': {
-        // suggestionScore همیشه باید در بازه 0..1 باشد.
         const compatibility = this.clamp(suggestionScore ?? 0.4, 0, 1);
 
-        // بازه پیشنهادهای هوش مصنوعی: 30..90
+        // سازگاری واقعی، عامل اصلی رتبه‌بندی پیشنهادها است.
         return 30 + compatibility * 60;
       }
 
-      // مزیت تجاری محدود است و سازگاری واقعی را جایگزین نمی‌کند.
+      // امتیاز تجاری محدود است و نباید بر سازگاری غلبه کند.
       case 'boost':
         return 43;
 
@@ -69,19 +65,18 @@ export class FeedScoringService {
     source: CandidateSource,
     candidate?: ScoredCandidate,
   ): number {
-    if (!candidate) {
-      return 1;
-    }
+    if (!candidate) return 1;
 
     let multiplier = 1;
 
+    const trustScore = this.clamp(candidate.trustScore ?? 50, 0, 100);
+
     const trustMultiplier =
-      candidate.trustMultiplier ??
-      0.7 + (this.clamp(candidate.trustScore ?? 50, 0, 100) / 100) * 0.3;
+      candidate.trustMultiplier ?? 0.7 + (trustScore / 100) * 0.3;
 
     multiplier *= this.clamp(trustMultiplier, 0.7, 1.15);
 
-    // تازگی برای پیشنهادهای AI قبلاً در مرحله پیشنهاد اعمال شده است.
+    // برای پیشنهادهای AI، تازگی قبلاً در مرحلهٔ پیشنهاد لحاظ شده است.
     if (source !== 'suggestion' && candidate.freshnessBoost !== undefined) {
       multiplier *= this.clamp(candidate.freshnessBoost, 0.85, 1.1);
     }
@@ -94,7 +89,6 @@ export class FeedScoringService {
 
     multiplier *= phaseMultipliers[candidate.phase ?? 'cold'] ?? 1;
 
-    // Confidence فقط یک تعدیل بسیار کوچک است.
     if (
       source === 'suggestion' &&
       candidate.intelligenceConfidence !== undefined
@@ -104,18 +98,26 @@ export class FeedScoringService {
       multiplier *= 0.97 + confidence * 0.03;
     }
 
-    // درآمد، خرید، Boost و VIP حق ندارند سازگاری را دور بزنند.
+    /*
+     * expectedRevenue و purchaseProbability عمداً وارد multiplier
+     * نمی‌شوند تا کاربران پردرآمدتر صرفاً به‌دلیل ارزش تجاری
+     * بالاتر از کاربران سازگارتر رتبه نگیرند.
+     */
     return this.clamp(multiplier, 0.75, 1.2);
   }
 
   sortByPriority<T extends { priority?: number }>(items: T[]): T[] {
-    return [...items].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+    return [...items].sort(
+      (a, b) => this.safePriority(b.priority) - this.safePriority(a.priority),
+    );
+  }
+
+  private safePriority(value?: number): number {
+    return Number.isFinite(value) ? value! : 0;
   }
 
   private clamp(value: number, min: number, max: number): number {
-    if (!Number.isFinite(value)) {
-      return min;
-    }
+    if (!Number.isFinite(value)) return min;
 
     return Math.max(min, Math.min(max, value));
   }

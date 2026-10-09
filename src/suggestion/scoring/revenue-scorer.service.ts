@@ -7,16 +7,9 @@ import { REDIS_CLIENT } from 'src/redis/redis.constants';
 export interface RevenueScore {
   userId: number;
   candidateId: number;
-
-  /** امتیاز سازگاری رابطه‌ای در بازه 0..1 */
   compatibilityScore: number;
-
-  /** امتیاز نهایی برای رتبه‌بندی در بازه 0..1 */
   decisionScore: number;
-
-  /** سیگنال تجاری مستقل از سازگاری */
   expectedRevenue: number;
-
   components: {
     mutualPreferenceFit: number;
     profileFit: number;
@@ -30,7 +23,6 @@ export interface RevenueScore {
     phaseMultiplier: number;
     businessSignal: number;
   };
-
   confidence: number;
 }
 
@@ -76,9 +68,14 @@ export class RevenueScorerService {
     candidateIds: number[],
   ): Promise<RevenueScore[]> {
     const safeUserId = Number(userId);
+
+    if (!Number.isSafeInteger(safeUserId) || safeUserId <= 0) {
+      return [];
+    }
+
     const uniqueCandidateIds = [
       ...new Set(
-        candidateIds
+        (candidateIds ?? [])
           .map(Number)
           .filter(
             (id) => Number.isSafeInteger(id) && id > 0 && id !== safeUserId,
@@ -86,7 +83,6 @@ export class RevenueScorerService {
       ),
     ];
 
-    if (!Number.isSafeInteger(safeUserId) || safeUserId <= 0) return [];
     if (uniqueCandidateIds.length === 0) return [];
 
     const allFeatures = await this.featureStore.getBatchFeatures([
@@ -95,9 +91,13 @@ export class RevenueScorerService {
     ]);
 
     const featuresMap = new Map<number, UserFeatureSnapshot>();
+
     for (const [key, value] of allFeatures.entries()) {
       const id = Number(key);
-      if (Number.isSafeInteger(id)) featuresMap.set(id, value);
+
+      if (Number.isSafeInteger(id)) {
+        featuresMap.set(id, value);
+      }
     }
 
     const userFeatures =
@@ -109,20 +109,43 @@ export class RevenueScorerService {
       );
     }
 
+    /*
+     * Cache محلی برای همین batch:
+     * چند کاندید با ترکیب فاز یکسان فقط یک بار ضریب فاز را می‌خوانند.
+     */
+    const phaseCache = new Map<string, Promise<number>>();
+
+    const getCachedPhaseMultiplier = (
+      userPhase: string,
+      candidatePhase: string,
+    ): Promise<number> => {
+      const key = `${userPhase}_${candidatePhase}`;
+
+      let pending = phaseCache.get(key);
+
+      if (!pending) {
+        pending = this.getPhaseMultiplier(userPhase, candidatePhase);
+
+        phaseCache.set(key, pending);
+      }
+
+      return pending;
+    };
+
     const scores = await Promise.all(
       uniqueCandidateIds.map(async (candidateId): Promise<RevenueScore> => {
         const candidate =
           featuresMap.get(candidateId) ??
           (FALLBACK_SNAPSHOT as UserFeatureSnapshot);
 
+        const userPhase = userFeatures.phase ?? 'cold';
+        const candidatePhase = candidate.phase ?? 'cold';
+
         const [mutualPreferenceFit, phaseMultiplier] = await Promise.all([
           Promise.resolve(
             this.calculateMutualPreferenceFit(userFeatures, candidate),
           ),
-          this.getPhaseMultiplier(
-            userFeatures.phase ?? 'cold',
-            candidate.phase ?? 'cold',
-          ),
+          getCachedPhaseMultiplier(userPhase, candidatePhase),
         ]);
 
         const profileFit = this.cosine01(
@@ -145,7 +168,11 @@ export class RevenueScorerService {
           candidate.geoVector ?? [],
         );
 
-        const trustFit = this.clamp((candidate.trustScore ?? 50) / 100, 0, 1);
+        const trustFit = this.clamp(
+          this.safeNumber(candidate.trustScore, 50) / 100,
+          0,
+          1,
+        );
 
         const matchProbability = this.probability(
           candidate.matchProbability,
@@ -162,10 +189,6 @@ export class RevenueScorerService {
           0.1,
         );
 
-        /*
-         * Probability signals are bounded and have a small weight.
-         * They must not replace actual profile/preference compatibility.
-         */
         const probabilityFit =
           matchProbability * 0.5 + responseProbability * 0.5;
 
@@ -184,23 +207,24 @@ export class RevenueScorerService {
           1,
         );
 
-        const ltv = Math.max(0, Number(candidate.avgLTV ?? 0) || 0);
-        const expectedRevenue =
-          ltv > 0
-            ? matchProbability * responseProbability * purchaseProbability * ltv
-            : matchProbability * responseProbability * purchaseProbability;
+        const ltv = Math.max(0, this.safeNumber(candidate.avgLTV, 0));
 
-        /*
-         * Business signal is deliberately capped.
-         * The default formula does not allow purchase likelihood or LTV
-         * to dominate the relationship compatibility score.
-         */
+        const expectedRevenue =
+          matchProbability *
+          responseProbability *
+          purchaseProbability *
+          (ltv > 0 ? ltv : 1);
+
         const businessSignal = this.clamp(
           Math.log1p(Math.max(0, expectedRevenue)) / 10,
           0,
           1,
         );
 
+        /*
+         * درآمد فقط 5 درصد تصمیم نهایی را تشکیل می‌دهد.
+         * امتیاز سازگاری رابطه‌ای همچنان عامل اصلی است.
+         */
         const decisionScore = this.clamp(
           compatibilityScore * 0.95 + businessSignal * 0.05,
           0,
@@ -258,7 +282,6 @@ export class RevenueScorerService {
       user.profileVector ?? [],
     );
 
-    // A mutual fit rewards compatibility in both directions.
     return Math.sqrt(
       Math.max(0, userLikesCandidate) * Math.max(0, candidateLikesUser),
     );
@@ -274,7 +297,6 @@ export class RevenueScorerService {
 
     const distance = Math.sqrt((latA - latB) ** 2 + (lngA - lngB) ** 2);
 
-    // Smoothly maps normalized distance to a 0..1 proximity score.
     return this.clamp(Math.exp(-distance * 1.5), 0, 1);
   }
 
@@ -282,9 +304,11 @@ export class RevenueScorerService {
     if (!a.length || !b.length) return 0.5;
 
     const length = Math.min(a.length, b.length);
+
     if (length === 0) return 0.5;
 
     let totalDifference = 0;
+
     for (let i = 0; i < length; i++) {
       totalDifference += Math.abs(
         this.clamp(a[i], 0, 1) - this.clamp(b[i], 0, 1),
@@ -298,31 +322,35 @@ export class RevenueScorerService {
     if (!a.length || !b.length) return 0.5;
 
     const length = Math.min(a.length, b.length);
+
     let dot = 0;
     let normA = 0;
     let normB = 0;
 
     for (let i = 0; i < length; i++) {
-      const av = Number(a[i]) || 0;
-      const bv = Number(b[i]) || 0;
+      const av = this.safeNumber(a[i], 0);
+      const bv = this.safeNumber(b[i], 0);
+
       dot += av * bv;
       normA += av * av;
       normB += bv * bv;
     }
 
     const denominator = Math.sqrt(normA) * Math.sqrt(normB);
+
     if (!denominator) return 0.5;
 
-    // Cosine may be negative for vectors that contain negative values.
     return this.clamp((dot / denominator + 1) / 2, 0, 1);
   }
 
   private probability(value: unknown, fallback: number): number {
-    const numberValue = Number(value);
-    if (!Number.isFinite(numberValue) || numberValue < 0 || numberValue > 1) {
+    const parsed = Number(value);
+
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
       return fallback;
     }
-    return numberValue;
+
+    return parsed;
   }
 
   private calculateConfidence(
@@ -357,13 +385,19 @@ export class RevenueScorerService {
 
     try {
       const stored = await this.redis.get(redisKey);
+
       if (stored !== null) {
         const parsed = Number(stored);
-        if (Number.isFinite(parsed)) return this.clamp(parsed, 0.1, 2);
+
+        if (Number.isFinite(parsed)) {
+          return this.clamp(parsed, 0.1, 2);
+        }
       }
 
       const fallback = this.DEFAULT_PHASE_MULTIPLIERS[key] ?? 1;
+
       await this.redis.set(redisKey, String(fallback), 'EX', 86400);
+
       return fallback;
     } catch (error) {
       this.logger.warn(
@@ -371,6 +405,7 @@ export class RevenueScorerService {
           error instanceof Error ? error.message : String(error)
         }`,
       );
+
       return this.DEFAULT_PHASE_MULTIPLIERS[key] ?? 1;
     }
   }
@@ -382,7 +417,9 @@ export class RevenueScorerService {
   ): Promise<void> {
     const key = `${userPhase}_${candidatePhase}`;
     const current = await this.getPhaseMultiplier(userPhase, candidatePhase);
+
     const safeReward = this.clamp(Number(reward) || 0, -1, 1);
+
     const newValue = this.clamp(current + 0.005 * safeReward, 0.1, 2);
 
     await this.redis.set(`revenue:phase:${key}`, String(newValue), 'EX', 86400);
@@ -392,8 +429,15 @@ export class RevenueScorerService {
     );
   }
 
+  private safeNumber(value: unknown, fallback: number): number {
+    const parsed = Number(value);
+
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
   private clamp(value: number, min: number, max: number): number {
     if (!Number.isFinite(value)) return min;
+
     return Math.max(min, Math.min(max, value));
   }
 }
