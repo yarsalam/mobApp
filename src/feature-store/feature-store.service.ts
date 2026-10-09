@@ -6,7 +6,7 @@ import { QdrantClient } from '@qdrant/js-client-rest';
 import { UserFeatureSnapshot } from './entities/user-feature.entity';
 import { User } from '../users/entities/user.entity';
 import { PersonalityService } from '../personality/personality.service';
-import { UserEventService } from '../user-event/user-event.service';
+import { UserMetricsService } from '../user-metrics/user-metrics.service';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from 'src/redis/redis.constants';
 
@@ -69,7 +69,7 @@ export class FeatureStoreService implements OnModuleInit {
     private readonly redis: Redis,
 
     private readonly personalityService: PersonalityService,
-    private readonly userEventService: UserEventService,
+    private readonly userMetricsService: UserMetricsService,
   ) {}
 
   // ─── Startup ─────────────────────────────────────────────────────────────
@@ -423,50 +423,79 @@ export class FeatureStoreService implements OnModuleInit {
    * Refresh یک کاربر مشخص.
    * این متد از Cron و از Event-driven handler هر دو صدا زده می‌شود.
    */
+
   async refreshSingle(userId: number): Promise<void> {
     const user = await this.userRepo.findOne({
       where: { id: userId },
       relations: ['boost'],
     });
+
     if (!user) {
       this.logger.warn(`User ${userId} not found, skipping refresh`);
       return;
     }
 
-    const [personality, events, existing] = await Promise.all([
-      this.personalityService.analyzePersonality(userId).catch(() => ({
-        ocean: {},
-        sentiment: 'neutral',
-        emotion: 'neutral',
-      })),
-      this.userEventService.getUserStats(userId).catch(() => ({
-        totalEvents: 0,
-        activeDays: 0,
-        avgLTV: 0,
-        purchaseRate: 0,
-        responseRate: 0,
-        matchRate: 0,
-      })),
+    const [personality, metrics, existing] = await Promise.all([
+      this.personalityService.analyzePersonality(userId).catch((error) => {
+        this.logger.warn(
+          `Personality analysis failed for user ${userId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+
+        return {
+          ocean: {},
+          sentiment: 'neutral',
+          emotion: 'neutral',
+        };
+      }),
+
+      this.userMetricsService
+        .getUserIntelligenceMetrics(userId)
+        .catch((error) => {
+          this.logger.warn(
+            `Metrics lookup failed for user ${userId}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+
+          return {
+            totalEvents: 0,
+            activeDays: 0,
+            likes: 0,
+            matches: 0,
+            messagesSent: 0,
+            messagesReceived: 0,
+            replies: 0,
+            purchases: 0,
+            totalPaidTransactions: 0,
+            retentionDays: 0,
+            purchaseRate: 0,
+            responseRate: 0,
+            matchRate: 0,
+            revenueScore: 0,
+          };
+        }),
+
       this.featureRepo.findOne({ where: { userId } }),
     ]);
 
     const profileVector = await this.encodeProfile(user);
-    const behaviorVector = await this.encodeBehavior(events);
+    const behaviorVector = await this.encodeBehavior(metrics);
     const personalityVector = await this.encodePersonality(personality);
     const geoVector = this.encodeGeo(user);
 
-    // preferenceVector: اگر قبلاً یادگیری اتفاق افتاده حفظ می‌شود
-    // اگر نه، از profileVector شروع می‌شود
+    // حفظ ترجیحات آموخته‌شده؛ refresh نباید یادگیری قبلی را پاک کند.
     const positivePreferenceVector =
       existing?.positivePreferenceVector?.length === VECTOR_DIMS.preference
-        ? existing.positivePreferenceVector
+        ? [...existing.positivePreferenceVector]
         : existing?.preferenceVector?.length === VECTOR_DIMS.preference
-          ? existing.preferenceVector
+          ? [...existing.preferenceVector]
           : [...profileVector];
 
     const negativePreferenceVector =
       existing?.negativePreferenceVector?.length === VECTOR_DIMS.preference
-        ? existing.negativePreferenceVector
+        ? [...existing.negativePreferenceVector]
         : new Array(VECTOR_DIMS.preference).fill(0);
 
     const preferenceVector = this.buildPreferenceVector(
@@ -480,25 +509,42 @@ export class FeatureStoreService implements OnModuleInit {
       preferenceVector,
       positivePreferenceVector,
       negativePreferenceVector,
-      positivePreferenceCount: existing?.positivePreferenceCount ?? 0,
-      negativePreferenceCount: existing?.negativePreferenceCount ?? 0,
+
+      positivePreferenceCount: Math.max(
+        0,
+        existing?.positivePreferenceCount ?? 0,
+      ),
+      negativePreferenceCount: Math.max(
+        0,
+        existing?.negativePreferenceCount ?? 0,
+      ),
+
       behaviorVector,
       personalityVector,
       geoVector,
-      avgLTV: events.avgLTV ?? 0,
-      purchaseProbability: events.purchaseRate ?? 0,
-      responseProbability: events.responseRate ?? 0,
-      matchProbability: events.matchRate ?? 0,
+
+      // revenueScore معادل LTV پولی نیست؛ avgLTV قبلی را حفظ می‌کنیم.
+      avgLTV: existing?.avgLTV ?? 0,
+
+      purchaseProbability: metrics.purchaseRate,
+      responseProbability: metrics.responseRate,
+      matchProbability: metrics.matchRate,
+
       phase: user.phase ?? 'cold',
       phaseScore: existing?.phaseScore ?? 0,
+
       boostStrength: user.boost?.strength ?? 0,
       boostExpiresAt: user.boost?.expiresAt,
+
       trustScore: user.trustScore ?? 50,
-      retentionDays: events.activeDays ?? 0,
+      retentionDays: metrics.retentionDays,
+
       lastSeenAt: (user as any).lastSeenAt ?? null,
     };
 
+    // اول snapshot پایدار می‌شود، سپس کش و Qdrant به‌روزرسانی می‌شوند.
     await this.featureRepo.save(this.featureRepo.create(snapshot));
+
     await this.redis.del(this.cacheKey(userId));
 
     await this.upsertToQdrant(
@@ -512,6 +558,13 @@ export class FeatureStoreService implements OnModuleInit {
       },
       snapshot,
       user,
+    );
+
+    this.logger.debug(
+      `Feature snapshot refreshed for user ${userId}; ` +
+        `events=${metrics.totalEvents}, ` +
+        `activeDays=${metrics.activeDays}, ` +
+        `matchRate=${metrics.matchRate.toFixed(3)}`,
     );
   }
 
