@@ -168,29 +168,121 @@ export class FeatureStoreService implements OnModuleInit {
     redisKey: string,
     defaults: number[],
   ): Promise<number[]> {
+    const safeDefaults = defaults.map((value) =>
+      Number.isFinite(value) && value >= 0.1 && value <= 10 ? value : 1,
+    );
+
     const stored = await this.redis.get(redisKey);
-    if (stored) return JSON.parse(stored);
-    await this.redis.set(redisKey, JSON.stringify(defaults));
-    return defaults;
+
+    if (stored) {
+      try {
+        const parsed: unknown = JSON.parse(stored);
+
+        if (
+          Array.isArray(parsed) &&
+          parsed.length === safeDefaults.length &&
+          parsed.every(
+            (value) =>
+              typeof value === 'number' &&
+              Number.isFinite(value) &&
+              value >= 0.1 &&
+              value <= 10,
+          )
+        ) {
+          return parsed as number[];
+        }
+
+        this.logger.warn(
+          `Invalid feature weights in Redis key "${redisKey}"; restoring defaults`,
+        );
+      } catch {
+        this.logger.warn(
+          `Malformed feature weights in Redis key "${redisKey}"; restoring defaults`,
+        );
+      }
+    }
+
+    await this.redis.set(redisKey, JSON.stringify(safeDefaults));
+
+    return [...safeDefaults];
   }
 
   // ─── Public Read API ──────────────────────────────────────────────────────
 
   async getUserFeatures(userId: number): Promise<UserFeatureSnapshot> {
-    const cached = await this.redis.get(this.cacheKey(userId));
-    if (cached) return JSON.parse(cached);
+    const key = this.cacheKey(userId);
+    const cached = await this.redis.get(key);
 
-    const features = await this.featureRepo.findOne({ where: { userId } });
+    if (cached) {
+      try {
+        const parsed: unknown = JSON.parse(cached);
+
+        if (
+          parsed !== null &&
+          typeof parsed === 'object' &&
+          'userId' in parsed &&
+          (parsed as { userId: unknown }).userId === userId
+        ) {
+          const candidate = parsed as UserFeatureSnapshot;
+
+          const validVector = (
+            value: unknown,
+            expectedLength: number,
+          ): boolean =>
+            value == null ||
+            (Array.isArray(value) &&
+              value.length === expectedLength &&
+              value.every(
+                (item) => typeof item === 'number' && Number.isFinite(item),
+              ));
+
+          const valid =
+            validVector(candidate.profileVector, VECTOR_DIMS.profile) &&
+            validVector(candidate.preferenceVector, VECTOR_DIMS.preference) &&
+            validVector(
+              candidate.positivePreferenceVector,
+              VECTOR_DIMS.preference,
+            ) &&
+            validVector(
+              candidate.negativePreferenceVector,
+              VECTOR_DIMS.preference,
+            ) &&
+            validVector(candidate.behaviorVector, VECTOR_DIMS.behavior) &&
+            validVector(candidate.personalityVector, VECTOR_DIMS.personality) &&
+            validVector(candidate.geoVector, VECTOR_DIMS.geo);
+
+          if (valid) {
+            return candidate;
+          }
+        }
+
+        this.logger.warn(
+          `Invalid cached feature snapshot for user ${userId}; reloading from database`,
+        );
+      } catch {
+        this.logger.warn(
+          `Malformed cached feature snapshot for user ${userId}; reloading from database`,
+        );
+      }
+
+      await this.redis.del(key);
+    }
+
+    const features = await this.featureRepo.findOne({
+      where: { userId },
+    });
+
     if (!features) {
       throw new Error(`Feature snapshot not found for user ${userId}`);
     }
 
     await this.redis.set(
-      this.cacheKey(userId),
+      key,
       JSON.stringify(features),
       'EX',
       FEATURE_CACHE_TTL,
     );
+
     return features;
   }
 

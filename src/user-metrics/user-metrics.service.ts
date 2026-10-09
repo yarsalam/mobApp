@@ -360,18 +360,24 @@ export class UserMetricsService {
   private async getReplies(userId: number): Promise<number> {
     const result = await this.entityManager.query(
       `
-      SELECT COUNT(*) AS replies
-      FROM messages m1
-      INNER JOIN messages m2
-        ON m2.from_id = m1.to_id
-       AND m2.to_id = m1.from_id
-       AND m2.created_at > m1.created_at
-       AND m2.created_at <= DATE_ADD(m1.created_at, INTERVAL 24 HOUR)
-      WHERE m1.from_id = ?
-      `,
+    SELECT COUNT(*) AS replies
+    FROM messages m1
+    WHERE m1.from_id = ?
+      AND EXISTS (
+        SELECT 1
+        FROM messages m2
+        WHERE m2.from_id = m1.to_id
+          AND m2.to_id = m1.from_id
+          AND m2.created_at > m1.created_at
+          AND m2.created_at <= DATE_ADD(
+            m1.created_at,
+            INTERVAL 24 HOUR
+          )
+      )
+    `,
       [userId],
     );
 
-    return Number(result[0]?.replies ?? 0);
+    return Math.max(0, Number(result[0]?.replies ?? 0));
   }
 }
