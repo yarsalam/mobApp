@@ -72,11 +72,15 @@ export class ModerationService {
       );
 
       this.failureCount = 0;
+
       const result = response.data as ModerationResult;
 
-      await this.saveModerationLog(senderId, message, result);
+      // پیام medium تا قبل از تأیید، ارسال و جریمه نمی‌شود.
+      // بعد از تأیید، نتیجه دوباره بررسی و تخلف ثبت می‌شود.
+      const awaitingConfirmation =
+        result.severity === 'medium' && !acknowledged;
 
-      if (!(acknowledged && result.severity === 'medium')) {
+      if (!awaitingConfirmation) {
         await this.saveModerationLog(senderId, message, result);
 
         if (result.severity !== 'low') {
@@ -98,25 +102,42 @@ export class ModerationService {
       };
     } catch (error: unknown) {
       this.failureCount++;
+
       if (this.failureCount >= this.FAILURE_THRESHOLD) {
         this.openCircuit();
       }
 
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.error('Moderation failed: ' + message);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
 
-      // ارسال به صف با تنظیمات مناسب برای جلوگیری از memory leak
-      await this.moderationQueue.add(
-        'process-later',
-        { message, senderId, receiverId, timestamp: new Date() },
-        {
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 5000 },
-          removeOnComplete: 1000,
-          removeOnFail: 5000,
-        },
-      );
+      this.logger.error('Moderation failed: ' + errorMessage);
 
+      try {
+        await this.moderationQueue.add(
+          'process-later',
+          {
+            message,
+            senderId,
+            receiverId,
+            timestamp: new Date(),
+          },
+          {
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 5000 },
+            removeOnComplete: 1000,
+            removeOnFail: 5000,
+          },
+        );
+      } catch (queueError: unknown) {
+        const queueErrorMessage =
+          queueError instanceof Error ? queueError.message : String(queueError);
+
+        this.logger.error(
+          'Failed to enqueue moderation retry: ' + queueErrorMessage,
+        );
+      }
+
+      // همیشه متن اصلی کاربر را بررسی کن، نه متن خطای سرویس را.
       return this.fallbackModeration(message, senderId);
     }
   }
@@ -162,11 +183,11 @@ export class ModerationService {
     }
 
     return {
-      isSafe: true,
-      confidence: 0.6,
-      flags: ['no_ai_check'],
-      severity: 'low',
-      action: 'allow',
+      isSafe: false,
+      confidence: 0,
+      flags: ['moderation_unavailable'],
+      severity: 'high',
+      action: 'block',
     };
   }
 
