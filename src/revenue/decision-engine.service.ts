@@ -1,27 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { RevenueIntelligenceService } from './revenue-intelligence.service';
-
-interface LtvChannel {
-  ltv: number;
-  users: number;
-  averageLtv: number;
-}
-
-interface RevenueForecastPoint {
-  date: string;
-  revenue: number;
-  confidence: [number, number];
-}
-
-interface RevenueForecastResult {
-  forecast: RevenueForecastPoint[];
-  growthRate: number;
-  peakDays: string[];
-  alerts: {
-    type: string;
-    message: string;
-  }[];
-}
+import { PaymentCurrency } from '../payments/entities/payment.entity';
+import {
+  RevenueIntelligenceService,
+  LtvChannel,
+  RevenueForecastPoint,
+  RevenueForecastResult,
+} from './revenue-intelligence.service';
 
 interface BudgetAllocation {
   channel: string;
@@ -49,19 +33,19 @@ export class DecisionEngineService {
    *        ↓
    * Budget / Content / Alerts
    */
-  async getStrategicDecisions() {
+  async getStrategicDecisions(currency: PaymentCurrency = 'IRT') {
     try {
       // ---------------------------------------------------------
       // 1. LTV بر اساس کانال جذب
       // ---------------------------------------------------------
-      const ltvByChannel = await this.revenueIntelligence.getLTVByChannel();
+      const ltvByChannel =
+        await this.revenueIntelligence.getLTVByChannel(currency);
 
       // ---------------------------------------------------------
       // 2. پیش‌بینی درآمد
       // ---------------------------------------------------------
-      const forecast = (await this.revenueIntelligence.forecastRevenue(
-        90,
-      )) as RevenueForecastResult;
+      const forecast: RevenueForecastResult =
+        await this.revenueIntelligence.forecastRevenue(90, currency);
 
       // ---------------------------------------------------------
       // 3. تخصیص بودجه
@@ -79,7 +63,7 @@ export class DecisionEngineService {
       // ---------------------------------------------------------
       // 5. هشدارهای درآمدی
       // ---------------------------------------------------------
-      const alerts = await this.detectAlerts();
+      const alerts = await this.detectAlerts(currency);
 
       // ---------------------------------------------------------
       // 6. خلاصه Forecast
@@ -87,12 +71,14 @@ export class DecisionEngineService {
       const forecastSummary = this.buildForecastSummary(forecast.forecast);
 
       return {
+        currency,
         budgetAllocation,
         contentPriorities,
         alerts,
 
         forecast: {
           ...forecastSummary,
+          currency,
           growthRate: forecast.growthRate,
           peakDays: forecast.peakDays,
           modelAlerts: forecast.alerts,
@@ -113,45 +99,14 @@ export class DecisionEngineService {
   // ============================================================
 
   private optimizeBudget(
-    ltvByChannel: Record<string, LtvChannel>,
-    forecast: RevenueForecastPoint[],
+    _ltvByChannel: Record<string, LtvChannel>,
+    _forecast: RevenueForecastPoint[],
   ): BudgetAllocation[] {
-    const totalBudget = 10_000;
-    const channels = Object.entries(ltvByChannel);
-    if (!channels.length) {
-      return [];
-    }
-    const averageForecastRevenue =
-      forecast.length > 0
-        ? forecast.reduce((sum, point) => sum + Number(point.revenue || 0), 0) /
-          forecast.length
-        : 0;
-    return channels
-      .sort(([, a], [, b]) => b.ltv - a.ltv)
-      .map(([source, channel], index) => {
-        const currentSpend =
-          channel.averageLtv > 0
-            ? Math.max(channel.averageLtv * 0.1, 500)
-            : 500;
-        const expectedROI =
-          channel.averageLtv > 0
-            ? channel.averageLtv / Math.max(currentSpend, 1)
-            : 0;
-        const rankWeight = 1 / (index + 1);
-        const forecastFactor =
-          averageForecastRevenue > 0
-            ? Math.min(Math.max(averageForecastRevenue / 10_000, 0.5), 2)
-            : 1;
-        const recommendedSpend =
-          totalBudget * rankWeight * 0.5 * Math.min(forecastFactor, 1.5);
-        return {
-          channel: source,
-          currentSpend,
-          recommendedSpend: Math.round(recommendedSpend * 100) / 100,
-          expectedROI: Math.round(expectedROI * 100) / 100,
-          confidence: Math.max(0.5, Math.min(0.95, 0.9 - index * 0.1)),
-        };
-      });
+    this.logger.warn(
+      'Budget allocation unavailable: currency-aligned acquisition cost data is required.',
+    );
+
+    return [];
   }
 
   // ============================================================
@@ -190,17 +145,18 @@ export class DecisionEngineService {
   // Revenue Alerts
   // ============================================================
 
-  private async detectAlerts() {
-    const anomalies = await this.revenueIntelligence.detectAnomalies();
+  private async detectAlerts(currency: PaymentCurrency) {
+    const anomalies = await this.revenueIntelligence.detectAnomalies(currency);
 
     if (!Array.isArray(anomalies)) {
       return [];
     }
 
-    return anomalies.map((anomaly: any) => ({
-      type: anomaly.type ?? 'revenue_anomaly',
-      message:
-        anomaly.message ?? anomaly.description ?? 'Revenue anomaly detected',
+    return anomalies.map((anomaly) => ({
+      type: anomaly.type,
+      message: anomaly.message,
+      currency: anomaly.currency,
+      severity: anomaly.severity,
     }));
   }
 

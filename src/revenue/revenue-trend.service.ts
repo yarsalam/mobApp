@@ -118,12 +118,24 @@ export class RevenueTrendService {
    * جایگزین historical() — سری روزانه‌ی خام برای مصارفی مثل forecast
    * که به grain روزانه نیاز دارند، نه ماهانه.
    */
+
   async getDailyHistory(
     daysBack = 90,
     currency: PaymentCurrency = 'IRT',
-  ): Promise<{ date: string; amount: number }[]> {
-    const since = new Date();
-    since.setDate(since.getDate() - daysBack);
+  ): Promise<
+    {
+      date: string;
+      currency: PaymentCurrency;
+      amount: number;
+    }[]
+  > {
+    const safeDays = Math.max(1, Math.min(Math.trunc(daysBack) || 90, 365));
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const start = new Date(today);
+    start.setDate(start.getDate() - (safeDays - 1));
 
     const rows: { day: string; amount: string }[] = await this.paymentRepo
       .createQueryBuilder('p')
@@ -131,21 +143,34 @@ export class RevenueTrendService {
       .addSelect('SUM(p.amount)', 'amount')
       .where('p.status = :status', { status: 'paid' })
       .andWhere('p.currency = :currency', { currency })
-      .andWhere('p.createdAt >= :since', { since })
+      .andWhere('p.createdAt >= :start', { start })
+      .andWhere('p.createdAt < :end', {
+        end: new Date(today.getTime() + 24 * 60 * 60 * 1000),
+      })
       .groupBy('DATE(p.createdAt)')
       .orderBy('day', 'ASC')
       .getRawMany();
 
-    const byDate = new Map(
-      rows.map((r) => [String(r.day).slice(0, 10), Number(r.amount) || 0]),
-    );
+    const byDate = new Map<string, number>();
 
-    const result: { date: string; amount: number }[] = [];
+    for (const row of rows) {
+      const amount = Number(row.amount);
 
-    for (let offset = daysBack - 1; offset >= 0; offset--) {
-      const date = new Date();
-      date.setHours(0, 0, 0, 0);
-      date.setDate(date.getDate() - offset);
+      byDate.set(
+        String(row.day).slice(0, 10),
+        Number.isFinite(amount) ? amount : 0,
+      );
+    }
+
+    const result: {
+      date: string;
+      currency: PaymentCurrency;
+      amount: number;
+    }[] = [];
+
+    for (let offset = 0; offset < safeDays; offset++) {
+      const date = new Date(start);
+      date.setDate(start.getDate() + offset);
 
       const key = [
         date.getFullYear(),
@@ -155,6 +180,7 @@ export class RevenueTrendService {
 
       result.push({
         date: key,
+        currency,
         amount: Math.round(byDate.get(key) ?? 0),
       });
     }
