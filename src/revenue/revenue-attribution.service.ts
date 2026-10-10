@@ -10,7 +10,10 @@ import { HttpService } from '@nestjs/axios';
 import { FeatureStoreService } from 'src/feature-store/feature-store.service';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
-import { ActivityPlatform, SEOActivity } from 'src/seo/entities/seo-activity.entity';
+import {
+  ActivityPlatform,
+  SEOActivity,
+} from 'src/seo/entities/seo-activity.entity';
 
 export interface LTVResult {
   source: string;
@@ -223,23 +226,13 @@ export class RevenueAttributionService {
       .orderBy('DATE(p.createdAt)', 'ASC')
       .getRawMany<{ date: string; total: string; txCount: string }>();
 
-    const dailyRefundRows = await this.paymentRepo
-      .createQueryBuilder('p')
-      .select('DATE(p.createdAt)', 'date')
-      .addSelect('COUNT(*)', 'refundCount')
-      .where('p.createdAt >= :start', { start: thirtyDaysAgo })
-      .andWhere("p.status IN ('refunded', 'cancelled')")
-      .groupBy('DATE(p.createdAt)')
-      .getRawMany<{ date: string; refundCount: string }>();
+    const dailyRefundRows: Array<{
+      date: string;
+      refundCount: string;
+    }> = [];
 
     const revenueMap = new Map(
       dailyRevenueRows.map((r) => [r.date, parseFloat(r.total)]),
-    );
-    const txCountMap = new Map(
-      dailyRevenueRows.map((r) => [r.date, parseInt(r.txCount)]),
-    );
-    const refundMap = new Map(
-      dailyRefundRows.map((r) => [r.date, parseInt(r.refundCount)]),
     );
 
     const allRevenues = [...revenueMap.values()];
@@ -265,13 +258,8 @@ export class RevenueAttributionService {
 
       let reason: string | undefined;
       if (isAnomaly) {
-        const refundCount = refundMap.get(dateStr) ?? 0;
-        const txCount = txCountMap.get(dateStr) ?? 0;
-
-        if (actualRevenue === 0 && txCount === 0) {
+        if (actualRevenue === 0) {
           reason = 'no_transactions';
-        } else if (refundCount > txCount * 0.3) {
-          reason = 'high_refund_rate';
         } else if (deviation < -ANOMALY_THRESHOLD) {
           reason = 'revenue_drop';
         } else {
@@ -345,43 +333,54 @@ export class RevenueAttributionService {
         where: { id: userId },
       });
 
-      if (!user) return 0;
+      if (!user) {
+        return 0;
+      }
 
-      const query = this.userRepo
+      const similarUsers = await this.userRepo
         .createQueryBuilder('user')
         .leftJoinAndSelect('user.payments', 'payments')
-        .where('user.id != :userId', { userId });
+        .where('user.id != :userId', { userId })
+        .andWhere('user.city = :city', { city: user.city })
+        .andWhere('user.gender = :gender', { gender: user.gender })
+        .getMany();
 
-      if (user.city) {
-        query.andWhere('user.city = :city', { city: user.city });
-      } else {
-        query.andWhere('user.city IS NULL');
+      const paidCurrencies = new Set(
+        similarUsers.flatMap((similarUser) =>
+          (similarUser.payments ?? [])
+            .filter((payment) => payment.status === 'paid')
+            .map((payment) => payment.currency),
+        ),
+      );
+
+      // بدون نرخ تبدیل، جمع ارزهای مختلف قابل اتکا نیست.
+      if (paidCurrencies.size !== 1) {
+        return 0;
       }
 
-      if (user.gender) {
-        query.andWhere('user.gender = :gender', {
-          gender: user.gender,
-        });
-      } else {
-        query.andWhere('user.gender IS NULL');
+      const currency = [...paidCurrencies][0];
+
+      const usersWithRevenue = similarUsers
+        .map((similarUser) => {
+          const revenue = (similarUser.payments ?? [])
+            .filter(
+              (payment) =>
+                payment.status === 'paid' && payment.currency === currency,
+            )
+            .reduce((sum, payment) => sum + Number(payment.amount), 0);
+
+          return revenue;
+        })
+        .filter((revenue) => Number.isFinite(revenue));
+
+      if (usersWithRevenue.length === 0) {
+        return 0;
       }
 
-      const similarUsers = await query.getMany();
-
-      if (similarUsers.length === 0) return 150;
-
-      const totalLTV = similarUsers.reduce((sum, similarUser) => {
-        const userRevenue =
-          similarUser.payments
-            ?.filter((payment) => payment.status === 'paid')
-            .reduce((paymentSum, payment) => {
-              return paymentSum + Number(payment.amount);
-            }, 0) ?? 0;
-
-        return sum + userRevenue;
-      }, 0);
-
-      return totalLTV / similarUsers.length;
+      return (
+        usersWithRevenue.reduce((sum, revenue) => sum + revenue, 0) /
+        usersWithRevenue.length
+      );
     }
   }
 }
