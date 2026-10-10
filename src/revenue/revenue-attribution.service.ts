@@ -10,7 +10,7 @@ import { HttpService } from '@nestjs/axios';
 import { FeatureStoreService } from 'src/feature-store/feature-store.service';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
-import { SEOActivity } from 'src/seo/entities/seo-activity.entity';
+import { ActivityPlatform, SEOActivity } from 'src/seo/entities/seo-activity.entity';
 
 export interface LTVResult {
   source: string;
@@ -96,7 +96,10 @@ export class RevenueAttributionService {
     > = {};
 
     for (const user of users) {
-      const source = user.metadata?.acquisitionSource || 'organic';
+      const source =
+        user.acquisitionSource?.trim() ||
+        user.metadata?.acquisitionSource?.trim() ||
+        'organic';
       const weight = await this.getSourceWeight(source);
 
       if (!sources[source]) {
@@ -105,7 +108,14 @@ export class RevenueAttributionService {
 
       sources[source].users++;
       const userRevenue =
-        user.payments?.reduce((sum, p) => sum + Number(p.amount), 0) || 0;
+        user.payments?.reduce((sum, payment) => {
+          if (payment.status !== 'paid') {
+            return sum;
+          }
+
+          return sum + Number(payment.amount);
+        }, 0) ?? 0;
+
       sources[source].revenue += userRevenue;
       sources[source].totalWeight += weight;
     }
@@ -131,25 +141,54 @@ export class RevenueAttributionService {
   }
 
   private async getCACForSource(source: string, days: number): Promise<number> {
-    const activities = await this.seoActivityRepo.find({
-      where: {
-        performedAt: Between(
-          new Date(Date.now() - days * 24 * 60 * 60 * 1000),
-          new Date(),
-        ),
-        platform: source as any,
-      },
-    });
+    const platformBySource: Partial<Record<string, ActivityPlatform>> = {
+      instagram: ActivityPlatform.INSTAGRAM,
+      telegram: ActivityPlatform.TELEGRAM,
+      google: ActivityPlatform.GOOGLE_ADS,
+      google_ads: ActivityPlatform.GOOGLE_ADS,
+      linkedin: ActivityPlatform.LINKEDIN,
+      medium: ActivityPlatform.MEDIUM,
+      quora: ActivityPlatform.QUORA,
+    };
 
-    const totalCost = activities.reduce((sum, a) => sum + Number(a.cost), 0);
+    const platform = platformBySource[source];
 
-    const userCount = await this.userRepo.count({
-      where: {
-        metadata: {
-          acquisitionSource: source,
+    // برای منابعی که نگاشت مشخص ندارند، CAC ساختگی تولید نکن.
+    if (!platform) {
+      return 0;
+    }
+
+    const now = new Date();
+    const since = new Date(now.getTime() - days * 86_400_000);
+
+    const [activities, userCount] = await Promise.all([
+      this.seoActivityRepo.find({
+        where: {
+          performedAt: Between(since, now),
+          platform,
         },
-      },
-    });
+      }),
+
+      this.userRepo
+        .createQueryBuilder('user')
+        .where('user.createdAt >= :since', { since })
+        .andWhere('user.createdAt <= :now', { now })
+        .andWhere(
+          `(
+          user.acquisitionSource = :source
+          OR JSON_UNQUOTE(
+            JSON_EXTRACT(user.metadata, '$.acquisitionSource')
+          ) = :source
+        )`,
+          { source },
+        )
+        .getCount(),
+    ]);
+
+    const totalCost = activities.reduce(
+      (sum, activity) => sum + Number(activity.cost || 0),
+      0,
+    );
 
     return userCount > 0 ? totalCost / userCount : 0;
   }
