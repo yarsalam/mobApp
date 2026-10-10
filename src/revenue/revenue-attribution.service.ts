@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Payment } from 'src/payments/entities/payment.entity';
+import { Payment, PaymentCurrency } from 'src/payments/entities/payment.entity';
 import { User } from 'src/users/entities/user.entity';
 import { Repository, Between } from 'typeorm';
 import { PartitionedEvent } from 'src/user-event/entities/partitioned-event.entity';
@@ -42,6 +42,13 @@ const DEFAULT_SOURCE_WEIGHTS = {
   referral: 1.0,
 };
 
+interface SourceRevenue {
+  revenueByCurrency: Partial<Record<PaymentCurrency, number>>;
+  users: number;
+  cac: number | null;
+  ltv: Partial<Record<PaymentCurrency, number>>;
+}
+
 const ANOMALY_THRESHOLD = 0.2;
 
 @Injectable()
@@ -70,8 +77,19 @@ export class RevenueAttributionService {
 
   // fix #5: backtick اضافه شد
   private async getSourceWeight(source: string): Promise<number> {
-    const stored = await this.redis.get(`revenue:source:${source}`);
-    return stored ? parseFloat(stored) : DEFAULT_SOURCE_WEIGHTS[source] || 1.0;
+    const storedValue = await this.redis.get(`revenue:source:${source}`);
+
+    if (!storedValue) {
+      return DEFAULT_SOURCE_WEIGHTS[source] ?? 1;
+    }
+
+    const parsedWeight = Number.parseFloat(storedValue);
+
+    if (!Number.isFinite(parsedWeight) || parsedWeight < 0) {
+      return DEFAULT_SOURCE_WEIGHTS[source] ?? 1;
+    }
+
+    return parsedWeight;
   }
 
   // fix #5: backtick اضافه شد
@@ -93,10 +111,7 @@ export class RevenueAttributionService {
       })
       .getMany();
 
-    const sources: Record<
-      string,
-      { users: number; revenue: number; totalWeight: number }
-    > = {};
+    const sources: Record<string, SourceRevenue> = {};
 
     for (const user of users) {
       const source =
@@ -106,37 +121,63 @@ export class RevenueAttributionService {
       const weight = await this.getSourceWeight(source);
 
       if (!sources[source]) {
-        sources[source] = { users: 0, revenue: 0, totalWeight: 0 };
+        sources[source] = {
+          revenueByCurrency: {},
+          users: 0,
+          cac: null,
+          ltv: {},
+        };
       }
 
       sources[source].users++;
-      const userRevenue =
-        user.payments?.reduce((sum, payment) => {
-          if (payment.status !== 'paid') {
-            return sum;
-          }
 
-          return sum + Number(payment.amount);
-        }, 0) ?? 0;
+      for (const payment of user.payments ?? []) {
+        if (payment.status !== 'paid') {
+          continue;
+        }
 
-      sources[source].revenue += userRevenue;
-      sources[source].totalWeight += weight;
+        const currency = payment.currency as PaymentCurrency;
+
+        if (['IRT', 'USDT', 'BTC', 'USD'].includes(currency)) {
+          sources[source].revenueByCurrency[currency] =
+            (sources[source].revenueByCurrency[currency] ?? 0) +
+            Number(payment.amount);
+        }
+      }
+
+      void weight;
     }
 
     const result: LTVResult[] = [];
     for (const [source, data] of Object.entries(sources)) {
       const cac = await this.getCACForSource(source, days);
-      const avgWeight = data.users > 0 ? data.totalWeight / data.users : 1;
-      const rawLTV = data.revenue / data.users;
-      const adjustedLTV = rawLTV * avgWeight;
+      const avgWeight = await this.getSourceWeight(source);
+
+      const ltvByCurrency: Partial<Record<PaymentCurrency, number>> = {};
+
+      let primaryRevenue = 0;
+      let primaryLtv = 0;
+
+      for (const [currency, revenue] of Object.entries(
+        data.revenueByCurrency,
+      ) as [PaymentCurrency, number][]) {
+        const rawLTV = revenue / data.users;
+        const adjustedLTV = rawLTV * avgWeight;
+        ltvByCurrency[currency] = adjustedLTV;
+
+        if (adjustedLTV > primaryLtv) {
+          primaryLtv = adjustedLTV;
+          primaryRevenue = revenue;
+        }
+      }
 
       result.push({
         source,
         userCount: data.users,
-        totalRevenue: data.revenue,
-        ltv: adjustedLTV,
-        cac,
-        paybackPeriod: cac > 0 ? adjustedLTV / cac : 0,
+        totalRevenue: primaryRevenue,
+        ltv: primaryLtv,
+        cac: cac ?? 0,
+        paybackPeriod: cac && cac > 0 ? primaryLtv / cac : 0,
       });
     }
 
@@ -197,6 +238,10 @@ export class RevenueAttributionService {
   }
 
   async adjustSourceWeight(source: string, reward: number): Promise<void> {
+    if (!Number.isFinite(reward)) {
+      throw new Error('reward must be a finite number');
+    }
+
     const current = await this.getSourceWeight(source);
     const learningRate = 0.01;
     const newWeight = Math.max(0.1, current + learningRate * reward);
@@ -214,72 +259,106 @@ export class RevenueAttributionService {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const dailyRevenueRows = await this.paymentRepo
+    const dailyRows = await this.paymentRepo
       .createQueryBuilder('p')
-      .select('DATE(p.createdAt)', 'date')
-      .addSelect('SUM(p.amount)', 'total')
+      .select('DATE(p.createdAt)', 'day')
+      .addSelect('p.currency', 'currency')
+      .addSelect('SUM(p.amount)', 'revenue')
       .addSelect('COUNT(*)', 'txCount')
-      .where('p.createdAt >= :start', { start: thirtyDaysAgo })
-      // fix #12: status یکسان‌سازی شد — 'paid' در همه جا
-      .andWhere("p.status = 'paid'")
+      .where('p.status = :status', { status: 'paid' })
+      .andWhere('p.createdAt >= :startDate', {
+        startDate: thirtyDaysAgo,
+      })
       .groupBy('DATE(p.createdAt)')
+      .addGroupBy('p.currency')
       .orderBy('DATE(p.createdAt)', 'ASC')
-      .getRawMany<{ date: string; total: string; txCount: string }>();
+      .getRawMany<{
+        day: string;
+        currency: PaymentCurrency;
+        revenue: string;
+        txCount: string;
+      }>();
 
-    const dailyRefundRows: Array<{
-      date: string;
-      refundCount: string;
-    }> = [];
-
-    const revenueMap = new Map(
-      dailyRevenueRows.map((r) => [r.date, parseFloat(r.total)]),
+    const allCurrencies = [
+      ...new Set(dailyRows.map((row) => row.currency)),
+    ].filter((currency): currency is PaymentCurrency =>
+      ['IRT', 'USDT', 'BTC', 'USD'].includes(currency),
     );
-
-    const allRevenues = [...revenueMap.values()];
-    const avgRevenue =
-      allRevenues.length > 0
-        ? allRevenues.reduce((sum, v) => sum + v, 0) / allRevenues.length
-        : 0;
 
     const results: AnomalyResult[] = [];
 
-    for (let i = 0; i < 30; i++) {
-      const date = new Date(thirtyDaysAgo);
-      date.setDate(date.getDate() + i);
-      const dateStr = date.toISOString().split('T')[0];
+    function formatLocalDate(date: Date): string {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
 
-      const actualRevenue = revenueMap.get(dateStr) ?? 0;
-      const expectedRevenue = avgRevenue;
-      const deviation =
-        expectedRevenue > 0
-          ? (actualRevenue - expectedRevenue) / expectedRevenue
-          : 0;
-      const isAnomaly = Math.abs(deviation) > ANOMALY_THRESHOLD;
+      return `${year}-${month}-${day}`;
+    }
 
-      let reason: string | undefined;
-      if (isAnomaly) {
-        if (actualRevenue === 0) {
-          reason = 'no_transactions';
-        } else if (deviation < -ANOMALY_THRESHOLD) {
-          reason = 'revenue_drop';
-        } else {
-          reason = 'revenue_spike';
-        }
+    for (const currency of allCurrencies) {
+      const revenueByDay = new Map<string, number>();
+
+      for (const row of dailyRows) {
+        if (row.currency !== currency) continue;
+
+        revenueByDay.set(
+          String(row.day).slice(0, 10),
+          Number(row.revenue) || 0,
+        );
       }
 
-      results.push({
-        date: dateStr,
-        actualRevenue,
-        expectedRevenue,
-        deviation,
-        isAnomaly,
-        reason,
-      });
+      const dailyRevenue: number[] = [];
+
+      for (let offset = 29; offset >= 0; offset--) {
+        const date = new Date();
+        date.setHours(0, 0, 0, 0);
+        date.setDate(date.getDate() - offset);
+
+        dailyRevenue.push(revenueByDay.get(formatLocalDate(date)) ?? 0);
+      }
+
+      const averageDailyRevenue =
+        dailyRevenue.reduce((sum, value) => sum + value, 0) /
+        dailyRevenue.length;
+
+      for (let i = 0; i < 30; i++) {
+        const date = new Date(thirtyDaysAgo);
+        date.setDate(date.getDate() + i);
+        const dateStr = formatLocalDate(date);
+
+        const actualRevenue = revenueByDay.get(dateStr) ?? 0;
+        const expectedRevenue = averageDailyRevenue;
+        const deviation =
+          expectedRevenue > 0
+            ? (actualRevenue - expectedRevenue) / expectedRevenue
+            : 0;
+        const isAnomaly = Math.abs(deviation) > ANOMALY_THRESHOLD;
+
+        let reason: string | undefined;
+        if (isAnomaly) {
+          if (actualRevenue === 0) {
+            reason = 'no_transactions';
+          } else if (deviation < -ANOMALY_THRESHOLD) {
+            reason = 'revenue_drop';
+          } else {
+            reason = 'revenue_spike';
+          }
+        }
+
+        results.push({
+          date: dateStr,
+          actualRevenue,
+          expectedRevenue,
+          deviation,
+          isAnomaly,
+          reason,
+        });
+      }
     }
 
     const anomalyCount = results.filter((r) => r.isAnomaly).length;
     this.logger.log(
-      `Revenue anomaly detection: ${anomalyCount} anomalies in last 30 days (2 queries total)`,
+      `Revenue anomaly detection: ${anomalyCount} anomalies in last 30 days (1 query total)`,
     );
 
     return results;
@@ -288,7 +367,7 @@ export class RevenueAttributionService {
   /**
    * پیش‌بینی LTV کاربر جدید
    */
-  async predictLTV(userId: number): Promise<number> {
+  async predictLTV(userId: number): Promise<number | null> {
     try {
       const aiRevenueUrl = this.configService
         .get<string>('AI_REVENUE_URL', 'http://ai_revenue:8006')
@@ -334,7 +413,7 @@ export class RevenueAttributionService {
       });
 
       if (!user) {
-        return 0;
+        return null;
       }
 
       const similarUsers = await this.userRepo
@@ -355,7 +434,7 @@ export class RevenueAttributionService {
 
       // بدون نرخ تبدیل، جمع ارزهای مختلف قابل اتکا نیست.
       if (paidCurrencies.size !== 1) {
-        return 0;
+        return null;
       }
 
       const currency = [...paidCurrencies][0];
@@ -374,7 +453,7 @@ export class RevenueAttributionService {
         .filter((revenue) => Number.isFinite(revenue));
 
       if (usersWithRevenue.length === 0) {
-        return 0;
+        return null;
       }
 
       return (
