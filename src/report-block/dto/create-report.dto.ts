@@ -1,23 +1,41 @@
-import { IsEnum, IsNumber, IsOptional, IsString } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class CreateReportDto {
-  @IsNumber()
-  reporterId: number;
+  /*
+   * این فیلد ممکن است از کلاینت قدیمی ارسال شود؛
+   * کنترلر مقدار نهایی آن را از JWT جایگزین می‌کند.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  reporterId?: number;
 
-  @IsNumber()
+  @IsInt()
+  @Min(1)
   reportedUserId: number;
 
-  @IsEnum(['abuse', 'spam', 'fake', 'inappropriate_message', 'other'])
+  @IsIn(['abuse', 'spam', 'fake', 'inappropriate_message', 'other'])
   reason: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(2000)
   message?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   messageId?: string;
 
   @IsOptional()
-  blockUser?: boolean; // اگر true باشه بلاک هم انجام بشه
+  @IsBoolean()
+  blockUser?: boolean;
 }

@@ -33,15 +33,12 @@ export class ReportBlockService {
   ) {}
 
   async blockUser(userId: number, targetId: number) {
-    console.log('userId,targetId', userId, targetId);
     const exists = await this.blockRepo.findOne({
       where: { user: { id: userId }, targetUser: { id: targetId } },
     });
-    console.log('exists', userId, targetId);
     if (exists) return exists;
 
     const blockCountKey = `block:count:${userId}`;
-    console.log('blockCountKey', userId, targetId);
     const count = parseInt((await this.redis.get(blockCountKey)) || '0');
     if (count >= 10) {
       throw new BadRequestException(
@@ -57,9 +54,7 @@ export class ReportBlockService {
       user: { id: userId },
       targetUser: { id: targetId },
     });
-    console.log('block', block);
     const saved = await this.blockRepo.save(block);
-    console.log('saved', saved);
     await this.redis.del(`relation:${userId}:${targetId}`);
     await this.redis.del(`relation:${targetId}:${userId}`);
     // 🆕 لاگ رویداد
@@ -96,6 +91,42 @@ export class ReportBlockService {
   }
 
   async reportUser(dto: CreateReportDto) {
+    const reporterId = Number(dto.reporterId);
+    const reportedUserId = Number(dto.reportedUserId);
+
+    if (
+      !Number.isSafeInteger(reporterId) ||
+      reporterId <= 0 ||
+      !Number.isSafeInteger(reportedUserId) ||
+      reportedUserId <= 0
+    ) {
+      throw new BadRequestException('شناسه کاربر معتبر نیست');
+    }
+
+    if (reporterId === reportedUserId) {
+      throw new BadRequestException('امکان گزارش‌کردن حساب خودتان وجود ندارد');
+    }
+
+    if (
+      typeof dto.reason !== 'string' ||
+      !['abuse', 'spam', 'fake', 'inappropriate_message', 'other'].includes(
+        dto.reason,
+      )
+    ) {
+      throw new BadRequestException('دلیل گزارش معتبر نیست');
+    }
+
+    if (
+      dto.message !== undefined &&
+      (typeof dto.message !== 'string' || dto.message.length > 2000)
+    ) {
+      throw new BadRequestException('متن گزارش بیش از حد مجاز است');
+    }
+
+    // از این نقطه، منطق موجود پیدا کردن گزارش قبلی،
+    // اعتبارسنجی سهمیه و ساخت گزارش را ادامه بده.
+    // برای گزارش قبلی هم validateReport باید اجرا شود.
+
     // ۱. چک وجود گزارش قبلی
     const existing = await this.reportRepo.findOne({
       where: {
@@ -106,6 +137,15 @@ export class ReportBlockService {
     });
 
     if (existing) {
+      const isValid = await this.validateReport(
+        dto.reporterId,
+        dto.reportedUserId,
+      );
+      if (!isValid) {
+        throw new BadRequestException(
+          'گزارش معتبر نیست یا محدودیت روزانه دارید',
+        );
+      }
       // بروزرسانی
       existing.reason = dto.reason;
       existing.message = dto.message ?? existing.message;

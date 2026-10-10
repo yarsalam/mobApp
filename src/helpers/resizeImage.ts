@@ -9,7 +9,7 @@ export interface ResizedImageResult {
   url: string;
   approved: boolean;
   user_id: number;
-  isMain: boolean; // 👈 اینم اضافه کن
+  isMain: boolean;
 }
 export async function resizeAndSaveImageHelper(
   file: Express.Multer.File,
@@ -21,6 +21,33 @@ export async function resizeAndSaveImageHelper(
     throw new Error('User ID is required.');
   }
 
+  if (!file?.buffer?.length) {
+    throw new Error('Image file is empty.');
+  }
+
+  const maxBytes = 5 * 1024 * 1024;
+
+  if (file.size > maxBytes) {
+    throw new Error('Image exceeds the 5 MB limit.');
+  }
+
+  const metadata = await sharp(file.buffer).metadata();
+
+  if (!metadata.format || !['jpeg', 'png', 'webp'].includes(metadata.format)) {
+    throw new Error('Unsupported image format.');
+  }
+
+  if (!metadata.width || !metadata.height) {
+    throw new Error('Invalid image dimensions.');
+  }
+
+  if (
+    metadata.width > 8000 ||
+    metadata.height > 8000 ||
+    metadata.width * metadata.height > 25_000_000
+  ) {
+    throw new Error('Image dimensions exceed the allowed limit.');
+  }
   const { buffer } = file;
   const fileName = `${uuidv4().slice(0, 5)}.webp`;
   const uploadPath = path.resolve(process.cwd(), baseFolder);

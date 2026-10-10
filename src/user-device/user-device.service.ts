@@ -1,4 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
+
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
 import { CreateUserDeviceDto } from './dto/create-user-device.dto';
@@ -21,6 +26,26 @@ export class UserDeviceService {
      * TypeORM برای ManyToOne یک entity reference ساده هم کافی است:
      * { id: userId } as User  — بدون هیچ SELECT.
      */
+    if (!Number.isSafeInteger(dto.userId) || dto.userId <= 0) {
+      throw new BadRequestException('شناسه کاربر معتبر نیست');
+    }
+
+    if (
+      typeof dto.deviceId !== 'string' ||
+      dto.deviceId.trim().length < 8 ||
+      dto.deviceId.length > 200
+    ) {
+      throw new BadRequestException('شناسه دستگاه معتبر نیست');
+    }
+
+    const userExists = await this.userRepo.exist({
+      where: { id: dto.userId },
+    });
+
+    if (!userExists) {
+      throw new NotFoundException('کاربر یافت نشد');
+    }
+
     const userRef = { id: dto.userId } as User;
 
     const deviceData = {
@@ -67,9 +92,15 @@ export class UserDeviceService {
       .execute();
   }
 
-  async findByClientDeviceId(deviceId: string): Promise<UserDevice | null> {
+  async findByClientDeviceId(
+    userId: number,
+    deviceId: string,
+  ): Promise<UserDevice | null> {
     return this.userDeviceRepo.findOne({
-      where: { deviceId },
+      where: {
+        user: { id: userId },
+        deviceId,
+      },
     });
   }
 }

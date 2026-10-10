@@ -26,8 +26,13 @@ export class FeedController {
     @Query('limit') limit?: number,
     @Query('city') city?: string,
   ) {
+    const parsedLimit = Number(limit);
+    const safeLimit = Number.isFinite(parsedLimit)
+      ? Math.max(1, Math.min(Math.floor(parsedLimit), 50))
+      : 20;
+
     const feed = await this.feedAssembler.buildFeed(userId, {
-      limit: limit ? parseInt(limit.toString()) : 20,
+      limit: safeLimit,
       city,
     });
     return { success: true, data: feed, timestamp: new Date().toISOString() };

@@ -12,6 +12,8 @@ import { SendMessageDto } from './dto/send-message.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { IcebreakersDto } from './dto/icebreakers.dto';
 import { GetUser } from 'src/auth/decorator/get-user/get-user.decorator';
+import { StartConversationDto } from './dto/start-conversation.dto';
+import { SuggestReplyDto } from './dto/suggest-reply.dto';
 
 /**
  * همه endpointها با JwtAuthGuard محافظت می‌شوند.
@@ -54,7 +56,7 @@ export class AiAssistantController {
   @Post('conversations')
   async startConversation(
     @GetUser('id') userId: number,
-    @Body() body: { initialMessage?: string },
+    @Body() body: StartConversationDto,
   ) {
     return this.assistant.startConversation(userId, body.initialMessage);
   }
@@ -103,13 +105,14 @@ export class AiAssistantController {
   @Post('suggest-reply')
   async suggestReply(
     @GetUser('id') userId: number,
-    @Body() body: { convId: number; message: string },
+    @Body() body: SuggestReplyDto,
   ) {
     const reply = await this.assistant.suggestReply(
       userId,
       body.convId,
       body.message,
     );
+
     return { reply };
   }
 }

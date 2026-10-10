@@ -226,7 +226,7 @@ export class FeedAssemblerService {
     options: BuildFeedOptions = {},
   ): Promise<FeedItem[]> {
     const startedAt = Date.now();
-    const limit = Math.max(1, Math.min(Math.floor(options.limit ?? 20), 100));
+    const limit = Math.max(1, Math.min(Math.floor(options.limit ?? 20), 50));
     const requestedCity = options.city?.trim() || undefined;
 
     const excludedIds = new Set<number>([

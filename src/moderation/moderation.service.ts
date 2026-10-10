@@ -73,7 +73,7 @@ export class ModerationService {
 
       this.failureCount = 0;
 
-      const result = response.data as ModerationResult;
+      const result = this.normalizeModerationResult(response.data);
 
       // پیام medium تا قبل از تأیید، ارسال و جریمه نمی‌شود.
       // بعد از تأیید، نتیجه دوباره بررسی و تخلف ثبت می‌شود.
@@ -162,32 +162,37 @@ export class ModerationService {
 
   private fallbackModeration(
     message: string,
-    senderId: number,
+    _senderId: number,
   ): ModerationResult {
-    const scamPatterns = [
+    const suspiciousPatterns = [
       /شماره\s*کارت/i,
-      /بیا\s*تلگرام/i,
       /کارت\s*به\s*کارت/i,
+      /بیا\s*تلگرام/i,
     ];
 
-    for (const pattern of scamPatterns) {
-      if (pattern.test(message)) {
-        return {
-          isSafe: false,
-          confidence: 0.7,
-          flags: ['scam_attempt_fallback'],
-          severity: 'high',
-          action: 'block',
-        };
-      }
+    const suspicious = suspiciousPatterns.some((pattern) =>
+      pattern.test(message),
+    );
+
+    if (suspicious) {
+      return {
+        isSafe: false,
+        confidence: 0.7,
+        flags: ['suspected_scam_fallback'],
+        severity: 'high',
+        action: 'block',
+        warning: 'پیام تا بررسی امنیتی مسدود شد.',
+      };
     }
 
     return {
       isSafe: false,
       confidence: 0,
       flags: ['moderation_unavailable'],
-      severity: 'high',
-      action: 'block',
+      severity: 'low',
+      action: 'pending',
+      warning:
+        'بررسی امنیتی موقتاً در دسترس نیست؛ پیام تا تکمیل بررسی ارسال نمی‌شود.',
     };
   }
 
@@ -216,17 +221,30 @@ export class ModerationService {
       },
     });
 
+    const violationCountIncludingCurrent = recentViolations + 1;
+
     if (result.severity === 'critical') {
-      await this.applyRestrictions(userId, 'critical', recentViolations);
+      await this.applyRestrictions(
+        userId,
+        'critical',
+        violationCountIncludingCurrent,
+      );
+
       await this.adjustTrustScore(userId, -30);
     } else if (result.severity === 'high') {
-      if (recentViolations > 2) {
-        await this.applyRestrictions(userId, 'high', recentViolations);
+      if (violationCountIncludingCurrent >= 3) {
+        await this.applyRestrictions(
+          userId,
+          'high',
+          violationCountIncludingCurrent,
+        );
       }
+
       await this.adjustTrustScore(userId, -10);
     } else if (result.severity === 'medium') {
       await this.adjustTrustScore(userId, -5);
     }
+
     if (result.severity === 'critical') {
       const totalViolations = await this.logRepo.count({
         where: {
@@ -245,6 +263,7 @@ export class ModerationService {
         occurredAt: new Date().toISOString(),
       });
     }
+
     await this.userEventService.log({
       userId,
       type: EventType.USER_VIOLATION,
@@ -271,11 +290,6 @@ export class ModerationService {
     user.restrictedUntil = new Date(
       Date.now() + restrictionDays * 24 * 60 * 60 * 1000,
     );
-    user.trustScore = Math.max(
-      0,
-      (user.trustScore || 50) - 20 * (violationCount + 1),
-    );
-
     await this.userRepo.save(user);
     this.logger.log(`User ${userId} restricted for ${restrictionDays} days`);
   }
@@ -382,6 +396,62 @@ export class ModerationService {
         );
       }
     });
+  }
+
+  private normalizeModerationResult(value: unknown): ModerationResult {
+    if (!value || typeof value !== 'object') {
+      throw new Error('Invalid moderation response');
+    }
+
+    const raw = value as Record<string, unknown>;
+
+    const severity = raw.severity;
+    const allowedSeverities = ['low', 'medium', 'high', 'critical'] as const;
+
+    if (
+      typeof severity !== 'string' ||
+      !allowedSeverities.includes(
+        severity as (typeof allowedSeverities)[number],
+      )
+    ) {
+      throw new Error('Invalid moderation severity');
+    }
+
+    const confidence = Number(raw.confidence);
+
+    if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
+      throw new Error('Invalid moderation confidence');
+    }
+
+    const flags = Array.isArray(raw.flags)
+      ? raw.flags.filter(
+          (flag): flag is string =>
+            typeof flag === 'string' && flag.length <= 100,
+        )
+      : [];
+
+    if (raw.flags !== undefined && !Array.isArray(raw.flags)) {
+      throw new Error('Invalid moderation flags');
+    }
+
+    const isSafe =
+      typeof raw.isSafe === 'boolean'
+        ? raw.isSafe
+        : typeof raw.is_safe === 'boolean'
+          ? raw.is_safe
+          : undefined;
+
+    if (isSafe === undefined) {
+      throw new Error('Invalid moderation safety flag');
+    }
+
+    return {
+      isSafe,
+      confidence,
+      flags,
+      severity,
+      action: this.determineAction({ severity }),
+    };
   }
 
   async getUserRiskProfile(userId: number) {

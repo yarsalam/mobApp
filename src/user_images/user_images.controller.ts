@@ -26,7 +26,26 @@ export class UserImageController {
 
   // آپلود تصویر
   @Post('upload')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: {
+        fileSize: 5 * 1024 * 1024,
+        files: 1,
+      },
+      fileFilter: (_req, file, callback) => {
+        const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+
+        if (!allowed.includes(file.mimetype)) {
+          return callback(
+            new BadRequestException('فرمت تصویر مجاز نیست'),
+            false,
+          );
+        }
+
+        callback(null, true);
+      },
+    }),
+  )
   async uploadImage(
     @UploadedFile() file: Express.Multer.File,
     @Body('isMain', ParseBoolPipe) isMain: boolean,
@@ -34,6 +53,10 @@ export class UserImageController {
   ) {
     const phone = req.user.phone;
     const user = await this.userImageService.findUserByPhone(phone);
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('تصویری ارسال نشده است');
+    }
+
     if (!user) {
       throw new NotFoundException('User with this phone not found');
     }
