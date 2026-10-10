@@ -1,13 +1,10 @@
-import { Injectable,Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 
 import { InjectRepository } from '@nestjs/typeorm';
-import {
-  Repository,
-  DataSource,
-} from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 
 import { User } from '../users/entities/user.entity';
-import { Payment } from '../payments/entities/payment.entity';
+import { Payment, PaymentCurrency } from '../payments/entities/payment.entity';
 import { SEOActivity } from '../seo/entities/seo-activity.entity';
 import { PartitionedEvent } from '../user-event/entities/partitioned-event.entity';
 
@@ -18,6 +15,7 @@ export interface RevenueForecastPoint {
 }
 
 export interface RevenueForecastResult {
+  currency: PaymentCurrency;
   forecast: RevenueForecastPoint[];
   growthRate: number;
   peakDays: string[];
@@ -28,12 +26,14 @@ export interface RevenueForecastResult {
 }
 
 export interface LtvChannel {
+  currency: PaymentCurrency;
   ltv: number;
   users: number;
   averageLtv: number;
 }
 
 export interface RevenueAnomaly {
+  currency: PaymentCurrency;
   type: string;
   message: string;
   severity: 'low' | 'medium' | 'high';
@@ -44,8 +44,7 @@ export interface RevenueAnomaly {
 
 @Injectable()
 export class RevenueIntelligenceService {
-  private readonly logger =
-    new Logger(RevenueIntelligenceService.name);
+  private readonly logger = new Logger(RevenueIntelligenceService.name);
 
   constructor(
     @InjectRepository(User)
@@ -67,128 +66,62 @@ export class RevenueIntelligenceService {
   // LTV BY CHANNEL
   // ============================================================
 
-  async getLTVByChannel(): Promise<
-    Record<string, LtvChannel>
-  > {
-    try {
-      const payments =
-        await this.paymentRepository.find({
-          order: {
-            createdAt: 'ASC',
-          },
-        });
+  async getLTVByChannel(
+    currency: PaymentCurrency = 'IRT',
+  ): Promise<Record<string, LtvChannel>> {
+    const validCurrencies: PaymentCurrency[] = ['IRT', 'USDT', 'BTC', 'USD'];
 
-      if (!payments.length) {
-        return {};
-      }
-
-      const channels = new Map<
-        string,
-        {
-          revenue: number;
-          users: Set<number>;
-        }
-      >();
-
-      for (const payment of payments) {
-        const status =
-          String(
-            (payment as any).status ?? '',
-          ).toLowerCase();
-
-        /**
-         * فقط پرداخت‌های موفق را وارد Revenue Intelligence
-         * می‌کنیم.
-         */
-        if (
-          status &&
-          ![
-            'paid',
-            'completed',
-            'success',
-            'successful',
-            'confirmed',
-          ].includes(status)
-        ) {
-          continue;
-        }
-
-        const userId =
-          Number(
-            (payment as any).userId ??
-              (payment as any).user_id ??
-              0,
-          );
-
-        const amount =
-          Number(
-            (payment as any).amount ?? 0,
-          );
-
-        if (!Number.isFinite(amount) || amount <= 0) {
-          continue;
-        }
-
-        /**
-         * source ممکن است در metadata / gateway / source
-         * ذخیره شده باشد.
-         */
-        const source =
-          this.extractPaymentSource(payment);
-
-        if (!channels.has(source)) {
-          channels.set(source, {
-            revenue: 0,
-            users: new Set<number>(),
-          });
-        }
-
-        const channel =
-          channels.get(source)!;
-
-        channel.revenue += amount;
-
-        if (userId > 0) {
-          channel.users.add(userId);
-        }
-      }
-
-      const result: Record<
-        string,
-        LtvChannel
-      > = {};
-
-      for (const [
-        source,
-        channel,
-      ] of channels.entries()) {
-        const users =
-          channel.users.size;
-
-        const averageLtv =
-          users > 0
-            ? channel.revenue / users
-            : 0;
-
-        result[source] = {
-          ltv: this.round(channel.revenue),
-          users,
-          averageLtv:
-            this.round(averageLtv),
-        };
-      }
-
-      return result;
-    } catch (error) {
-      this.logger.error(
-        'Failed to calculate LTV by channel',
-        error instanceof Error
-          ? error.stack
-          : String(error),
-      );
-
-      return {};
+    if (!validCurrencies.includes(currency)) {
+      throw new Error(`Unsupported currency: ${currency}`);
     }
+
+    const users = await this.userRepository
+      .createQueryBuilder('user')
+      .leftJoinAndSelect(
+        'user.payments',
+        'payment',
+        'payment.status = :status AND payment.currency = :currency',
+        { status: 'paid', currency },
+      )
+      .getMany();
+
+    const channels = new Map<string, { revenue: number; users: number }>();
+
+    for (const user of users) {
+      const source = (
+        user.acquisitionSource?.trim() ||
+        user.metadata?.acquisitionSource?.trim() ||
+        'organic'
+      ).toLowerCase();
+
+      if (!channels.has(source)) {
+        channels.set(source, { revenue: 0, users: 0 });
+      }
+
+      const channel = channels.get(source)!;
+      channel.users += 1;
+
+      for (const payment of user.payments ?? []) {
+        const amount = Number(payment.amount);
+
+        if (Number.isFinite(amount) && amount > 0) {
+          channel.revenue += amount;
+        }
+      }
+    }
+
+    const result: Record<string, LtvChannel> = {};
+
+    for (const [source, data] of channels) {
+      result[source] = {
+        currency,
+        users: data.users,
+        ltv: this.round(data.revenue),
+        averageLtv: data.users > 0 ? this.round(data.revenue / data.users) : 0,
+      };
+    }
+
+    return result;
   }
 
   // ============================================================
@@ -197,17 +130,12 @@ export class RevenueIntelligenceService {
 
   async forecastRevenue(
     days = 90,
+    currency: PaymentCurrency = 'IRT',
   ): Promise<RevenueForecastResult> {
-    const safeDays = Math.max(
-      1,
-      Math.min(days, 365),
-    );
+    const safeDays = Math.max(1, Math.min(days, 365));
 
     try {
-      const historical =
-        await this.getDailyRevenueHistory(
-          30,
-        );
+      const historical = await this.getDailyRevenueHistory(30, currency);
 
       /**
        * اگر داده تاریخی نداریم،
@@ -215,182 +143,115 @@ export class RevenueIntelligenceService {
        */
       if (!historical.length) {
         return {
+          currency,
           forecast: [],
           growthRate: 0,
           peakDays: [],
           alerts: [
             {
               type: 'insufficient_data',
-              message:
-                'Not enough revenue history for forecasting',
+              message: 'Not enough revenue history for forecasting',
             },
           ],
         };
       }
 
-      const values =
-        historical.map(
-          item => item.revenue,
-        );
+      const values = historical.map((item) => item.revenue);
 
-      const average =
-        this.mean(values);
+      const average = this.mean(values);
 
-      const recent =
-        values.slice(
-          Math.max(0, values.length - 7),
-        );
+      const recent = values.slice(Math.max(0, values.length - 7));
 
-      const recentAverage =
-        this.mean(recent);
+      const recentAverage = this.mean(recent);
 
-      const older =
-        values.slice(
-          0,
-          Math.max(1, values.length - 7),
-        );
+      const older = values.slice(0, Math.max(1, values.length - 7));
 
-      const olderAverage =
-        this.mean(older);
+      const olderAverage = this.mean(older);
 
       /**
        * رشد اخیر نسبت به baseline
        */
       const growthRate =
-        olderAverage > 0
-          ? (recentAverage -
-              olderAverage) /
-            olderAverage
-          : 0;
+        olderAverage > 0 ? (recentAverage - olderAverage) / olderAverage : 0;
 
       /**
        * Trend را محدود می‌کنیم تا یک outlier
        * کل forecast را منفجر نکند.
        */
-      const boundedGrowth =
-        Math.max(
-          -0.5,
-          Math.min(0.5, growthRate),
-        );
+      const boundedGrowth = Math.max(-0.5, Math.min(0.5, growthRate));
 
-      const forecast: RevenueForecastPoint[] =
-        [];
+      const forecast: RevenueForecastPoint[] = [];
 
-      for (
-        let i = 1;
-        i <= safeDays;
-        i++
-      ) {
-        const date =
-          new Date();
+      for (let i = 1; i <= safeDays; i++) {
+        const date = new Date();
 
-        date.setDate(
-          date.getDate() + i,
-        );
+        date.setDate(date.getDate() + i);
 
         /**
          * رشد مرکب ملایم
          */
-        const trendFactor =
-          Math.pow(
-            1 + boundedGrowth * 0.1,
-            i / 30,
-          );
+        const trendFactor = Math.pow(1 + boundedGrowth * 0.1, i / 30);
 
-        const predicted =
-          Math.max(
-            0,
-            recentAverage *
-              trendFactor,
-          );
+        const predicted = Math.max(0, recentAverage * trendFactor);
 
         /**
          * confidence interval
          */
-        const uncertainty =
-          Math.max(
-            average * 0.25,
-            predicted * 0.15,
-          );
+        const uncertainty = Math.max(average * 0.25, predicted * 0.15);
 
         forecast.push({
-          date:
-            date
-              .toISOString()
-              .slice(0, 10),
+          date: date.toISOString().slice(0, 10),
 
-          revenue:
-            this.round(predicted),
+          revenue: this.round(predicted),
 
           confidence: [
-            this.round(
-              Math.max(
-                0,
-                predicted -
-                  uncertainty,
-              ),
-            ),
+            this.round(Math.max(0, predicted - uncertainty)),
 
-            this.round(
-              predicted +
-                uncertainty,
-            ),
+            this.round(predicted + uncertainty),
           ],
         });
       }
 
-      const peakDays =
-        this.detectPeakDays(
-          historical,
-        );
+      const peakDays = this.detectPeakDays(historical);
 
-      const alerts: RevenueForecastResult['alerts'] =
-        [];
+      const alerts: RevenueForecastResult['alerts'] = [];
 
-      if (
-        growthRate < -0.2
-      ) {
+      if (growthRate < -0.2) {
         alerts.push({
           type: 'negative_growth',
-          message:
-            'Revenue trend is declining significantly',
+          message: 'Revenue trend is declining significantly',
         });
       }
 
-      if (
-        growthRate > 0.3
-      ) {
+      if (growthRate > 0.3) {
         alerts.push({
           type: 'rapid_growth',
-          message:
-            'Revenue is growing unusually fast',
+          message: 'Revenue is growing unusually fast',
         });
       }
 
       return {
+        currency,
         forecast,
-        growthRate:
-          this.round(growthRate),
+        growthRate: this.round(growthRate),
         peakDays,
         alerts,
       };
     } catch (error) {
       this.logger.error(
         'Revenue forecast failed',
-        error instanceof Error
-          ? error.stack
-          : String(error),
+        error instanceof Error ? error.stack : String(error),
       );
 
       return {
+        currency,
         forecast: [],
         growthRate: 0,
         peakDays: [],
         alerts: [
           {
             type: 'forecast_error',
-            message:
-              'Revenue forecast failed',
+            message: 'Revenue forecast failed',
           },
         ],
       };
@@ -401,59 +262,36 @@ export class RevenueIntelligenceService {
   // ANOMALY DETECTION
   // ============================================================
 
-  async detectAnomalies(): Promise<
-    RevenueAnomaly[]
-  > {
+  async detectAnomalies(
+    currency: PaymentCurrency = 'IRT',
+  ): Promise<RevenueAnomaly[]> {
     try {
-      const history =
-        await this.getDailyRevenueHistory(
-          30,
-        );
+      const history = await this.getDailyRevenueHistory(30, currency);
 
-      if (
-        history.length < 7
-      ) {
+      if (history.length < 7) {
         return [];
       }
 
-      const values =
-        history.map(
-          item => item.revenue,
-        );
+      const values = history.map((item) => item.revenue);
 
-      const mean =
-        this.mean(values);
+      const mean = this.mean(values);
 
-      const std =
-        this.standardDeviation(
-          values,
-        );
+      const std = this.standardDeviation(values);
 
-      if (
-        std <= 0 ||
-        !Number.isFinite(std)
-      ) {
+      if (std <= 0 || !Number.isFinite(std)) {
         return [];
       }
 
-      const latest =
-        values[values.length - 1];
+      const latest = values[values.length - 1];
 
-      const zScore =
-        (latest - mean) /
-        std;
+      const zScore = (latest - mean) / std;
 
-      const anomalies: RevenueAnomaly[] =
-        [];
+      const anomalies: RevenueAnomaly[] = [];
 
-      if (
-        Math.abs(zScore) >= 3
-      ) {
+      if (Math.abs(zScore) >= 3) {
         anomalies.push({
-          type:
-            latest > mean
-              ? 'revenue_spike'
-              : 'revenue_drop',
+          currency,
+          type: latest > mean ? 'revenue_spike' : 'revenue_drop',
 
           message:
             latest > mean
@@ -462,23 +300,16 @@ export class RevenueIntelligenceService {
 
           severity: 'high',
 
-          value:
-            this.round(latest),
+          value: this.round(latest),
 
-          baseline:
-            this.round(mean),
+          baseline: this.round(mean),
 
-          deviation:
-            this.round(zScore),
+          deviation: this.round(zScore),
         });
-      } else if (
-        Math.abs(zScore) >= 2
-      ) {
+      } else if (Math.abs(zScore) >= 2) {
         anomalies.push({
-          type:
-            latest > mean
-              ? 'revenue_increase'
-              : 'revenue_decrease',
+          currency,
+          type: latest > mean ? 'revenue_increase' : 'revenue_decrease',
 
           message:
             latest > mean
@@ -487,14 +318,11 @@ export class RevenueIntelligenceService {
 
           severity: 'medium',
 
-          value:
-            this.round(latest),
+          value: this.round(latest),
 
-          baseline:
-            this.round(mean),
+          baseline: this.round(mean),
 
-          deviation:
-            this.round(zScore),
+          deviation: this.round(zScore),
         });
       }
 
@@ -502,9 +330,7 @@ export class RevenueIntelligenceService {
     } catch (error) {
       this.logger.error(
         'Revenue anomaly detection failed',
-        error instanceof Error
-          ? error.stack
-          : String(error),
+        error instanceof Error ? error.stack : String(error),
       );
 
       return [];
@@ -517,60 +343,30 @@ export class RevenueIntelligenceService {
 
   async calculateLTVWithAttribution(
     userId: number,
+    currency: PaymentCurrency = 'IRT',
   ): Promise<number> {
     if (!userId) {
       return 0;
     }
 
     try {
-      const payments =
-        await this.paymentRepository.find({
-          where: {
-            userId,
-          } as any,
-        });
+      const payments = await this.paymentRepository.find({
+        where: {
+          userId,
+          status: 'paid',
+          currency,
+        } as any,
+      });
 
       return this.round(
-        payments.reduce(
-          (sum, payment) => {
-            const status =
-              String(
-                (payment as any)
-                  .status ?? '',
-              ).toLowerCase();
+        payments.reduce((sum, payment) => {
+          const amount = Number((payment as any).amount ?? 0);
 
-            if (
-              status &&
-              ![
-                'paid',
-                'completed',
-                'success',
-                'successful',
-                'confirmed',
-              ].includes(status)
-            ) {
-              return sum;
-            }
-
-            const amount =
-              Number(
-                (payment as any)
-                  .amount ?? 0,
-              );
-
-            return Number.isFinite(
-              amount,
-            )
-              ? sum + amount
-              : sum;
-          },
-          0,
-        ),
+          return Number.isFinite(amount) ? sum + amount : sum;
+        }, 0),
       );
     } catch (error) {
-      this.logger.warn(
-        `Failed to calculate LTV for user ${userId}`,
-      );
+      this.logger.warn(`Failed to calculate LTV for user ${userId}`);
 
       return 0;
     }
@@ -580,32 +376,21 @@ export class RevenueIntelligenceService {
   // LTV BY SOURCE
   // ============================================================
 
-  async calculateLTVBySource(
-    source: string,
-  ): Promise<number> {
+  async calculateLTVBySource(source: string): Promise<number> {
     if (!source) {
       return 0;
     }
 
-    const channels =
-      await this.getLTVByChannel();
+    const channels = await this.getLTVByChannel();
 
-    return (
-      channels[source]?.ltv ??
-      0
-    );
+    return channels[source]?.ltv ?? 0;
   }
 
   // ============================================================
   // SAVE REVENUE METRICS
   // ============================================================
 
-  async saveRevenueMetrics(
-    metrics: Record<
-      string,
-      unknown
-    >,
-  ): Promise<void> {
+  async saveRevenueMetrics(metrics: Record<string, unknown>): Promise<void> {
     /**
      * Compatibility layer.
      *
@@ -621,9 +406,7 @@ export class RevenueIntelligenceService {
       return;
     }
 
-    this.logger.debug(
-      'Revenue metrics received',
-    );
+    this.logger.debug('Revenue metrics received');
   }
 
   // ============================================================
@@ -632,82 +415,64 @@ export class RevenueIntelligenceService {
 
   private async getDailyRevenueHistory(
     days: number,
-  ): Promise<
-    Array<{
-      date: string;
-      revenue: number;
-    }>
-  > {
-    const safeDays =
-      Math.max(
-        1,
-        Math.min(days, 365),
-      );
+    currency: PaymentCurrency = 'IRT',
+  ): Promise<Array<{ date: string; revenue: number }>> {
+    const safeDays = Math.max(1, Math.min(days, 365));
 
-    /**
-     * از QueryBuilder استفاده می‌کنیم تا
-     * aggregation در DB انجام شود.
-     *
-     * توجه:
-     * نام propertyها TypeORM entity است؛
-     * TypeORM خودش mapping را انجام می‌دهد.
-     */
-    const rows =
-      await this.paymentRepository
-        .createQueryBuilder('payment')
-        .select(
-          "DATE(payment.createdAt)",
-          'date',
-        )
-        .addSelect(
-          'SUM(payment.amount)',
-          'revenue',
-        )
-        .where(
-          'payment.createdAt >= DATE_SUB(CURRENT_DATE, INTERVAL :days DAY)',
-          { days: safeDays },
-        )
-        .andWhere(
-          `
-          (
-            payment.status IS NULL
-            OR LOWER(payment.status) IN
-            ('paid', 'completed', 'success', 'successful', 'confirmed')
-          )
-          `,
-        )
-        .groupBy(
-          'DATE(payment.createdAt)',
-        )
-        .orderBy(
-          'DATE(payment.createdAt)',
-          'ASC',
-        )
-        .getRawMany<{
-          date: string;
-          revenue: string;
-        }>();
+    const end = new Date();
+    end.setHours(0, 0, 0, 0);
 
-    return rows.map(row => ({
-      date:
-        String(row.date),
+    const start = new Date(end);
+    start.setDate(start.getDate() - safeDays + 1);
 
-      revenue:
-        this.round(
-          Number(row.revenue) || 0,
-        ),
-    }));
+    const rows = await this.paymentRepository
+      .createQueryBuilder('payment')
+      .select('DATE(payment.createdAt)', 'date')
+      .addSelect('SUM(payment.amount)', 'revenue')
+      .where('payment.status = :status', { status: 'paid' })
+      .andWhere('payment.currency = :currency', { currency })
+      .andWhere('payment.createdAt >= :start', { start })
+      .andWhere('payment.createdAt < :end', {
+        end: new Date(end.getTime() + 24 * 60 * 60 * 1000),
+      })
+      .groupBy('DATE(payment.createdAt)')
+      .orderBy('DATE(payment.createdAt)', 'ASC')
+      .getRawMany<{ date: string; revenue: string }>();
+
+    const byDate = new Map(
+      rows.map((row) => [
+        String(row.date).slice(0, 10),
+        Number(row.revenue) || 0,
+      ]),
+    );
+
+    const result: Array<{ date: string; revenue: number }> = [];
+
+    for (let offset = 0; offset < safeDays; offset++) {
+      const date = new Date(start);
+      date.setDate(start.getDate() + offset);
+
+      const key = [
+        date.getFullYear(),
+        String(date.getMonth() + 1).padStart(2, '0'),
+        String(date.getDate()).padStart(2, '0'),
+      ].join('-');
+
+      result.push({
+        date: key,
+        revenue: this.round(byDate.get(key) ?? 0),
+      });
+    }
+
+    return result;
   }
 
   // ============================================================
   // PAYMENT SOURCE
   // ============================================================
 
-  private extractPaymentSource(
-    payment: Payment,
-  ): string {
-    const raw =
-      payment as any;
+  private extractPaymentSource(payment: Payment): string {
+    const raw = payment as any;
 
     const source =
       raw.source ??
@@ -719,9 +484,7 @@ export class RevenueIntelligenceService {
       raw.gateway ??
       'unknown';
 
-    return String(
-      source || 'unknown',
-    ).toLowerCase();
+    return String(source || 'unknown').toLowerCase();
   }
 
   // ============================================================
@@ -738,83 +501,47 @@ export class RevenueIntelligenceService {
       return [];
     }
 
-    const sorted =
-      [...history].sort(
-        (a, b) =>
-          b.revenue - a.revenue,
-      );
+    const sorted = [...history].sort((a, b) => b.revenue - a.revenue);
 
-    return sorted
-      .slice(
-        0,
-        Math.min(5, sorted.length),
-      )
-      .map(item => item.date);
+    return sorted.slice(0, Math.min(5, sorted.length)).map((item) => item.date);
   }
 
   // ============================================================
   // MATH HELPERS
   // ============================================================
 
-  private mean(
-    values: number[],
-  ): number {
+  private mean(values: number[]): number {
     if (!values.length) {
       return 0;
     }
 
     return (
       values.reduce(
-        (sum, value) =>
-          sum +
-          (Number.isFinite(value)
-            ? value
-            : 0),
+        (sum, value) => sum + (Number.isFinite(value) ? value : 0),
         0,
       ) / values.length
     );
   }
 
-  private standardDeviation(
-    values: number[],
-  ): number {
-    if (
-      values.length < 2
-    ) {
+  private standardDeviation(values: number[]): number {
+    if (values.length < 2) {
       return 0;
     }
 
-    const average =
-      this.mean(values);
+    const average = this.mean(values);
 
-    const variance =
-      this.mean(
-        values.map(
-          value =>
-            Math.pow(
-              value -
-                average,
-              2,
-            ),
-        ),
-      );
-
-    return Math.sqrt(
-      variance,
+    const variance = this.mean(
+      values.map((value) => Math.pow(value - average, 2)),
     );
+
+    return Math.sqrt(variance);
   }
 
-  private round(
-    value: number,
-  ): number {
-    if (
-      !Number.isFinite(value)
-    ) {
+  private round(value: number): number {
+    if (!Number.isFinite(value)) {
       return 0;
     }
 
-    return Math.round(
-      value * 100,
-    ) / 100;
+    return Math.round(value * 100) / 100;
   }
 }

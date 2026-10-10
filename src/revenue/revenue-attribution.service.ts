@@ -17,15 +17,17 @@ import {
 
 export interface LTVResult {
   source: string;
+  currency: PaymentCurrency;
   userCount: number;
   totalRevenue: number;
   ltv: number;
-  cac: number;
-  paybackPeriod: number;
+  cac: number | null;
+  paybackPeriod: number | null;
 }
 
 export interface AnomalyResult {
   date: string;
+  currency: PaymentCurrency;
   actualRevenue: number;
   expectedRevenue: number;
   deviation: number;
@@ -104,7 +106,6 @@ export class RevenueAttributionService {
     const users = await this.userRepo
       .createQueryBuilder('user')
       .leftJoinAndSelect('user.payments', 'payments')
-      .leftJoinAndSelect('user.userEvents', 'events')
       // fix #2: :date اضافه شد
       .where('user.createdAt >= :date', {
         date: new Date(Date.now() - days * 86400000),
@@ -118,7 +119,6 @@ export class RevenueAttributionService {
         user.acquisitionSource?.trim() ||
         user.metadata?.acquisitionSource?.trim() ||
         'organic';
-      const weight = await this.getSourceWeight(source);
 
       if (!sources[source]) {
         sources[source] = {
@@ -144,41 +144,36 @@ export class RevenueAttributionService {
             Number(payment.amount);
         }
       }
-
-      void weight;
     }
 
     const result: LTVResult[] = [];
+
     for (const [source, data] of Object.entries(sources)) {
-      const cac = await this.getCACForSource(source, days);
-      const avgWeight = await this.getSourceWeight(source);
+      const weight = await this.getSourceWeight(source);
 
-      const ltvByCurrency: Partial<Record<PaymentCurrency, number>> = {};
-
-      let primaryRevenue = 0;
-      let primaryLtv = 0;
+      void weight;
 
       for (const [currency, revenue] of Object.entries(
         data.revenueByCurrency,
       ) as [PaymentCurrency, number][]) {
-        const rawLTV = revenue / data.users;
-        const adjustedLTV = rawLTV * avgWeight;
-        ltvByCurrency[currency] = adjustedLTV;
+        const totalRevenue = Number(revenue);
 
-        if (adjustedLTV > primaryLtv) {
-          primaryLtv = adjustedLTV;
-          primaryRevenue = revenue;
+        if (!Number.isFinite(totalRevenue)) {
+          continue;
         }
-      }
 
-      result.push({
-        source,
-        userCount: data.users,
-        totalRevenue: primaryRevenue,
-        ltv: primaryLtv,
-        cac: cac ?? 0,
-        paybackPeriod: cac && cac > 0 ? primaryLtv / cac : 0,
-      });
+        result.push({
+          source,
+          currency,
+          userCount: data.users,
+          totalRevenue,
+          ltv: data.users > 0 ? totalRevenue / data.users : 0,
+          // ارز و واحد هزینهٔ SEOActivity مشخص نیست.
+          // پس CAC و payback را جعل نمی‌کنیم.
+          cac: null,
+          paybackPeriod: null,
+        });
+      }
     }
 
     return result;
@@ -257,6 +252,7 @@ export class RevenueAttributionService {
    */
   async detectRevenueAnomalies(): Promise<AnomalyResult[]> {
     const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setHours(0, 0, 0, 0);
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
     const dailyRows = await this.paymentRepo
@@ -347,6 +343,7 @@ export class RevenueAttributionService {
 
         results.push({
           date: dateStr,
+          currency,
           actualRevenue,
           expectedRevenue,
           deviation,

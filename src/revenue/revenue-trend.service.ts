@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import jalaliday from 'jalaliday';
 import dayjs from 'dayjs';
-import { Payment } from 'src/payments/entities/payment.entity';
+import { Payment, PaymentCurrency } from 'src/payments/entities/payment.entity';
 
 dayjs.extend(jalaliday);
 
@@ -11,6 +11,7 @@ export interface MonthlyRevenuePoint {
   month: string; // برچسب فارسی شمسی، مثلا «فروردین ۱۴۰۴»
   jy: number;
   jm: number;
+  currency: PaymentCurrency;
   amount: number;
   paymentCount: number;
 }
@@ -58,7 +59,10 @@ export class RevenueTrendService {
    * درآمد ماهانه (شمسی) برای N ماه اخیر.
    * پیش‌فرض ۱۲ ماه — کافی برای نمودار روند سالانه.
    */
-  async getMonthlyTrend(monthsBack = 12): Promise<MonthlyRevenuePoint[]> {
+  async getMonthlyTrend(
+    monthsBack = 12,
+    currency: PaymentCurrency = 'IRT',
+  ): Promise<MonthlyRevenuePoint[]> {
     const since = new Date();
     since.setMonth(since.getMonth() - monthsBack);
 
@@ -72,6 +76,7 @@ export class RevenueTrendService {
         .addSelect('SUM(p.amount)', 'amount')
         .addSelect('COUNT(*)', 'cnt')
         .where('p.status = :status', { status: 'paid' })
+        .andWhere('p.currency = :currency', { currency })
         .andWhere('p.createdAt >= :since', { since })
         .groupBy('DATE(p.createdAt)')
         .getRawMany();
@@ -97,6 +102,7 @@ export class RevenueTrendService {
           month: `${JALALI_MONTH_NAMES[jm - 1]} ${toPersianDigits(jy)}`,
           jy,
           jm,
+          currency,
           amount,
           paymentCount: cnt,
         });
@@ -114,6 +120,7 @@ export class RevenueTrendService {
    */
   async getDailyHistory(
     daysBack = 90,
+    currency: PaymentCurrency = 'IRT',
   ): Promise<{ date: string; amount: number }[]> {
     const since = new Date();
     since.setDate(since.getDate() - daysBack);
@@ -123,14 +130,35 @@ export class RevenueTrendService {
       .select('DATE(p.createdAt)', 'day')
       .addSelect('SUM(p.amount)', 'amount')
       .where('p.status = :status', { status: 'paid' })
+      .andWhere('p.currency = :currency', { currency })
       .andWhere('p.createdAt >= :since', { since })
       .groupBy('DATE(p.createdAt)')
       .orderBy('day', 'ASC')
       .getRawMany();
 
-    return rows.map((r) => ({
-      date: r.day,
-      amount: Math.round(parseFloat(r.amount) || 0),
-    }));
+    const byDate = new Map(
+      rows.map((r) => [String(r.day).slice(0, 10), Number(r.amount) || 0]),
+    );
+
+    const result: { date: string; amount: number }[] = [];
+
+    for (let offset = daysBack - 1; offset >= 0; offset--) {
+      const date = new Date();
+      date.setHours(0, 0, 0, 0);
+      date.setDate(date.getDate() - offset);
+
+      const key = [
+        date.getFullYear(),
+        String(date.getMonth() + 1).padStart(2, '0'),
+        String(date.getDate()).padStart(2, '0'),
+      ].join('-');
+
+      result.push({
+        date: key,
+        amount: Math.round(byDate.get(key) ?? 0),
+      });
+    }
+
+    return result;
   }
 }

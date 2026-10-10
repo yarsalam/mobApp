@@ -54,22 +54,32 @@ export class FeatureStoreRevenueService {
   }
 
   async getUserFeatures(userId: number): Promise<UserRevenueFeatures> {
-    const cached = await this.redis.get(this.cacheKey(userId));
-    if (cached) return JSON.parse(cached);
+    const key = this.cacheKey(userId);
+    const cached = await this.redis.get(key);
+
+    if (cached) {
+      try {
+        return JSON.parse(cached) as UserRevenueFeatures;
+      } catch {
+        this.logger.warn(`Invalid revenue feature cache for user ${userId}`);
+        await this.redis.del(key);
+      }
+    }
 
     const features = await this.buildFeatures(userId);
-    await this.redis.set(
-      this.cacheKey(userId),
-      JSON.stringify(features),
-      this.CACHE_TTL,
-    );
+
+    await this.redis.set(key, JSON.stringify(features), this.CACHE_TTL);
+
     return features;
   }
 
   private async buildFeatures(userId: number): Promise<UserRevenueFeatures> {
     const [user, payments, events] = await Promise.all([
       this.userRepo.findOne({ where: { id: userId } }),
-      this.paymentRepo.find({ where: { userId, status: 'paid' } }),
+      this.paymentRepo.find({
+        where: { userId, status: 'paid', currency: 'IRT' },
+        order: { createdAt: 'ASC' },
+      }),
       this.eventRepo.find({
         where: { userId },
         order: { createdAt: 'DESC' },
@@ -99,7 +109,12 @@ export class FeatureStoreRevenueService {
     }
 
     const firstPayment = payments[0];
-    const ltv = payments.reduce((sum, p) => sum + p.amount, 0);
+
+    const ltv = payments.reduce((sum, payment) => {
+      const amount = Number(payment.amount);
+      return Number.isFinite(amount) && amount > 0 ? sum + amount : sum;
+    }, 0);
+
     const channelType = this.encodeChannel(
       user?.metadata?.acquisitionSource || 'organic',
     );
@@ -215,10 +230,7 @@ export class FeatureStoreRevenueService {
       await this.redis.set(`keyword:${keyword}`, difficulty.toString(), 86400);
       return difficulty;
     } catch {
-      const avg = await this.seoActivityRepo.average(
-        'keywordDifficulty' as any,
-      );
-      return avg || 50;
+      return 50;
     }
   }
 
