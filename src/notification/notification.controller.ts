@@ -17,6 +17,7 @@ import {
   INTERACTION_TYPES,
   SYSTEM_TYPES,
 } from './entities/notification.entity';
+import { BulkNotificationDto } from './dto/bulk-notification.dto';
 
 @Controller('notifications')
 @UseGuards(JwtAuthGuard)
@@ -88,5 +89,15 @@ export class NotificationController {
   async markSystemRead(@GetUser('id') userId: number) {
     await this.notificationService.markAllRead(userId, SYSTEM_TYPES);
     return { success: true };
+  }
+
+  @Post('bulk')
+  @UseGuards(AdminApiGuard)
+  createBulk(@Body() dto: BulkNotificationDto) {
+    return this.notificationService.createNotificationsForUsers(
+      dto.userIds,
+      dto.type,
+      dto.message,
+    );
   }
 }

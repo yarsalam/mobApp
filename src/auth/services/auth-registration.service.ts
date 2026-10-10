@@ -122,7 +122,6 @@ export class AuthRegistrationService {
         });
       }
       t = mark(existingUser ? 'updateUser' : 'createUser', t);
-      console.log('CREATED USER=', user);
       const ci = (req as any).clientInfo || {};
       // deviceId از middleware یا مستقیم از header — RequestHelper تضمین می‌کند
       const deviceId =
@@ -188,22 +187,21 @@ export class AuthRegistrationService {
     const verified =
       (await this.whatsappService.isVerified(phone)) ||
       (await this.telegramService.isVerified(phone));
-    console.log('PHONE=', phone);
-    console.log('verified=', verified);
     if (!verified) {
       throw new UnauthorizedException('تأیید هنوز انجام نشده است');
     }
 
     const user = await this.usersService.findByPhone(phone);
-    console.log('USER=', user);
     if (!user) {
       throw new UnauthorizedException('کاربر در مرحله ۱ ثبت نشده است');
     }
 
     await this.userPhonesService.markAsVerified(user.id, phone);
 
-    const device =
-      await this.userDeviceService.findByClientDeviceId(clientDeviceId);
+    const device = await this.userDeviceService.findByClientDeviceId(
+      user.id,
+      clientDeviceId,
+    );
     if (!device) {
       throw new BadRequestException(
         `دستگاه با شناسه ${clientDeviceId} یافت نشد. آیا step1 با همین X-Device-Id انجام شد؟`,

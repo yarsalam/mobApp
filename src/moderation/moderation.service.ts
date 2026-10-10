@@ -406,15 +406,9 @@ export class ModerationService {
     const raw = value as Record<string, unknown>;
 
     const severity = raw.severity;
-    const allowedSeverities = ['low', 'medium', 'high', 'critical'] as const;
 
-    if (
-      typeof severity !== 'string' ||
-      !allowedSeverities.includes(
-        severity as (typeof allowedSeverities)[number],
-      )
-    ) {
-      throw new Error('Invalid moderation severity');
+    if (!this.isValidSeverity(severity)) {
+      throw new Error(`Invalid moderation severity: ${String(severity)}`);
     }
 
     const confidence = Number(raw.confidence);
@@ -452,6 +446,15 @@ export class ModerationService {
       severity,
       action: this.determineAction({ severity }),
     };
+  }
+
+  private isValidSeverity(
+    value: unknown,
+  ): value is ModerationResult['severity'] {
+    return (
+      typeof value === 'string' &&
+      ['low', 'medium', 'high', 'critical'].includes(value)
+    );
   }
 
   async getUserRiskProfile(userId: number) {

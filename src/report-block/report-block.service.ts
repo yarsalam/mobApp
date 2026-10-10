@@ -90,17 +90,22 @@ export class ReportBlockService {
     return { deleted: true };
   }
 
-  async reportUser(dto: CreateReportDto) {
-    const reporterId = Number(dto.reporterId);
+  async reportUser(dto: CreateReportDto & { reporterId: number }) {
+    const reporterId = dto.reporterId;
+
+    // ✅ حالا TypeScript می‌دونه reporterId از نوع number قطعیه
+    if (
+      typeof reporterId !== 'number' ||
+      !Number.isSafeInteger(reporterId) ||
+      reporterId <= 0
+    ) {
+      throw new BadRequestException('Invalid reporter ID');
+    }
+
     const reportedUserId = Number(dto.reportedUserId);
 
-    if (
-      !Number.isSafeInteger(reporterId) ||
-      reporterId <= 0 ||
-      !Number.isSafeInteger(reportedUserId) ||
-      reportedUserId <= 0
-    ) {
-      throw new BadRequestException('شناسه کاربر معتبر نیست');
+    if (!Number.isSafeInteger(reportedUserId) || reportedUserId <= 0) {
+      throw new BadRequestException('شناسه کاربر گزارش‌شده معتبر نیست');
     }
 
     if (reporterId === reportedUserId) {

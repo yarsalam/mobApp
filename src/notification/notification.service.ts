@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { MoreThan, In, Repository } from 'typeorm';
 import {
@@ -24,6 +24,8 @@ export class NotificationService {
     private readonly orchestrator: NotificationOrchestrator,
   ) {}
 
+  private readonly logger = new Logger(NotificationService.name);
+
   async createNotification(data: {
     user_id: number;
     type: NotificationType;
@@ -38,6 +40,44 @@ export class NotificationService {
     // dispatch به صورت fire-and-forget — ساخت notif را کند نمی‌کند
     this.orchestrator.dispatch(notif).catch(() => {});
     return notif;
+  }
+
+  async createNotificationsForUsers(
+    userIds: number[],
+    type: NotificationType,
+    message: string,
+  ) {
+    // حذف شناسه‌های نامعتبر و تکراری
+    const validUserIds = [
+      ...new Set(userIds.filter((id) => Number.isSafeInteger(id) && id > 0)),
+    ];
+
+    const results = await Promise.allSettled(
+      validUserIds.map((userId) =>
+        this.createNotification({
+          user_id: userId,
+          type,
+          message,
+        }),
+      ),
+    );
+
+    const failedCount = results.filter(
+      (result) => result.status === 'rejected',
+    ).length;
+
+    if (failedCount > 0) {
+      this.logger.warn(
+        `Notification creation failed for ${failedCount} recipients`,
+      );
+    }
+
+    return {
+      requested: userIds.length,
+      attempted: validUserIds.length,
+      succeeded: validUserIds.length - failedCount,
+      failed: failedCount,
+    };
   }
 
   async getUserNotifications(userId: number) {
