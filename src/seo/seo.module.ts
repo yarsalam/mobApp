@@ -43,6 +43,7 @@ import { SeoRecommenderService } from './services/seo-recommender.service';
 import { BacklinkQualityService } from './services/backlink-quality.service';
 import { CampaignUpliftService } from './services/campaign-uplift.service';
 import { AEOTrackerService } from './services/intelligence/aeo-tracker.service';
+import { getExternalHttpOptions } from 'src/config/http-client.config';
 
 @Module({
   imports: [
@@ -56,10 +57,7 @@ import { AEOTrackerService } from './services/intelligence/aeo-tracker.service';
       Interaction,
       Payment,
     ]),
-    HttpModule.register({
-      timeout: 10000,
-      maxRedirects: 5,
-    }),
+    HttpModule.register(getExternalHttpOptions()),
     BullModule.registerQueue({
       name: 'seo-analysis',
     }),

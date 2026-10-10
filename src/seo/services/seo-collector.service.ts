@@ -28,13 +28,21 @@ export class SEOCollectorService {
   async collectAllMetrics() {
     const [technical, user, campaign, competitor, aeo, recommender, backlink] =
       await Promise.all([
-        this.technicalService.analyzeTechnicalSEO(),
-        this.userService.analyzeUserSignals(),
-        this.campaignService.analyzeCampaigns(),
-        this.competitorService.analyzeCompetitors(),
-        this.collectAEOMetrics(),
-        this.collectRecommenderMetrics(),
-        this.collectBacklinkMetrics(),
+        this.collectSafely('technical', () =>
+          this.technicalService.analyzeTechnicalSEO(),
+        ),
+        this.collectSafely('user', () => this.userService.analyzeUserSignals()),
+        this.collectSafely('campaign', () =>
+          this.campaignService.analyzeCampaigns(),
+        ),
+        this.collectSafely('competitor', () =>
+          this.competitorService.analyzeCompetitors(),
+        ),
+        this.collectSafely('aeo', () => this.collectAEOMetrics()),
+        this.collectSafely('recommender', () =>
+          this.collectRecommenderMetrics(),
+        ),
+        this.collectSafely('backlink', () => this.collectBacklinkMetrics()),
       ]);
 
     return {
@@ -45,7 +53,15 @@ export class SEOCollectorService {
       aeo,
       recommender,
       backlink,
-      collectedAt: new Date(),
+      collectedAt: new Date().toISOString(),
+      partial:
+        technical === null ||
+        user === null ||
+        campaign === null ||
+        competitor === null ||
+        aeo === null ||
+        recommender === null ||
+        backlink === null,
     };
   }
 
@@ -88,5 +104,20 @@ export class SEOCollectorService {
     this.logger.debug(`Feed metrics for user ${userId}: ${feedLength} items`);
     // TODO: ذخیره در دیتابیس
     return Promise.resolve();
+  }
+
+  private async collectSafely<T>(
+    name: string,
+    task: () => Promise<T>,
+  ): Promise<T | null> {
+    try {
+      return await task();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      this.logger.warn(`SEO collection failed [${name}]: ${message}`);
+
+      return null;
+    }
   }
 }
