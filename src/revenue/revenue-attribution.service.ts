@@ -263,40 +263,82 @@ export class RevenueAttributionService {
    */
   async predictLTV(userId: number): Promise<number> {
     try {
-      const aiRevenueUrl = this.configService.get(
-        'AI_REVENUE_URL',
-        'http://ai_revenue:8006',
-      );
-      const features = await this.featureStore.getUserFeatures(userId);
-      const response = await firstValueFrom(
-        // fix #6: backtick اضافه شد
-        this.httpService.post(`${aiRevenueUrl}/predict/ltv`, {
-          userId,
-          features,
-        }),
-      );
-      return response.data.predicted_ltv;
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      this.logger.error('ML prediction failed, using fallback: ' + message);
+      const aiRevenueUrl = this.configService
+        .get<string>('AI_REVENUE_URL', 'http://ai_revenue:8006')
+        .replace(/\/+$/, '');
 
-      const user = await this.userRepo.findOne({ where: { id: userId } });
+      const configuredTimeout = Number(
+        this.configService.get<string | number>('AI_REVENUE_TIMEOUT_MS', 5000),
+      );
+
+      const timeout =
+        Number.isSafeInteger(configuredTimeout) && configuredTimeout > 0
+          ? configuredTimeout
+          : 5000;
+
+      const features = await this.featureStore.getUserFeatures(userId);
+
+      const response = await firstValueFrom(
+        this.httpService.post(
+          `${aiRevenueUrl}/predict/ltv`,
+          { userId, features },
+          { timeout },
+        ),
+      );
+
+      const predictedLtv: unknown = response.data?.predicted_ltv;
+
+      if (
+        typeof predictedLtv !== 'number' ||
+        !Number.isFinite(predictedLtv) ||
+        predictedLtv < 0
+      ) {
+        throw new Error('AI service returned an invalid predicted_ltv');
+      }
+
+      return predictedLtv;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      this.logger.error(`ML prediction failed, using fallback: ${message}`);
+
+      const user = await this.userRepo.findOne({
+        where: { id: userId },
+      });
+
       if (!user) return 0;
 
-      const similarUsers = await this.userRepo
+      const query = this.userRepo
         .createQueryBuilder('user')
         .leftJoinAndSelect('user.payments', 'payments')
-        // fix #3: :city اضافه شد
-        .where('user.city = :city', { city: user.city })
-        // fix #4: :gender اضافه شد
-        .andWhere('user.gender = :gender', { gender: user.gender })
-        .getMany();
+        .where('user.id != :userId', { userId });
+
+      if (user.city) {
+        query.andWhere('user.city = :city', { city: user.city });
+      } else {
+        query.andWhere('user.city IS NULL');
+      }
+
+      if (user.gender) {
+        query.andWhere('user.gender = :gender', {
+          gender: user.gender,
+        });
+      } else {
+        query.andWhere('user.gender IS NULL');
+      }
+
+      const similarUsers = await query.getMany();
 
       if (similarUsers.length === 0) return 150;
 
-      const totalLTV = similarUsers.reduce((sum, u) => {
+      const totalLTV = similarUsers.reduce((sum, similarUser) => {
         const userRevenue =
-          u.payments?.reduce((s, p) => s + Number(p.amount), 0) || 0;
+          similarUser.payments
+            ?.filter((payment) => payment.status === 'paid')
+            .reduce((paymentSum, payment) => {
+              return paymentSum + Number(payment.amount);
+            }, 0) ?? 0;
+
         return sum + userRevenue;
       }, 0);
 

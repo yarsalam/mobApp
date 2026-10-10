@@ -84,6 +84,20 @@ export class SEOController {
       seoScore: score.effective || 0,
     });
 
+    const userCount =
+      metrics?.user?.topCities?.reduce(
+        (sum, city) => sum + Number(city.count || 0),
+        0,
+      ) ?? 0;
+
+    const totalRevenue = Number(metrics?.campaign?.totalRevenue ?? 0);
+    const revenuePerUser = userCount > 0 ? totalRevenue / userCount : 0;
+    const averageLTV =
+      attribution.length > 0
+        ? attribution.reduce((sum, item) => sum + item.ltv, 0) /
+          attribution.length
+        : 0;
+
     // پیش‌بینی‌ها از AI (اگه فعال باشه)
     let forecast = null;
     const aiUrl = this.configService.get('AI_SEO_URL');
@@ -98,29 +112,19 @@ export class SEOController {
         // ignore
       }
     }
-
-    const userCount =
-      metrics?.user?.topCities?.reduce((sum, city) => sum + city.count, 0) ?? 0;
-    const totalRevenue = metrics?.campaign?.totalRevenue ?? 0;
-    const revenuePerUser = userCount > 0 ? totalRevenue / userCount : 0;
-
     return {
       success: true,
       data: {
         summary: {
-          totalRevenue: metrics?.campaign?.totalRevenue || 0,
+          totalRevenue,
           seoScore: score.effective || 0,
           growthRate: metrics?.campaign?.growthRate || 0,
           revenuePerUser,
         },
         attribution: {
           bySource: attribution,
-          bestSource: attribution.sort((a, b) => b.ltv - a.ltv)[0],
-          averageLTV:
-            attribution.length > 0
-              ? attribution.reduce((sum, a) => sum + a.ltv, 0) /
-                attribution.length
-              : 0,
+          bestSource: [...attribution].sort((a, b) => b.ltv - a.ltv)[0] ?? null,
+          averageLTV,
         },
         forecast: forecast || {
           nextMonth: (metrics?.campaign?.totalRevenue ?? 0) * 1.1,
