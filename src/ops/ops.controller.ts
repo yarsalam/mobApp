@@ -61,10 +61,10 @@ export class OpsController {
       latencyMs: s.latencyMs,
       error: s.error ?? null,
       // فیلدهای زیر از خود /health سرویس Python می‌آیند
-      lastRun: s.status?.last_run ?? null,
-      accuracy: s.status?.accuracy ?? null,
-      modelVer: s.status?.model_version ?? null,
-      queueDepth: s.status?.queue_depth ?? null,
+      lastRun: s.detail?.last_run ?? null,
+      accuracy: s.detail?.accuracy ?? null,
+      modelVer: s.detail?.model_version ?? null,
+      queueDepth: s.detail?.queue_depth ?? null,
     }));
   }
 
@@ -82,10 +82,13 @@ export class OpsController {
       this.health.checkAIServices(),
     ]);
 
-    const ml = aiServices['ml_service']?.status !== 'down';
-    const mod = aiServices['moderation']?.status !== 'down';
-    const emb = aiServices['embedded_ai']?.status !== 'down';
-    const per = aiServices['personality']?.status !== 'down';
+    const isAvailable = (name: string): boolean =>
+      ['healthy', 'degraded', 'critical'].includes(aiServices[name]?.status);
+
+    const ml = isAvailable('ml_service');
+    const mod = isAvailable('moderation');
+    const emb = isAvailable('embedded_ai');
+    const per = isAvailable('personality');
 
     const flows = [
       {
