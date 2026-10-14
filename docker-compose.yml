@@ -1,3 +1,5 @@
+# Host-published ports are bound to IPv4 loopback for local access/reverse-proxy use only.
+# Container-to-container traffic should use service names on yarsalam_network.
 networks:
   ai_network:
     driver: bridge
@@ -30,7 +32,7 @@ services:
     container_name: redis_cache
     restart: unless-stopped
     ports:
-      - "6380:6379"
+      - "127.0.0.1:6380:6379"
     volumes:
       - redis_data:/data
     networks:
@@ -52,7 +54,7 @@ services:
       MYSQL_PASSWORD: apppassword
       MYSQL_ROOT_HOST: '%'
     ports:
-      - "3307:3306"
+      - "127.0.0.1:3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
       - ./mysql-init:/docker-entrypoint-initdb.d
@@ -79,7 +81,7 @@ services:
       dockerfile: Dockerfile.dev
     container_name: backend
     ports:
-      - "5001:5000"
+      - "127.0.0.1:5001:5000"
     volumes:
       - .:/app:delegated
       - ./public:/app/public:delegated
@@ -152,7 +154,7 @@ services:
         wheels: ./python-ai/downloaded_wheels 
     container_name: ai_ops
     ports:
-      - "8025:8025"
+      - "127.0.0.1:8025:8025"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -178,7 +180,7 @@ services:
     build: ./python-ai/services/ai_feedback
     container_name: ai_feedback
     ports:
-      - "8005:8004"
+      - "127.0.0.1:8005:8004"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -201,7 +203,7 @@ services:
     build: ./python-ai/services/ai_seo
     container_name: ai_seo
     ports:
-      - "8021:8021"
+      - "127.0.0.1:8021:8021"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -224,7 +226,7 @@ services:
     build: ./python-ai/services/ai_monetization
     container_name: ai_monetization
     ports:
-      - "8015:8015"
+      - "127.0.0.1:8015:8015"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -248,7 +250,7 @@ services:
     build: ./python-ai/services/ai_revenue
     container_name: ai_revenue
     ports:
-      - "8006:8000"
+      - "127.0.0.1:8006:8000"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -272,7 +274,7 @@ services:
     build: ./python-ai/services/ai_assistant
     container_name: ai_assistant
     ports:
-      - "8022:8022"
+      - "127.0.0.1:8022:8022"
     environment:
       - REDIS_URL=redis://redis:6379/0
       - MODEL_CACHE=/app/models
@@ -297,7 +299,7 @@ services:
         wheels: ./python-ai/downloaded_wheels
     container_name: ai_moderation
     ports:
-      - "8018:8018"
+      - "127.0.0.1:8018:8018"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -320,7 +322,7 @@ services:
     build: ./python-ai/services/ai_verification
     container_name: ai_verification
     ports:
-      - "8017:8017"
+      - "127.0.0.1:8017:8017"
     environment:
       - MODEL_CACHE=/app/models
     volumes:
@@ -340,7 +342,7 @@ services:
     build: ./python-ai/services/embedded_ai
     container_name: embedded_ai
     ports:
-      - "8104:8100"
+      - "127.0.0.1:8104:8100"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -368,7 +370,7 @@ services:
     build: ./python-ai/services/ml_service
     container_name: ml_service
     ports:
-      - "8007:8000"
+      - "127.0.0.1:8007:8000"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -394,7 +396,7 @@ services:
     container_name: phpmyadmin
     restart: unless-stopped
     ports:
-      - "8082:80"
+      - "127.0.0.1:8082:80"
     environment:
       PMA_HOST: user-mysql
       PMA_PORT: 3306
@@ -411,7 +413,7 @@ services:
   qdrant:
     image: qdrant/qdrant:latest
     ports:
-      - "6333:6333"
+      - "127.0.0.1:6333:6333"
     volumes:
       - qdrant_data:/qdrant/storage
     networks:
@@ -427,7 +429,7 @@ services:
       additional_contexts:
         wheels: ./python-ai/downloaded_wheels
     ports:
-      - "8031:8031"
+      - "127.0.0.1:8031:8031"
     env_file:
       - .env
     networks:
@@ -439,7 +441,7 @@ services:
       additional_contexts:
         wheels: ./python-ai/downloaded_wheels
     ports:
-      - "8032:8032"
+      - "127.0.0.1:8032:8032"
     env_file:
       - .env
     networks:
@@ -451,7 +453,7 @@ services:
       additional_contexts:
         wheels: ./python-ai/downloaded_wheels
     ports:
-      - "8033:8033"
+      - "127.0.0.1:8033:8033"
     env_file:
       - .env
     networks:
@@ -461,7 +463,7 @@ services:
     build: ./python-ai/services/personality
     container_name: personality
     ports:
-      - "8101:8100"
+      - "127.0.0.1:8101:8100"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -484,7 +486,7 @@ services:
         wheels: ./python-ai/downloaded_wheels
     container_name: ai_image
     ports:
-      - "8102:8100"
+      - "127.0.0.1:8102:8100"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -499,7 +501,7 @@ services:
     build: ./python-ai/services/ai_support
     container_name: ai_support
     ports:
-      - "8016:8016"
+      - "127.0.0.1:8016:8016"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -519,7 +521,7 @@ services:
       additional_contexts:
         wheels: ./python-ai/downloaded_wheels
     ports:
-      - "8030:8030"
+      - "127.0.0.1:8030:8030"
     env_file:
       - .env
     depends_on:
