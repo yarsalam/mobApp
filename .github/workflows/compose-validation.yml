@@ -1,0 +1,39 @@
+name: Compose configuration validation
+
+on:
+  pull_request:
+    paths:
+      - "docker-compose.yml"
+      - "docker-compose.production.yml"
+      - ".env.example"
+      - ".env.production.example"
+      - ".github/workflows/compose-validation.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docker-compose.yml"
+      - "docker-compose.production.yml"
+      - ".env.example"
+      - ".env.production.example"
+      - ".github/workflows/compose-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  compose-config:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare example environment files
+        run: |
+          cp .env.example .env
+          cp .env.production.example .env.production
+
+      - name: Validate development Compose configuration
+        run: docker compose -f docker-compose.yml config --quiet
+
+      - name: Validate production Compose overlay
+        run: docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.production.yml config --quiet
