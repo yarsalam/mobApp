@@ -16,6 +16,7 @@ volumes:
   assistant_models:
   moderation_models:
   verification_models:
+  personality_models:
   support_models:
   ml_models:
 
@@ -339,7 +340,7 @@ services:
     build: ./python-ai/services/embedded_ai
     container_name: embedded_ai
     ports:
-      - "8104:8104"
+      - "8104:8100"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -464,6 +465,11 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - HF_HOME=/models/huggingface
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+    volumes:
+      - personality_models:/models
     depends_on:
       redis:
         condition: service_healthy
