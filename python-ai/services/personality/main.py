@@ -20,13 +20,27 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_event_loop()
 
     def _load():
-        from transformers import pipeline
-
-        _models["sentiment"] = pipeline("sentiment-analysis")
-        _models["emotion"] = pipeline(
-            "text-classification",
-            model="j-hartmann/emotion-english-distilroberta-base",
+        from transformers import (
+            AutoTokenizer,
+            AutoModelForSequenceClassification,
+            pipeline,
         )
+
+        def load_local_model(path: str):
+            tokenizer = AutoTokenizer.from_pretrained(
+                path, local_files_only=True
+            )
+            model = AutoModelForSequenceClassification.from_pretrained(
+                path, local_files_only=True
+            )
+            return pipeline(
+                "text-classification",
+                model=model,
+                tokenizer=tokenizer,
+            )
+
+        _models["sentiment"] = load_local_model("/models/sentiment")
+        _models["emotion"] = load_local_model("/models/emotion")
         logger.info("Personality models loaded")
 
     await loop.run_in_executor(None, _load)
