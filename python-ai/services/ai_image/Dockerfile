@@ -2,10 +2,9 @@ FROM python-ai-tf-pillow:latest
 
 WORKDIR /app
 
-# wheels از additional_contexts
-COPY --from=wheels / /tmp/wheels
-
-RUN pip install --no-index --find-links=/tmp/wheels nudenet
+# wheels از additional_contexts; mount avoids copying the wheelhouse into an image layer.
+RUN --mount=type=bind,from=wheels,source=.,target=/wheels \
+    pip install --no-index --find-links=/wheels nudenet
 
 COPY . .
 

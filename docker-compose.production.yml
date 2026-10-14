@@ -1,0 +1,97 @@
+# Production overlay. Requires Docker Compose v2.24.4+ for !override.
+# Start with:
+# docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.production.yml up -d --build
+#
+# Only the NestJS API is published to host loopback for a reverse proxy running on the host.
+# All databases, admin tools, vector DB and AI services remain reachable only on the Docker network.
+
+services:
+  redis:
+    ports: !override []
+
+  user-mysql:
+    ports: !override []
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env.production}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-yarsalam}
+      MYSQL_USER: ${MYSQL_USER:-appuser}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env.production}
+      MYSQL_ROOT_HOST: localhost
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$${MYSQL_ROOT_PASSWORD} --silent || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 80s
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports: !override
+      - "127.0.0.1:5001:5000"
+    volumes: !override
+      - ./public:/app/public
+    env_file: !override
+      - .env.production
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      DB_HOST: user-mysql
+      DB_PORT: 3306
+      DB_USER: ${MYSQL_USER:-appuser}
+      DB_PASS: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env.production}
+      DB_NAME: ${MYSQL_DATABASE:-yarsalam}
+      DB_SYNC: "false"
+    extra_hosts: !override []
+
+  ai_ops:
+    ports: !override []
+  ai_feedback:
+    ports: !override []
+  ai_seo:
+    ports: !override []
+  ai_monetization:
+    ports: !override []
+  ai_revenue:
+    ports: !override []
+  ai_assistant:
+    ports: !override []
+  ai_moderation:
+    ports: !override []
+  ai_verification:
+    ports: !override []
+  embedded_ai:
+    ports: !override []
+  ml_service:
+    ports: !override []
+  phpmyadmin:
+    profiles: !override ["dev-tools"]
+    ports: !override []
+  qdrant:
+    ports: !override []
+  ai_uplift:
+    ports: !override []
+    env_file: !override
+      - .env.production
+  ai_backlink_quality:
+    ports: !override []
+    env_file: !override
+      - .env.production
+  ai_seo_recommender:
+    ports: !override []
+    env_file: !override
+      - .env.production
+  personality:
+    ports: !override []
+  ai_image:
+    ports: !override []
+  ai_support:
+    ports: !override []
+  aeo_tracker:
+    ports: !override []
+    env_file: !override
+      - .env.production
