@@ -1,0 +1,44 @@
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+!.env.production.example
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.backup
+
+# Node.js / build output
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Local IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Runtime user uploads: never commit user photos or private media
+public/uploads/
+public/user-uploads/
+public/profile-photos/
+public/avatars/
+uploads/
+
+# Local model/cache artifacts
+models/
+model_cache/
