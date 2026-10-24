@@ -48,11 +48,11 @@ services:
     container_name: user_mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
       MYSQL_DATABASE: yarsalam
-      MYSQL_USER: appuser
-      MYSQL_PASSWORD: apppassword
-      MYSQL_ROOT_HOST: '%'
+      MYSQL_USER: ${DB_USER:-appuser}
+      MYSQL_PASSWORD: ${DB_PASS:?Set DB_PASS in .env}
+      MYSQL_ROOT_HOST: localhost
     ports:
       - "127.0.0.1:3307:3306"
     volumes:
@@ -65,7 +65,7 @@ services:
     networks:
       - ai_network
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -proot123 || exit 1"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p${MYSQL_ROOT_PASSWORD} --silent || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -92,8 +92,8 @@ services:
       - REDIS_PORT=6379
       - DB_HOST=user-mysql
       - DB_PORT=3306
-      - DB_USER=root
-      - DB_PASS=root123
+      - DB_USER=${DB_USER:-appuser}
+      - DB_PASS=${DB_PASS:?Set DB_PASS in .env}
       - DB_NAME=yarsalam
     depends_on:
       redis:
