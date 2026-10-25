@@ -55,50 +55,88 @@ services:
         condition: service_healthy
     extra_hosts: !override []
 
+  whatsapp_listener:
+    profiles: !override ["optional-whatsapp"]
+    ports: !override []
+
   ai_ops:
+    profiles: !override ["ai-ops"]
     ports: !override []
   ai_feedback:
+    profiles: !override ["ai-feedback"]
     ports: !override []
   ai_seo:
+    profiles: !override ["ai-seo"]
     ports: !override []
   ai_monetization:
+    profiles: !override ["ai-monetization"]
     ports: !override []
   ai_revenue:
+    profiles: !override ["ai-revenue"]
     ports: !override []
   ai_assistant:
+    profiles: !override ["ai-assistant"]
     ports: !override []
   ai_moderation:
+    profiles: !override ["ai-moderation"]
     ports: !override []
   ai_verification:
+    profiles: !override ["ai-verification"]
     ports: !override []
   embedded_ai:
+    profiles: !override ["embedded-ai"]
     ports: !override []
   ml_service:
+    profiles: !override ["ml-service"]
     ports: !override []
   phpmyadmin:
     profiles: !override ["dev-tools"]
     ports: !override []
   qdrant:
+    profiles: !override ["ai-vector"]
+    mem_limit: 1g
+    cpus: 0.50
     ports: !override []
   ai_uplift:
+    profiles: !override ["ai-uplift"]
+    mem_limit: 768m
+    cpus: 0.50
     ports: !override []
     env_file: !override
       - .env.production
   ai_backlink_quality:
+    profiles: !override ["ai-backlink-quality"]
+    mem_limit: 512m
+    cpus: 0.50
     ports: !override []
     env_file: !override
       - .env.production
   ai_seo_recommender:
+    profiles: !override ["ai-seo-recommender"]
+    mem_limit: 768m
+    cpus: 0.50
     ports: !override []
     env_file: !override
       - .env.production
   personality:
+    profiles: !override ["ai-personality"]
+    mem_limit: 768m
+    cpus: 0.50
     ports: !override []
   ai_image:
+    profiles: !override ["ai-image"]
+    mem_limit: 2g
+    cpus: 1.00
     ports: !override []
   ai_support:
+    profiles: !override ["ai-support"]
+    mem_limit: 768m
+    cpus: 0.50
     ports: !override []
   aeo_tracker:
+    profiles: !override ["aeo-tracker"]
+    mem_limit: 512m
+    cpus: 0.50
     ports: !override []
     env_file: !override
       - .env.production
