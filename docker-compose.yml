@@ -100,6 +100,8 @@ services:
         condition: service_healthy
       user-mysql:
         condition: service_healthy
+      qdrant:
+        condition: service_healthy
     networks:
       - ai_network
     extra_hosts:
@@ -417,7 +419,15 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     networks:
-      - ai_network  
+      - ai_network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "bash -ec 'exec 3<>/dev/tcp/127.0.0.1/6333; printf \"GET /readyz HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n\" >&3; head -n 1 <&3 | grep -q \"200 OK\"'"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
 
   # ============================================
   # سرویس‌های پایتون - دسته seo
