@@ -1,0 +1,45 @@
+# Dependencies and generated output
+node_modules/
+dist/
+**/node_modules/
+**/dist/
+venv/
+**/venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Python AI services, models and datasets are not part of the Node backend image
+python-ai/
+dataset/
+checkpoints/
+models/
+downloaded_wheels/
+*.whl
+*.egg-info
+*.pkl
+*.pt
+*.h5
+*.ckpt
+
+# Secrets and environment files
+.env
+.env.*
+!.env.example
+!.env.production.example
+*.pem
+*.key
+seo-credentials/
+
+# Git, logs, caches and local editor files
+.git/
+.cache/
+*.log
+*.bak
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Compose files are not needed to build the backend image
+docker-compose*.yml
+docker-compose*.yaml
