@@ -1,0 +1,35 @@
+# Never send secrets or local environment files to the Docker build context.
+.env
+.env.*
+!.env.example
+!.env.production.example
+*.pem
+*.key
+secrets/
+
+# Local/development artifacts.
+.git/
+.gitignore
+node_modules/
+**/node_modules/
+coverage/
+.nyc_output/
+*.log
+*.tsbuildinfo
+.DS_Store
+.idea/
+.vscode/
+
+# Test suites and documentation are not needed to build the production runtime.
+test/
+**/test/
+**/*.spec.ts
+**/*.e2e-spec.ts
+docs/
+*.md
+
+# Other applications/services are built and released independently.
+python-ai/
+whatsapp_listener/
+docker-compose*.yml
+Dockerfile.dev
