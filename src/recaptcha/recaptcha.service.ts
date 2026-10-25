@@ -3,20 +3,22 @@ import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class RecaptchaService {
-  private readonly recaptchaSecret: string;
-
-  constructor(private readonly configService: ConfigService) {
-    this.recaptchaSecret = process.env.RECAPTCHA_SECRET_KEY ?? '';
-
-    if (!this.recaptchaSecret) {
-      throw new Error('❌ مقدار RECAPTCHA_SECRET_KEY در .env تنظیم نشده است!');
-    }
-  }
+  constructor(private readonly configService: ConfigService) {}
 
   async validateRecaptcha(token: string): Promise<boolean> {
-    const url = `https://www.google.com/recaptcha/api/siteverify`;
+    const secret =
+      this.configService.get<string>('RECAPTCHA_SECRET_KEY') ??
+      process.env.RECAPTCHA_SECRET_KEY;
+
+    // Do not prevent the entire API from starting when reCAPTCHA is not
+    // configured. Validation remains fail-closed whenever this method is used.
+    if (!secret) {
+      throw new Error('RECAPTCHA_SECRET_KEY is not configured.');
+    }
+
+    const url = 'https://www.google.com/recaptcha/api/siteverify';
     const params = new URLSearchParams();
-    params.append('secret', this.recaptchaSecret);
+    params.append('secret', secret);
     params.append('response', token);
 
     const response = await fetch(url, {

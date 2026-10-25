@@ -46,6 +46,13 @@ services:
       DB_PASS: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env.production}
       DB_NAME: ${MYSQL_DATABASE:-yarsalam}
       DB_SYNC: "false"
+    depends_on:
+      redis:
+        condition: service_healthy
+      user-mysql:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
     extra_hosts: !override []
 
   ai_ops:
