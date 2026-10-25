@@ -1,10 +1,9 @@
-FROM node:20 AS builder
+FROM node:20-bookworm-slim AS builder
 
 WORKDIR /app
 
-# برای build sharp
-RUN apt-get update && apt-get install -y \
-  libvips-dev \
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends libvips-dev \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
@@ -13,21 +12,29 @@ RUN npm ci --legacy-peer-deps
 COPY . .
 RUN npm run build
 
+# Keep only production dependencies in the runtime node_modules.
+RUN npm prune --omit=dev --legacy-peer-deps
 
-FROM node:20-slim AS runner
+
+FROM node:20-bookworm-slim AS runner
+
+ENV NODE_ENV=production
+ENV PORT=5000
 
 WORKDIR /app
 
-# runtime dependency sharp
-RUN apt-get update && apt-get install -y \
-  libvips \
-  && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends libvips42 \
+  && rm -rf /var/lib/apt/lists/* \
+  && mkdir -p /app/public \
+  && chown node:node /app /app/public
 
-COPY --from=builder /app/package*.json ./
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/dist ./dist
+COPY --from=builder --chown=node:node /app/package*.json ./
+COPY --from=builder --chown=node:node /app/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/dist ./dist
+COPY --from=builder --chown=node:node /app/public ./public
 
-ENV NODE_ENV=production
+USER node
+
 EXPOSE 5000
-
 CMD ["node", "dist/main.js"]
