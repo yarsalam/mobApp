@@ -69,9 +69,11 @@ def _get_sentiment_model():
         try:
             from transformers import pipeline
 
+            model_path = os.getenv("MODEL_PATH", "/app/models")
             _SENTIMENT_MODEL = pipeline(
                 "sentiment-analysis",
-                model="/app/models",
+                model=model_path,
+                local_files_only=os.getenv("TRANSFORMERS_OFFLINE", "1") == "1",
             )
             logger.info("Farsi sentiment model loaded")
         except Exception as exc:
