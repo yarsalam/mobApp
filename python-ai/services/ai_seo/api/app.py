@@ -4,7 +4,16 @@ from typing import Dict, List
 
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from api.url_audit import (
+    AuditFetchError,
+    AuditNotHTMLResponseError,
+    AuditResponseTooLargeError,
+    AuditTimeoutError,
+    UnsafeTargetError,
+    audit_public_url,
+)
 
 from core.predictive.predictive_seo import PredictiveSEOEngine
 from core.self_learning_engine import SelfLearningSEOEngine
@@ -25,6 +34,10 @@ class TrafficRequest(BaseModel):
     days: int = 90
 
 
+class URLAuditRequest(BaseModel):
+    url: str = Field(..., min_length=8, max_length=2048)
+
+
 @app.post("/predict/traffic")
 async def predict_traffic(request: TrafficRequest):
     try:
@@ -41,6 +54,23 @@ async def predict_traffic(request: TrafficRequest):
     except Exception as exc:
         logger.error("Prediction failed: %s", exc)
         raise HTTPException(500, str(exc))
+
+
+@app.post("/audit/url")
+async def audit_site_url(request: URLAuditRequest):
+    """Run bounded technical HTML checks on a public URL; not a ranking prediction."""
+    try:
+        return await audit_public_url(request.url)
+    except UnsafeTargetError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except AuditResponseTooLargeError as exc:
+        raise HTTPException(413, str(exc)) from exc
+    except AuditNotHTMLResponseError as exc:
+        raise HTTPException(415, str(exc)) from exc
+    except AuditTimeoutError as exc:
+        raise HTTPException(504, str(exc)) from exc
+    except AuditFetchError as exc:
+        raise HTTPException(502, str(exc)) from exc
 
 
 @app.post("/feedback/campaign")
@@ -77,5 +107,5 @@ async def root():
     return {
         "name": "AI SEO Service",
         "version": "1.0.0",
-        "endpoints": ["/health", "/predict/traffic", "/feedback/campaign"],
+        "endpoints": ["/health", "/predict/traffic", "/audit/url", "/feedback/campaign"],
     }
