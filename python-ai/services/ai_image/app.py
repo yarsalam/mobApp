@@ -108,11 +108,8 @@ async def _process_background(image_data: bytes, job_id: str) -> None:
 
 @app.post("/image/upload")
 async def upload_image(
-    file: UploadFile = File(...), background_tasks: BackgroundTasks = None
+    background_tasks: BackgroundTasks, file: UploadFile = File(...)
 ):
-    if background_tasks is None:
-        raise HTTPException(500, "Background processing is unavailable")
-
     contents = await _read_valid_image(file)
     cleaned = exif_cleaner.clean(contents)
     if cleaned is None:
@@ -166,7 +163,13 @@ async def get_status(filename: str):
 @app.post("/image/analyze")
 async def analyze_image(file: UploadFile = File(...)):
     data = await _read_valid_image(file)
-    enhanced = enhance_image(data)
+    cleaned = exif_cleaner.clean(data)
+    if cleaned is None:
+        raise HTTPException(400, "Image could not be processed safely")
+    nsfw_result = nsfw_detector.predict(cleaned)
+    if nsfw_result.get("is_nsfw", False):
+        raise HTTPException(400, "NSFW image detected")
+    enhanced = enhance_image(cleaned)
     face_data = analyze_face(enhanced)
     quality = get_quality_score(enhanced)
     return {"status": "success", "quality_score": quality, "faces": face_data}
