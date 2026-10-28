@@ -34,8 +34,14 @@ def _get_sentiment_pipeline():
         try:
             from transformers import pipeline as hf_pipeline
 
+            sentiment_model = os.getenv(
+                "SENTIMENT_MODEL",
+                "HooshvareLab/bert-fa-base-uncased-sentiment-snappfood",
+            )
             _sentiment_pipeline = hf_pipeline(
-                "sentiment-analysis", model="distilbert-base-uncased"
+                "sentiment-analysis",
+                model=sentiment_model,
+                local_files_only=os.getenv("TRANSFORMERS_OFFLINE", "0") == "1",
             )
         except Exception as exc:
             logger.warning("Sentiment model not available: %s", exc)
