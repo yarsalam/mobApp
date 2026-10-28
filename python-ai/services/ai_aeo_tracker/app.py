@@ -26,6 +26,8 @@ class MentionRequest(BaseModel):
 
 @app.post("/check-mentions")
 async def check_mentions(req: MentionRequest):
+    if not os.getenv("OPENAI_API_KEY"):
+        raise HTTPException(503, "AEO provider is not configured; set OPENAI_API_KEY")
     try:
         results = await tracker.check_mentions(req.brand, req.prompts, req.persist)
         mention_rate = sum(1 for r in results if r.get("mentioned")) / len(results)
