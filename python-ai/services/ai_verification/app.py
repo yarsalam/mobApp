@@ -19,6 +19,7 @@ app = FastAPI(title="AI Verification Service", version="1.1.0")
 verifier = FaceVerifier()
 
 MAX_FILE_SIZE = int(os.getenv("MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))
+MAX_IMAGE_PIXELS = int(os.getenv("MAX_IMAGE_PIXELS", "40000000"))
 
 
 async def _read_valid_image(file: UploadFile) -> bytes:
@@ -33,8 +34,13 @@ async def _read_valid_image(file: UploadFile) -> bytes:
 
     try:
         with Image.open(io.BytesIO(contents)) as image:
+            width, height = image.size
+            if width <= 0 or height <= 0 or width * height > MAX_IMAGE_PIXELS:
+                raise HTTPException(413, f"تعداد پیکسل‌های تصویر بیش از حد مجاز است ({MAX_IMAGE_PIXELS})")
             image.verify()
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
+    except HTTPException:
+        raise
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
         raise HTTPException(415, f"فایل {file.filename} تصویر معتبر نیست") from exc
     return contents
 
