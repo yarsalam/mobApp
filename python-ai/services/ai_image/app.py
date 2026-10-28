@@ -26,6 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))
+MAX_IMAGE_PIXELS = int(os.getenv("MAX_IMAGE_PIXELS", "40000000"))
 JOB_TTL_SECONDS = int(os.getenv("IMAGE_JOB_TTL_SECONDS", "86400"))
 JOB_KEY_PREFIX = "ai_image:job:"
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
@@ -60,8 +61,13 @@ async def _read_valid_image(file: UploadFile) -> bytes:
 
     try:
         with Image.open(io.BytesIO(contents)) as image:
+            width, height = image.size
+            if width <= 0 or height <= 0 or width * height > MAX_IMAGE_PIXELS:
+                raise HTTPException(413, f"Image pixel count exceeds {MAX_IMAGE_PIXELS}")
             image.verify()
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
+    except HTTPException:
+        raise
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
         raise HTTPException(415, "فرمت یا محتوای تصویر معتبر نیست") from exc
 
     return contents
