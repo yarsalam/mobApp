@@ -1,7 +1,10 @@
+import asyncio
 import logging
+import os
 from typing import List
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from core.aeo_tracker import AEOVisibilityTracker
@@ -46,4 +49,27 @@ async def get_history(brand: str):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "redis_connected": tracker._redis is not None}
+    redis_connected = False
+    if tracker._redis is not None:
+        try:
+            redis_connected = bool(await asyncio.to_thread(tracker._redis.ping))
+        except Exception:
+            redis_connected = False
+
+    provider_configured = bool(os.getenv("OPENAI_API_KEY"))
+    if provider_configured and redis_connected:
+        status, status_code = "healthy", 200
+    elif provider_configured:
+        # AEO requests can still run without Redis, but caching/history degrade.
+        status, status_code = "degraded", 200
+    else:
+        status, status_code = "unavailable", 503
+
+    payload = {
+        "status": status,
+        "service": "aeo_tracker",
+        "provider": "openai",
+        "provider_configured": provider_configured,
+        "redis_connected": redis_connected,
+    }
+    return JSONResponse(content=payload, status_code=status_code)
