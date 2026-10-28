@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Dict, List
 
 from fastapi import FastAPI, HTTPException, Body
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from core.predictive.predictive_seo import PredictiveSEOEngine
@@ -54,11 +55,21 @@ async def campaign_feedback(payload: Dict = Body(...)):
 
 @app.get("/health")
 async def health():
-    return {
-        "status": "healthy",
+    redis_connected = False
+    redis_client = getattr(learning_engine, "_redis", None)
+    if redis_client is not None:
+        try:
+            redis_connected = bool(redis_client.ping())
+        except Exception:
+            redis_connected = False
+    status = "healthy" if redis_connected else "degraded"
+    payload = {
+        "status": status,
         "service": "ai_seo",
+        "redis_connected": redis_connected,
         "timestamp": datetime.now().isoformat(),
     }
+    return JSONResponse(content=payload, status_code=200)
 
 
 @app.get("/")
