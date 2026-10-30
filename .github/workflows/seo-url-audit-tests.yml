@@ -1,0 +1,33 @@
+name: SEO URL audit safety tests
+
+on:
+  pull_request:
+    paths:
+      - "python-ai/services/ai_seo/**"
+      - "tests/test_ai_seo_url_audit.py"
+      - ".github/workflows/seo-url-audit-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "python-ai/services/ai_seo/**"
+      - "tests/test_ai_seo_url_audit.py"
+      - ".github/workflows/seo-url-audit-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  url-audit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install minimal URL audit test dependencies
+        run: python -m pip install fastapi==0.115.12 pydantic==2.10.6 httpx==0.28.1 beautifulsoup4==4.13.3 pytest==8.4.2
+      - name: Run URL audit safety tests
+        run: python -m pytest -q tests/test_ai_seo_url_audit.py
+      - name: Compile changed service files
+        run: python -m py_compile python-ai/services/ai_seo/api/app.py python-ai/services/ai_seo/core/url_audit.py
