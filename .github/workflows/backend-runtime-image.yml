@@ -103,6 +103,9 @@ jobs:
           MYSQL_PASSWORD=ci-placeholder
           MYSQL_DATABASE=yarsalam
           ENV
+          # Compose validates the declared runtime env_file path even for config-only checks.
+          # This empty placeholder exists only on the disposable CI runner.
+          : > .env.production
           docker compose --env-file "$RUNNER_TEMP/runtime.env" -f docker-compose.runtime.yml config --quiet
           docker compose --env-file "$RUNNER_TEMP/runtime.env" -f docker-compose.runtime.yml config --format json \
             | python -c 'import json,sys; c=json.load(sys.stdin); s=c["services"]; assert set(s)=={"backend"}, set(s); assert "build" not in s["backend"]; assert s["backend"]["image"].startswith("ghcr.io/yarsalam/yarsalam-backend:"); print("Runtime-only backend Compose validated.")'
