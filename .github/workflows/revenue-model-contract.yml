@@ -35,4 +35,4 @@ jobs:
             python-ai/services/ai_revenue/predictor.py
 
       - name: Verify untrained and invalid-input fallback contract
-        run: python -m unittest python-ai.tests.test_ai_revenue_predictor -v
+        run: python python-ai/tests/test_ai_revenue_predictor.py -v
