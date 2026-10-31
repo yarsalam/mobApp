@@ -7,7 +7,7 @@ import { PartitionedEvent } from 'src/user-event/entities/partitioned-event.enti
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from 'src/redis/redis.constants';
 import { HttpService } from '@nestjs/axios';
-import { FeatureStoreService } from 'src/feature-store/feature-store.service';
+import { FeatureStoreRevenueService } from 'src/feature-store-rvenue/feature-store-rvenue.service';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 import {
@@ -73,7 +73,7 @@ export class RevenueAttributionService {
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
 
     private readonly httpService: HttpService,
-    private readonly featureStore: FeatureStoreService,
+    private readonly featureStore: FeatureStoreRevenueService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -367,7 +367,7 @@ export class RevenueAttributionService {
   async predictLTV(userId: number): Promise<number | null> {
     try {
       const aiRevenueUrl = this.configService
-        .get<string>('AI_REVENUE_URL', 'http://ai_revenue:8006')
+        .get<string>('AI_REVENUE_URL', 'http://ai_revenue:8000')
         .replace(/\/+$/, '');
 
       const configuredTimeout = Number(
@@ -381,13 +381,35 @@ export class RevenueAttributionService {
 
       const features = await this.featureStore.getUserFeatures(userId);
 
+      // ai_revenue expects the 12 scalar LTVRequest fields at the top level.
+      // Sending a nested generic feature snapshot silently made Pydantic use defaults.
       const response = await firstValueFrom(
         this.httpService.post(
           `${aiRevenueUrl}/predict/ltv`,
-          { userId, features },
+          {
+            userId,
+            channelType: features.channelType,
+            keywordDifficulty: features.keywordDifficulty,
+            contentLength: features.contentLength,
+            timeToConversion: features.timeToConversion,
+            cityWeight: features.cityWeight,
+            intentScore: features.intentScore,
+            engagementDepth: features.engagementDepth,
+            retentionImpact: features.retentionImpact,
+            campaignCost: features.campaignCost,
+            competitorPressure: features.competitorPressure,
+            seasonalityFactor: features.seasonalityFactor,
+            segmentSize: features.segmentSize,
+          },
           { timeout },
         ),
       );
+
+      // Never accept a baseline/fallback value as a trained ML prediction.
+      // The existing DB cohort fallback below is used instead.
+      if (response.data?.fallback === true) {
+        throw new Error('AI Revenue model is not trained; using DB cohort fallback');
+      }
 
       const predictedLtv: unknown = response.data?.predicted_ltv;
 
