@@ -1,0 +1,38 @@
+name: Revenue LTV model contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "python-ai/services/ai_revenue/**"
+      - "python-ai/tests/test_ai_revenue_predictor.py"
+      - ".github/workflows/revenue-model-contract.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  ltv-fallback-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install minimal model runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy==1.26.4 scikit-learn==1.5.2 joblib==1.4.2
+
+      - name: Compile Revenue model source
+        run: |
+          python -m py_compile \
+            python-ai/services/ai_revenue/app.py \
+            python-ai/services/ai_revenue/predictor.py
+
+      - name: Verify untrained and invalid-input fallback contract
+        run: python -m unittest python-ai.tests.test_ai_revenue_predictor -v
