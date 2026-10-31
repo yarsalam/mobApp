@@ -25,10 +25,10 @@ Repair branch: fix/matching-ai-assistant-runtime-image
 - User confirmed all four pack builds were positive except ai_assistant.
 - Previous assistant image sha-9f114ff40fa4d628c8c0a8fa0f62032b09276d8e failed with ModuleNotFoundError: No module named 'pandas' in core/behavior.py.
 - Builder now pins pandas==2.2.3 for assistant.
-- PR #4 https://github.com/yarsalam/ai-packs/pull/4, base feat/safety-ghcr-deployment: isolated assistant image build/tests/publisher, one-service Compose override, Python runtime filtering and handoff. Draft/open.
-- PR #5 https://github.com/yarsalam/ai-packs/pull/5, base main: harmless manual workflow registration stub. Draft/open.
+- PR #4 https://github.com/yarsalam/ai-packs/pull/4, base feat/safety-ghcr-deployment: isolated assistant image build/tests/publisher, one-service Compose override and runtime filtering. Open/ready for review, not merged.
+- PR #5 https://github.com/yarsalam/ai-packs/pull/5: merged in main at 52dcab1f9a876bba5e2dd060917a79296251ffea; harmless manual workflow registration stub only.
 - Workflow run #77 ID 41118292374 SUCCESS: generated Matching distribution and Compose validation, built only assistant image; pandas, app, and analyze_behavior imports passed. All four Gateway licensing contract jobs passed.
-- Workflow run #53 ID 41118292186 SUCCESS: all four standalone distributions, API contract checks, structure/Compose validation and Gateway images passed. GitHub Release attachment step skipped (not a failure).
+- Workflow run #59 ID 41119988888 SUCCESS: all four standalone distributions, API contract checks, structure/Compose validation and Gateway images passed. GitHub Release attachment step skipped (not a failure).
 - هیچ Image جدیدی به GHCR Push نشده و هیچ سرویس/volume روی VPS تغییر نکرده است. رفع ai_assistant هنوز در Production اعمال نشده است.
 - Once approved/merged, run the manual publisher from branch fix/matching-ai-assistant-runtime-image. It builds/pushes only assistant with an immutable combined ai-packs/MobApp SHA tag. Then use deploy/compose/matching-ai-assistant-override.yaml and AI_ASSISTANT_IMAGE to update only assistant with --no-deps. Do not rebuild other Matching services or Packs.
 
@@ -37,7 +37,7 @@ Repository: https://github.com/yarsalam/admin-panel
 - Login fix PR #30 در `feat/production-deployment-memory` با commit `734ef06b72bdd37899570defe339b4406efc40dc` ادغام شده؛ login/register/set-password صریحاً `type=submit` دارند. این اصلاح هنوز روی VPS Deploy نشده است.
 - Earlier TypeScript/lint/Turbopack errors came from testing wrong branch PR #29; do not attribute them to merged PR #30.
 - Runtime-only PR #31 https://github.com/yarsalam/admin-panel/pull/31، شاخهٔ `feat/admin-runtime-only-image`، باز و نیازمند review/merge. Next standalone، multi-stage image، `next build --webpack`، Docker context filtering و Compose فقط Image؛ CI run #4 (ID `41120657283`) موفق شده: Build، اجرای کانتینر، GET /login با HTTP 200 و نبود Git metadata/docs.
-- Registration PR #32 https://github.com/yarsalam/admin-panel/pull/32, branch chore/register-admin-web-publisher, base main, draft/open. Contains harmless workflow-dispatch stubs for validation and publishing.
+- Registration PR #32 https://github.com/yarsalam/admin-panel/pull/32 merged into main at 38d59f2c77630768a3b13849e8fadea39a11790b; it only registers harmless workflow-dispatch stubs.
 - CI اعتبارسنجی PR #31 موفق است، اما Image هنوز Push/Deploy نشده است. مشکل ورود Production تا جایگزینی admin-web باز می‌ماند.
 - Existing admin project yarsalam-admin-prod-20261026; current admin web host binding 127.0.0.1:3000. Runtime Compose defines admin-web only. Do not recreate backend, MySQL, Redis, Nginx/proxy or user app.
 - Publisher input requires the exact current production NEXT_PUBLIC_API_URL; read private env, do not guess.
@@ -54,9 +54,9 @@ Current main docker-compose.production.yml still extends development Compose and
 
 ## Next steps
 1. Review/merge AI Packs PR #4 and registration PR #5 after CI/source review; manually run isolated publisher with pinned MobApp SHA, then publish only assistant. Request explicit approval before replacing that one VPS container.
-2. Validate admin PR #31 on Actions branch feat/admin-runtime-only-image after PR #32 registration is merged. Confirm GET /login HTTP 200; only then manual immutable image publisher. Exact production API URL must come from private env. Deploy only admin-web after explicit approval.
+2. After the latest RiskPanel client-boundary commit is validated, review/merge admin PR #31. Confirm GET /login HTTP 200; only then manual immutable image publisher. Exact production API URL must come from private env. Deploy only admin-web after explicit approval.
 3. Review mobApp backend runtime Compose PR and existing image workflow PR; inspect live Compose labels/mounts and confirm public-data source before backend-only replacement.
 4. Update handoff with merged commit SHAs, CI run IDs, immutable image tags/digests and actual VPS status before moving to a new chat.
 
 ## Safety / not yet done
-No manual publish workflow triggered, no new GHCR image confirmed published, no deployment run, no live VPS container/persistent volume changed, no existing source checkout deleted. Draft PRs remain unmerged. All live deploy actions require separate explicit confirmation.
+No manual publish workflow triggered, no new GHCR image confirmed published, no deployment run, no live VPS container/persistent volume changed, no existing source checkout deleted. ai-packs PR #4, admin-panel PR #31 and mobApp PR #8 remain open; ai-packs PR #5 and admin-panel PR #32 are merged. All live deploy actions require separate explicit confirmation.
