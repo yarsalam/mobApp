@@ -154,6 +154,8 @@ class RecommendationService:
             result = {
                 "user_id": candidate_id,
                 "score": round(float(final_score), 4),
+                "similarity": round(float(similarity), 4),
+                "revenue_potential": round(float(revenue), 4) if revenue is not None else None,
                 "score_type": "weighted_observed_features" if len(components) > 1 else "similarity_only",
                 "score_components": {
                     name: round(float(value), 4) for name, value in components.items()
