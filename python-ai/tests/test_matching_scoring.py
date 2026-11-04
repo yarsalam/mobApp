@@ -158,3 +158,28 @@ def test_predict_route_returns_503_when_match_score_is_unavailable(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(module.predict_match(payload))
     assert exc.value.status_code == 503
+
+
+def test_event_persistence_failure_is_propagated_by_service():
+    class FailingRedis(FakeRedis):
+        async def xadd(self, *args, **kwargs):
+            raise ConnectionError("redis unavailable")
+
+    service = RecommendationService(FakeEmbeddingClient(), FailingRedis())
+    with pytest.raises(RuntimeError, match="recommendation_event_persistence_failed"):
+        asyncio.run(service.track_events({"events": [{"event_type": "impression"}]}))
+
+
+def test_track_events_route_returns_retryable_503_when_redis_write_fails(monkeypatch):
+    path = SERVICE_ROOT / "routes" / "matching.py"
+    module = _load_with_matching_packages(path, "matching_event_routes_under_test")
+
+    async def persistence_failure(payload):
+        raise RuntimeError("recommendation_event_persistence_failed")
+
+    monkeypatch.setattr(module.rec_service, "track_events", persistence_failure)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(module.track_events({"events": [{"event_type": "impression"}]}))
+
+    assert exc.value.status_code == 503
+    assert "retry" in exc.value.detail.lower()
