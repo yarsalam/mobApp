@@ -272,6 +272,28 @@ def test_multi_engine_rates_are_separate_not_combined(monkeypatch):
     assert {item["engine"] for item in result["results"]} == {"openai", "perplexity"}
 
 
+def test_request_defaults_to_all_configured_engines(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    monkeypatch.setenv("PERPLEXITY_API_KEY", "test-perplexity-key")
+    app = _load_app()
+
+    async def openai_results(*args, **kwargs):
+        return [{"engine": "openai", "status": "ok", "mentioned": True}]
+
+    async def perplexity_results(*args, **kwargs):
+        return [{"engine": "perplexity", "status": "ok", "mentioned": True}]
+
+    monkeypatch.setattr(app.tracker, "check_mentions", openai_results)
+    monkeypatch.setattr(app.perplexity_tracker, "check_mentions", perplexity_results)
+    request = app.MentionRequest(brand="Example Brand", prompts=["one"])
+    result = asyncio.run(app.check_mentions(request))
+
+    assert result["engines"] == ["openai", "perplexity"]
+    assert result["mention_rate"] is None
+    assert result["mention_rate_by_engine"]["openai"]["mention_rate"] == 1.0
+    assert result["mention_rate_by_engine"]["perplexity"]["mention_rate"] == 1.0
+
+
 def test_unconfigured_engine_is_unavailable_not_negative(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)
