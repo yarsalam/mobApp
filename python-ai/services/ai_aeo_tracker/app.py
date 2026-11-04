@@ -31,7 +31,7 @@ engine_trackers = {
 class MentionRequest(BaseModel):
     brand: str = Field(..., min_length=1, max_length=200)
     prompts: List[str] = Field(..., min_items=1, max_items=50)
-    engines: List[str] = Field(default_factory=lambda: ["openai"], max_items=4)
+    engines: List[str] | None = Field(default=None, max_items=4)
     persist: bool = True
 
 
@@ -59,7 +59,13 @@ def _unavailable_result(brand: str, prompt: str, engine: str, error_code: str) -
 
 @app.post("/check-mentions")
 async def check_mentions(req: MentionRequest):
-    engines = list(dict.fromkeys(req.engines or ["openai"]))
+    if req.engines is None:
+        engines = [
+            name for name in engine_trackers
+            if _provider_configured(name)
+        ] or ["openai"]
+    else:
+        engines = list(dict.fromkeys(req.engines))
     if not engines:
         raise HTTPException(422, "Select at least one AEO engine")
 
