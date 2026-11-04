@@ -240,6 +240,23 @@ def test_perplexity_adapter_extracts_citations_from_api_response(monkeypatch):
     assert constructor_kwargs["timeout"] == 20.0
 
 
+def test_aeo_cache_key_changes_when_provider_model_changes():
+    class ModelProvider:
+        name = "perplexity"
+        model = "sonar"
+
+        async def ask(self, prompt: str) -> str:
+            return "Example Brand"
+
+    provider = ModelProvider()
+    tracker = AEOVisibilityTracker(provider=provider, redis_client=None)
+    first = tracker._cache_key("Example Brand", "prompt")
+    provider.model = "sonar-pro"
+    second = tracker._cache_key("Example Brand", "prompt")
+
+    assert first != second
+
+
 def test_provider_citations_and_model_are_preserved():
     tracker = AEOVisibilityTracker(provider=CitationProvider(), redis_client=None)
     result = asyncio.run(
