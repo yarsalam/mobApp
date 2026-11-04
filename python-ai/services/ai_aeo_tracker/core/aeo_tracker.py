@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 CACHE_TTL_SECONDS = int(os.getenv("AEO_CACHE_TTL", 6 * 3600))  # 6h — جواب مدل‌ها زیاد سریع عوض نمی‌شه
 HISTORY_TTL_SECONDS = 86400 * 180  # 180 روز — برای دیدن روند بلندمدت دیده‌شدن برند
-HISTORY_REDIS_KEY_FMT = "aeo:history:{brand}"
+HISTORY_REDIS_KEY_FMT = "aeo:history:{brand}:{engine}"
+LEGACY_HISTORY_REDIS_KEY_FMT = "aeo:history:{brand}"
 
 _API_KEY = os.getenv("OPENAI_API_KEY")
 if not _API_KEY:
@@ -32,6 +33,7 @@ class AEOProvider:
     """
 
     name = "openai"
+    model = OPENAI_MODEL
 
     async def ask(self, prompt: str) -> str:
         if _client is None:
@@ -185,14 +187,23 @@ class AEOVisibilityTracker:
         ).hexdigest()[:16]
         return f"aeo:cache:{self.provider.name}:{digest}"
 
+    def _history_key(self, brand: str) -> str:
+        return HISTORY_REDIS_KEY_FMT.format(brand=brand, engine=self.provider.name)
+
     def _save_snapshot(self, brand: str, results: List[Dict]) -> None:
-        key = HISTORY_REDIS_KEY_FMT.format(brand=brand)
+        key = self._history_key(brand)
         available = [
             result for result in results
             if result.get("status", "ok") == "ok" and isinstance(result.get("mentioned"), bool)
         ]
         unavailable_count = len(results) - len(available)
+        model = next(
+            (result.get("model") for result in results if result.get("model")),
+            getattr(self.provider, "model", None) or "unknown",
+        )
         snapshot = {
+            "engine": self.provider.name,
+            "model": model,
             "date": datetime.now(timezone.utc).date().isoformat(),
             "status": "unavailable" if not available else ("partial" if unavailable_count else "ok"),
             "sample_count": len(results),
@@ -208,7 +219,7 @@ class AEOVisibilityTracker:
             history_raw = self._redis.get(key)
             history = json.loads(history_raw) if history_raw else []
             history.append(snapshot)
-            history = history[-180:]  # حداکثر ۱۸۰ نقطه‌ی تاریخی
+            history = history[-180:]  # maximum 180 snapshots per engine
             self._redis.setex(key, HISTORY_TTL_SECONDS, json.dumps(history))
         except Exception as exc:
             logger.warning("Could not save AEO history: %s", exc)
@@ -217,7 +228,54 @@ class AEOVisibilityTracker:
         if not self._redis:
             return []
         try:
-            raw = self._redis.get(HISTORY_REDIS_KEY_FMT.format(brand=brand))
-            return json.loads(raw) if raw else []
-        except Exception:
+            key = self._history_key(brand)
+            raw = self._redis.get(key)
+            if raw:
+                return json.loads(raw)
+
+            # Migrate only legacy snapshots whose nested results explicitly
+            # identify this engine; ambiguous records are never misattributed.
+            legacy_key = LEGACY_HISTORY_REDIS_KEY_FMT.format(brand=brand)
+            legacy_raw = self._redis.get(legacy_key)
+            legacy_history = json.loads(legacy_raw) if legacy_raw else []
+            migrated = []
+            for snapshot in legacy_history:
+                if not isinstance(snapshot, dict):
+                    continue
+                legacy_results = snapshot.get("results")
+                if not isinstance(legacy_results, list):
+                    continue
+                results = [
+                    item for item in legacy_results
+                    if isinstance(item, dict) and item.get("engine") == self.provider.name
+                ]
+                if not results:
+                    continue
+                available = [
+                    item for item in results
+                    if item.get("status", "ok") == "ok" and isinstance(item.get("mentioned"), bool)
+                ]
+                unavailable_count = len(results) - len(available)
+                migrated.append({
+                    **snapshot,
+                    "engine": self.provider.name,
+                    "model": next(
+                        (item.get("model") for item in results if item.get("model")),
+                        getattr(self.provider, "model", None) or "unknown",
+                    ),
+                    "sample_count": len(results),
+                    "available_count": len(available),
+                    "unavailable_count": unavailable_count,
+                    "mention_rate": (
+                        sum(1 for item in available if item.get("mentioned")) / len(available)
+                        if available else None
+                    ),
+                    "results": results,
+                })
+            if migrated:
+                migrated = migrated[-180:]
+                self._redis.setex(key, HISTORY_TTL_SECONDS, json.dumps(migrated))
+            return migrated
+        except Exception as exc:
+            logger.warning("Could not load AEO history: %s", exc)
             return []

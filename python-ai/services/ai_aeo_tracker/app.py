@@ -144,11 +144,15 @@ async def check_mentions(req: MentionRequest):
 
 
 @app.get("/history/{brand}")
-async def get_history(brand: str):
-    history = tracker.get_history(brand)
+async def get_history(brand: str, engine: str = "openai"):
+    engine_name = engine.strip().lower()
+    engine_tracker = engine_trackers.get(engine_name)
+    if engine_tracker is None:
+        raise HTTPException(422, "Unsupported AEO engine")
+    history = engine_tracker.get_history(brand)
     if not history:
-        raise HTTPException(404, "تاریخچه‌ای برای این برند ثبت نشده")
-    return {"brand": brand, "history": history}
+        raise HTTPException(404, "تاریخچه‌ای برای این برند و موتور انتخاب‌شده ثبت نشده")
+    return {"brand": brand, "engine": engine_name, "history": history}
 
 
 @app.get("/health")
