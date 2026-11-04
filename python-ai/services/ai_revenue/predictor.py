@@ -35,6 +35,7 @@ class RevenuePredictor:
         self.scaler = StandardScaler()
         self.feature_importance: Dict[str, float] = {}
         self._cv_score: Optional[float] = None
+        self._cv_strategy = "not_evaluated"
         self.gb_model = self._load_or_create()
         self.lstm_model = None
 
@@ -50,6 +51,7 @@ class RevenuePredictor:
                     if loaded_cv is not None and np.isfinite(float(loaded_cv))
                     else None
                 )
+                self._cv_strategy = data.get("cv_strategy", "legacy_unknown")
                 logger.info("GB model loaded")
                 return data["gb_model"]
             except Exception as exc:
@@ -67,6 +69,7 @@ class RevenuePredictor:
                 "scaler": self.scaler,
                 "feature_importance": self.feature_importance,
                 "cv_score": self._cv_score,
+                "cv_strategy": self._cv_strategy,
             },
             tmp,
         )
@@ -117,6 +120,7 @@ class RevenuePredictor:
         X_scaled = self.scaler.fit_transform(X_array)
         self.gb_model.fit(X_scaled, y_array)
 
+        self._cv_strategy = cv_strategy
         self.feature_importance = dict(
             zip(FEATURE_NAMES, self.gb_model.feature_importances_)
         )
@@ -150,7 +154,7 @@ class RevenuePredictor:
                 "confidence": None,
                 "confidence_status": "not_calibrated",
                 "cv_r2": self._cv_score,
-                "cv_strategy": "random_kfold_5" if self._cv_score is not None else "not_evaluated",
+                "cv_strategy": self._cv_strategy,
                 "range": None,
                 "prediction_interval": None,
                 "interval_status": "not_calibrated",
