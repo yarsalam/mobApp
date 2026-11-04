@@ -261,7 +261,7 @@ def test_multi_engine_rates_are_separate_not_combined(monkeypatch):
     request = app.MentionRequest(
         brand="Example Brand",
         prompts=["one"],
-        engines=["openai", "perplexity"],
+        engines=[" OPENAI ", "Perplexity"],
     )
     result = asyncio.run(app.check_mentions(request))
 
