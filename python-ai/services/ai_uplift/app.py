@@ -5,7 +5,7 @@ from typing import Dict, List
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.uplift_model import UpliftModel
 
@@ -22,7 +22,7 @@ class TrainRequest(BaseModel):
     data: List[Dict]
     treatment_col: str = "treatment"
     outcome_col: str = "revenue"
-    features: List[str] = []
+    features: List[str] = Field(default_factory=list)
 
 
 class PredictRequest(BaseModel):
@@ -51,9 +51,20 @@ async def predict_uplift(req: PredictRequest):
     if not req.features:
         raise HTTPException(400, "features cannot be empty")
     try:
-        X = np.array(req.features, dtype=np.float32)
+        X = np.asarray(req.features, dtype=np.float32)
+        if X.ndim != 2 or not np.isfinite(X).all():
+            raise HTTPException(400, "features must be a finite 2D matrix")
         uplift = model.predict_uplift(X)
-        return {"uplift": uplift, "count": len(uplift)}
+        return {
+            "status": "ok",
+            "uplift": uplift,
+            "count": len(uplift),
+            "effect_type": model._effect_type,
+            "causal_claim": False,
+            "causal_claim_reason": "Randomized assignment and causal identification are not verified by this API.",
+            "confidence_interval": None,
+            "interval_status": "not_calibrated",
+        }
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     except Exception as exc:
@@ -64,8 +75,10 @@ async def predict_uplift(req: PredictRequest):
 @app.get("/health")
 async def health():
     return {
-        "status": "healthy",
+        "status": "healthy" if model.trained else "degraded",
         "service": "ai_uplift",
         "model_trained": model.trained,
+        "effect_type": model._effect_type,
+        "causal_claim": False,
         "timestamp": datetime.now().isoformat(),
     }
