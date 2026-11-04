@@ -195,6 +195,44 @@ class CitationProvider:
         }
 
 
+def test_perplexity_adapter_extracts_citations_from_api_response(monkeypatch):
+    providers_path = SERVICE_ROOT / "core" / "providers.py"
+    spec = importlib.util.spec_from_file_location("aeo_providers_adapter_test", providers_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class FakeResponse:
+        model = "sonar"
+
+        def __init__(self):
+            self.choices = [types.SimpleNamespace(
+                message=types.SimpleNamespace(content="Example Brand appears in the answer.")
+            )]
+            self.citations = ["https://example.com/source"]
+
+        def model_dump(self):
+            return {"citations": self.citations}
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            self.kwargs = kwargs
+            return FakeResponse()
+
+    fake_client = types.SimpleNamespace(
+        chat=types.SimpleNamespace(completions=FakeCompletions())
+    )
+    monkeypatch.setattr(module, "AsyncOpenAI", lambda **kwargs: fake_client)
+    provider = module.PerplexityProvider(api_key="test-key")
+
+    result = asyncio.run(provider.ask_with_metadata("prompt"))
+
+    assert result["text"] == "Example Brand appears in the answer."
+    assert result["citations"] == ["https://example.com/source"]
+    assert result["model"] == "sonar"
+    assert fake_client.chat.completions.kwargs["model"] == "sonar"
+
+
 def test_provider_citations_and_model_are_preserved():
     tracker = AEOVisibilityTracker(provider=CitationProvider(), redis_client=None)
     result = asyncio.run(
