@@ -39,8 +39,10 @@ def _load_with_matching_packages(path: Path, module_name: str):
     spec.loader.exec_module(module)
 
     for name in list(sys.modules):
-        if name == "core" or name.startswith("core.")
-        or name == "services" or name.startswith("services."):
+        if (
+            name == "core" or name.startswith("core.")
+            or name == "services" or name.startswith("services.")
+        ):
             sys.modules.pop(name, None)
     sys.modules.update(previous)
     return module
