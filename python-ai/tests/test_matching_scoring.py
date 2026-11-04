@@ -4,6 +4,7 @@ import asyncio
 import importlib.util
 import json
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -12,7 +13,44 @@ from fastapi import HTTPException
 SERVICE_ROOT = Path(__file__).resolve().parents[1] / "services" / "ml_service"
 sys.path.insert(0, str(SERVICE_ROOT))
 
-from services.recommendation import RecommendationService
+
+def _load_with_matching_packages(path: Path, module_name: str):
+    # Other service tests also use a top-level "core" package. Isolate this
+    # service's import roots so test collection order cannot cross-wire modules.
+    previous = {
+        name: module for name, module in list(sys.modules.items())
+        if name == "core" or name.startswith("core.")
+        or name == "services" or name.startswith("services.")
+    }
+    for name in previous:
+        sys.modules.pop(name, None)
+
+    core_package = types.ModuleType("core")
+    core_package.__path__ = [str(SERVICE_ROOT / "core")]
+    services_package = types.ModuleType("services")
+    services_package.__path__ = [str(SERVICE_ROOT / "services")]
+    sys.modules["core"] = core_package
+    sys.modules["services"] = services_package
+
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+
+    for name in list(sys.modules):
+        if name == "core" or name.startswith("core.")
+        or name == "services" or name.startswith("services."):
+            sys.modules.pop(name, None)
+    sys.modules.update(previous)
+    return module
+
+
+recommendation_module = _load_with_matching_packages(
+    SERVICE_ROOT / "services" / "recommendation.py",
+    "matching_recommendation_under_test",
+)
+RecommendationService = recommendation_module.RecommendationService
 
 
 class FakeRedis:
@@ -108,11 +146,7 @@ def test_zero_or_missing_embeddings_do_not_produce_a_match_score():
 
 def test_predict_route_returns_503_when_match_score_is_unavailable(monkeypatch):
     path = SERVICE_ROOT / "routes" / "matching.py"
-    spec = importlib.util.spec_from_file_location("matching_routes_under_test", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = _load_with_matching_packages(path, "matching_routes_under_test")
 
     async def unavailable(*args, **kwargs):
         return None
