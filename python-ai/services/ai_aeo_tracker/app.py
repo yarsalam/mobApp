@@ -65,7 +65,11 @@ async def check_mentions(req: MentionRequest):
             if _provider_configured(name)
         ] or ["openai"]
     else:
-        engines = list(dict.fromkeys(req.engines))
+        engines = list(dict.fromkeys(
+            engine.strip().lower()
+            for engine in req.engines
+            if isinstance(engine, str) and engine.strip()
+        ))
     if not engines:
         raise HTTPException(422, "Select at least one AEO engine")
 
