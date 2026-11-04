@@ -87,11 +87,18 @@ class AEOVisibilityTracker:
         if self._redis:
             cached = self._redis.get(cache_key)
             if cached:
-                return json.loads(cached)
+                cached_result = json.loads(cached)
+                # Old cached failures used mentioned=False. Never reinterpret them
+                # as a valid negative mention result.
+                if "status" not in cached_result:
+                    cached_result["status"] = "unavailable" if cached_result.get("error") else "ok"
+                    if cached_result["status"] == "unavailable":
+                        cached_result["mentioned"] = None
+                return cached_result
 
         result = await self._call_with_retry(brand, prompt, rendered_prompt)
 
-        if self._redis:
+        if self._redis and result.get("status") == "ok":
             try:
                 self._redis.setex(cache_key, CACHE_TTL_SECONDS, json.dumps(result))
             except Exception as exc:
@@ -110,6 +117,7 @@ class AEOVisibilityTracker:
                 return {
                     "prompt": original_prompt,
                     "engine": self.provider.name,
+                    "status": "ok",
                     "mentioned": mentioned,
                     "sentiment": await self._analyze_sentiment(text, brand),
                     "response_preview": text[:200],
@@ -125,9 +133,10 @@ class AEOVisibilityTracker:
         return {
             "prompt": original_prompt,
             "engine": self.provider.name,
-            "mentioned": False,
+            "status": "unavailable",
+            "mentioned": None,
             "sentiment": "unknown",
-            "error": str(last_error),
+            "error_code": "provider_unavailable",
             "checked_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -162,9 +171,21 @@ class AEOVisibilityTracker:
 
     def _save_snapshot(self, brand: str, results: List[Dict]) -> None:
         key = HISTORY_REDIS_KEY_FMT.format(brand=brand)
+        available = [
+            result for result in results
+            if result.get("status", "ok") == "ok" and isinstance(result.get("mentioned"), bool)
+        ]
+        unavailable_count = len(results) - len(available)
         snapshot = {
             "date": datetime.now(timezone.utc).date().isoformat(),
-            "mention_rate": sum(1 for r in results if r.get("mentioned")) / max(len(results), 1),
+            "status": "unavailable" if not available else ("partial" if unavailable_count else "ok"),
+            "sample_count": len(results),
+            "available_count": len(available),
+            "unavailable_count": unavailable_count,
+            "mention_rate": (
+                sum(1 for result in available if result.get("mentioned")) / len(available)
+                if available else None
+            ),
             "results": results,
         }
         try:
