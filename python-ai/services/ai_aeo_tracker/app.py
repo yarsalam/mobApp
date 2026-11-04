@@ -88,6 +88,9 @@ async def check_mentions(req: MentionRequest):
             engine_results = await engine_tracker.check_mentions(
                 req.brand, req.prompts, req.persist
             )
+            for item in engine_results:
+                if isinstance(item, dict):
+                    item.setdefault("engine", engine)
             results.extend(engine_results)
         except Exception as exc:
             logger.error("AEO check failed for engine %s: %s", engine, exc)
