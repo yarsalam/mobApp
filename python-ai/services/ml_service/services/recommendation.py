@@ -1,6 +1,7 @@
 import json
 import logging
 import math
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -219,23 +220,25 @@ class RecommendationService:
         return scores[0] if scores else None
 
     async def track_events(self, payload: dict):
-        """Event tracking with Redis Stream; schema/idempotency remains a follow-up gap."""
+        """Persist the legacy event payload or raise so the API never falsely acknowledges loss."""
         try:
             await self.redis.xadd(
                 "ml:training:events",
                 {
                     "payload": json.dumps(payload),
-                    "ts": str(__import__("datetime").datetime.utcnow()),
+                    "ts": datetime.now(timezone.utc).isoformat(),
                 },
                 maxlen=settings.STREAM_MAXLEN,
                 approximate=True,
             )
-            logger.info(
-                "Tracked %s events to Redis Stream",
-                len(payload.get("events", [])) if isinstance(payload, dict) else 0,
-            )
         except Exception as exc:
-            logger.error("Failed to track events: %s", exc)
+            logger.exception("Failed to persist recommendation events")
+            raise RuntimeError("recommendation_event_persistence_failed") from exc
+
+        logger.info(
+            "Tracked %s events to Redis Stream",
+            len(payload.get("events", [])) if isinstance(payload, dict) else 0,
+        )
 
     async def _get_cold_start_recommendations(
         self, user_id: int, candidate_ids: List[int], limit: int

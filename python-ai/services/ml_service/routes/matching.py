@@ -79,5 +79,12 @@ async def predict_match(payload: PredictIn):
 
 @router.post("/internal/track-events")
 async def track_events(payload: dict):
-    await rec_service.track_events(payload)
+    try:
+        await rec_service.track_events(payload)
+    except Exception as exc:
+        logger.error("Recommendation event persistence unavailable: %s", exc)
+        raise HTTPException(
+            503,
+            "Recommendation event persistence unavailable; retry the event later",
+        ) from exc
     return {"status": "accepted"}
