@@ -368,6 +368,7 @@ def test_aeo_history_isolated_by_engine_and_migrates_only_tagged_legacy_results(
         "results": [
             {"engine": "openai", "model": "gpt-4o-mini", "status": "ok", "mentioned": True},
             {"engine": "perplexity", "model": "sonar", "status": "ok", "mentioned": False},
+            {"model": "legacy-unknown", "status": "ok", "mentioned": True},
         ],
     }
     redis = FakeRedis({
