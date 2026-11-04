@@ -23,6 +23,8 @@ class PerplexityProvider:
             AsyncOpenAI(
                 api_key=self.api_key,
                 base_url="https://api.perplexity.ai",
+                max_retries=0,
+                timeout=20.0,
             )
             if self.api_key else None
         )
