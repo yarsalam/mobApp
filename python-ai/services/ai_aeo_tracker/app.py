@@ -30,12 +30,26 @@ async def check_mentions(req: MentionRequest):
         raise HTTPException(503, "AEO provider is not configured; set OPENAI_API_KEY")
     try:
         results = await tracker.check_mentions(req.brand, req.prompts, req.persist)
-        mention_rate = sum(1 for r in results if r.get("mentioned")) / len(results)
-        return {
+        available = [
+            result for result in results
+            if result.get("status", "ok") == "ok" and isinstance(result.get("mentioned"), bool)
+        ]
+        unavailable_count = len(results) - len(available)
+        payload = {
             "brand": req.brand,
-            "mention_rate": round(mention_rate, 3),
+            "status": "unavailable" if not available else ("partial" if unavailable_count else "ok"),
+            "sample_count": len(results),
+            "available_count": len(available),
+            "unavailable_count": unavailable_count,
+            "mention_rate": (
+                round(sum(1 for result in available if result.get("mentioned")) / len(available), 3)
+                if available else None
+            ),
             "results": results,
         }
+        if not available:
+            return JSONResponse(content=payload, status_code=503)
+        return payload
     except Exception as exc:
         logger.error("check_mentions failed: %s", exc)
         raise HTTPException(500, str(exc))
