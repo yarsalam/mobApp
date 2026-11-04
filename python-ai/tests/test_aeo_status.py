@@ -222,7 +222,12 @@ def test_perplexity_adapter_extracts_citations_from_api_response(monkeypatch):
     fake_client = types.SimpleNamespace(
         chat=types.SimpleNamespace(completions=FakeCompletions())
     )
-    monkeypatch.setattr(module, "AsyncOpenAI", lambda **kwargs: fake_client)
+    constructor_kwargs = {}
+    def fake_async_openai(**kwargs):
+        constructor_kwargs.update(kwargs)
+        return fake_client
+
+    monkeypatch.setattr(module, "AsyncOpenAI", fake_async_openai)
     provider = module.PerplexityProvider(api_key="test-key")
 
     result = asyncio.run(provider.ask_with_metadata("prompt"))
@@ -231,6 +236,8 @@ def test_perplexity_adapter_extracts_citations_from_api_response(monkeypatch):
     assert result["citations"] == ["https://example.com/source"]
     assert result["model"] == "sonar"
     assert fake_client.chat.completions.kwargs["model"] == "sonar"
+    assert constructor_kwargs["max_retries"] == 0
+    assert constructor_kwargs["timeout"] == 20.0
 
 
 def test_provider_citations_and_model_are_preserved():
