@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import joblib
 import numpy as np
 from sklearn.model_selection import KFold
 from sklearn.pipeline import Pipeline
@@ -93,6 +94,34 @@ class RevenuePredictorFallbackTests(unittest.TestCase):
         self.assertEqual(result["cv_status"], "insufficient_samples")
         self.assertEqual(result["cv_strategy"], "not_evaluated")
         self.assertIsNone(result["cv_r2"])
+
+    def test_training_rejects_non_finite_features(self):
+        model, _, _ = self.make_untrained_predictor()
+        X = np.ones((5, 12), dtype=np.float32)
+        X[0, 0] = np.nan
+        y = np.arange(5, dtype=np.float32)
+
+        with self.assertRaises(ValueError):
+            model.train_gb(X, y)
+
+    def test_legacy_saved_model_does_not_claim_cv_strategy(self):
+        model, model_dir, model_path = self.make_untrained_predictor()
+        X = np.arange(60, dtype=np.float32).reshape(5, 12)
+        y = np.linspace(10, 50, 5, dtype=np.float32)
+
+        with patch.object(predictor, "MODEL_DIR", model_dir), patch.object(
+            predictor, "GB_MODEL_PATH", model_path
+        ):
+            model.train_gb(X, y)
+            saved = joblib.load(model_path)
+            saved.pop("cv_strategy", None)
+            joblib.dump(saved, model_path)
+            loaded = predictor.RevenuePredictor()
+
+        self.assertEqual(loaded._cv_strategy, "legacy_unknown")
+        result = loaded.predict_ltv(X[0].tolist())
+        self.assertEqual(result["cv_strategy"], "legacy_unknown")
+        self.assertIsNone(result["confidence"])
 
     def test_trained_model_does_not_expose_fixed_prediction_interval(self):
         model, model_dir, model_path = self.make_untrained_predictor()
