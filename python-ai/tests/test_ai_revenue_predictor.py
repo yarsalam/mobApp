@@ -76,6 +76,7 @@ class RevenuePredictorFallbackTests(unittest.TestCase):
             result = model.train_gb(X, y)
 
         self.assertEqual(result["cv_status"], "evaluated")
+        self.assertEqual(result["cv_strategy"], "random_kfold_5")
         self.assertAlmostEqual(result["cv_r2"], float(np.mean(expected_scores)))
         self.assertEqual(result["cv_score"], result["cv_r2"])
 
@@ -90,6 +91,7 @@ class RevenuePredictorFallbackTests(unittest.TestCase):
             result = model.train_gb(X, y)
 
         self.assertEqual(result["cv_status"], "insufficient_samples")
+        self.assertEqual(result["cv_strategy"], "not_evaluated")
         self.assertIsNone(result["cv_r2"])
 
     def test_trained_model_does_not_expose_fixed_prediction_interval(self):
@@ -109,6 +111,7 @@ class RevenuePredictorFallbackTests(unittest.TestCase):
         self.assertIsNotNone(result["predicted_ltv"])
         self.assertIsNone(result["confidence"])
         self.assertIsNotNone(result["cv_r2"])
+        self.assertEqual(result["cv_strategy"], "random_kfold_5")
         self.assertIsNone(result["range"])
         self.assertIsNone(result["prediction_interval"])
         self.assertEqual(result["interval_status"], "not_calibrated")
