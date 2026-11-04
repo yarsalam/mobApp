@@ -72,8 +72,9 @@ def test_missing_revenue_and_engagement_are_not_replaced_with_constants():
     recommendation = result["recommendations"][0]
     assert recommendation["score"] == 1.0
     assert recommendation["score_type"] == "similarity_only"
+    assert recommendation["similarity"] == 1.0
+    assert recommendation["revenue_potential"] is None
     assert recommendation["score_components"] == {"embedding": 1.0}
-    assert "revenue_potential" not in recommendation
     assert "engagement" not in recommendation["score_components"]
 
 
