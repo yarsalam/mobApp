@@ -103,6 +103,21 @@ def test_fallback_metadata_survives_restart(tmp_path, monkeypatch):
     assert reloaded.predict_uplift(np.array([[0.5]], dtype=np.float32)) == [2.5]
 
 
+def test_legacy_fallback_without_sample_counts_is_not_trusted(tmp_path, monkeypatch):
+    model_path = tmp_path / "uplift.pkl"
+    meta_path = tmp_path / "uplift_meta.json"
+    monkeypatch.setattr(uplift_module, "MODEL_PATH", str(model_path))
+    monkeypatch.setattr(uplift_module, "META_PATH", str(meta_path))
+    meta_path.write_text(json.dumps({"avg_uplift": 0.0, "use_fallback": True}))
+
+    model = UpliftModel()
+
+    assert model.trained is False
+    assert model._effect_type == "legacy_fallback_unverified"
+    with pytest.raises(ValueError, match="not trained"):
+        model.predict_uplift(np.array([[0.1]], dtype=np.float32))
+
+
 def test_invalid_prediction_matrix_is_rejected(tmp_path, monkeypatch):
     model = _model(tmp_path, monkeypatch)
     _force_econml_unavailable(monkeypatch)
