@@ -164,15 +164,14 @@ class RevenuePredictor:
             logger.error("Prediction failed: %s", exc)
             return self._fallback("prediction_error")
 
-    @staticmethod
-    def _fallback(reason: str) -> Dict:
+    def _fallback(self, reason: str) -> Dict:
         # Never manufacture an LTV estimate or a confidence interval.
         return {
             "predicted_ltv": None,
             "confidence": None,
             "confidence_status": "not_calibrated",
-            "cv_r2": None,
-            "cv_strategy": "not_evaluated",
+            "cv_r2": self._cv_score,
+            "cv_strategy": self._cv_strategy,
             "range": None,
             "prediction_interval": None,
             "interval_status": "not_calibrated",
