@@ -356,3 +356,71 @@ def test_api_returns_503_when_no_provider_result_is_available(monkeypatch):
     assert payload["status"] == "unavailable"
     assert payload["mention_rate"] is None
     assert payload["available_count"] == 0
+
+
+def test_aeo_history_isolated_by_engine_and_migrates_only_tagged_legacy_results():
+    legacy_snapshot = {
+        "date": "2026-11-04",
+        "sample_count": 2,
+        "available_count": 2,
+        "unavailable_count": 0,
+        "mention_rate": 0.5,
+        "results": [
+            {"engine": "openai", "model": "gpt-4o-mini", "status": "ok", "mentioned": True},
+            {"engine": "perplexity", "model": "sonar", "status": "ok", "mentioned": False},
+        ],
+    }
+    redis = FakeRedis({
+        "aeo:history:Example Brand": json.dumps([legacy_snapshot]),
+    })
+    openai_provider = types.SimpleNamespace(name="openai", model="gpt-4o-mini")
+    perplexity_provider = types.SimpleNamespace(name="perplexity", model="sonar")
+    openai_tracker = AEOVisibilityTracker(provider=openai_provider, redis_client=redis)
+    perplexity_tracker = AEOVisibilityTracker(provider=perplexity_provider, redis_client=redis)
+
+    openai_history = openai_tracker.get_history("Example Brand")
+    perplexity_history = perplexity_tracker.get_history("Example Brand")
+
+    assert openai_history[0]["engine"] == "openai"
+    assert openai_history[0]["sample_count"] == 1
+    assert openai_history[0]["mention_rate"] == 1.0
+    assert [item["engine"] for item in openai_history[0]["results"]] == ["openai"]
+    assert perplexity_history[0]["engine"] == "perplexity"
+    assert perplexity_history[0]["sample_count"] == 1
+    assert perplexity_history[0]["mention_rate"] == 0.0
+    assert [item["engine"] for item in perplexity_history[0]["results"]] == ["perplexity"]
+    assert "aeo:history:Example Brand:openai" in redis.values
+    assert "aeo:history:Example Brand:perplexity" in redis.values
+
+
+def test_aeo_snapshot_writes_engine_and_model_specific_history_key():
+    redis = FakeRedis()
+    provider = types.SimpleNamespace(name="perplexity", model="sonar-pro")
+    tracker = AEOVisibilityTracker(provider=provider, redis_client=redis)
+    tracker._save_snapshot("Example Brand", [
+        {"engine": "perplexity", "model": "sonar-pro", "status": "ok", "mentioned": True}
+    ])
+
+    key = "aeo:history:Example Brand:perplexity"
+    assert key in redis.values
+    snapshot = json.loads(redis.values[key])[0]
+    assert snapshot["engine"] == "perplexity"
+    assert snapshot["model"] == "sonar-pro"
+    assert snapshot["mention_rate"] == 1.0
+
+
+def test_history_endpoint_supports_engine_query_and_rejects_unknown_engine(monkeypatch):
+    app = _load_app()
+    monkeypatch.setattr(
+        app.perplexity_tracker,
+        "get_history",
+        lambda brand: [{"engine": "perplexity", "model": "sonar"}],
+    )
+
+    result = asyncio.run(app.get_history("Example Brand", engine="PERPLEXITY"))
+    assert result["engine"] == "perplexity"
+    assert result["history"][0]["engine"] == "perplexity"
+
+    with pytest.raises(app.HTTPException) as exc:
+        asyncio.run(app.get_history("Example Brand", engine="gemini"))
+    assert exc.value.status_code == 422
