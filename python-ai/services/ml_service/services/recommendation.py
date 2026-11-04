@@ -1,6 +1,7 @@
 import json
 import logging
 import math
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -225,7 +226,7 @@ class RecommendationService:
                 "ml:training:events",
                 {
                     "payload": json.dumps(payload),
-                    "ts": str(__import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()),
+                    "ts": datetime.now(timezone.utc).isoformat(),
                 },
                 maxlen=settings.STREAM_MAXLEN,
                 approximate=True,
