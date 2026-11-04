@@ -242,8 +242,11 @@ class AEOVisibilityTracker:
             for snapshot in legacy_history:
                 if not isinstance(snapshot, dict):
                     continue
+                legacy_results = snapshot.get("results")
+                if not isinstance(legacy_results, list):
+                    continue
                 results = [
-                    item for item in snapshot.get("results", [])
+                    item for item in legacy_results
                     if isinstance(item, dict) and item.get("engine") == self.provider.name
                 ]
                 if not results:
