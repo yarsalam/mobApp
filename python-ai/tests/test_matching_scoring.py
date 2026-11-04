@@ -58,12 +58,17 @@ RecommendationService = recommendation_module.RecommendationService
 class FakeRedis:
     def __init__(self, values=None):
         self.values = values or {}
+        self.streams = []
 
     async def mget(self, keys):
         return [self.values.get(key) for key in keys]
 
     async def get(self, key):
         return self.values.get(key)
+
+    async def xadd(self, stream, fields, **kwargs):
+        self.streams.append((stream, fields, kwargs))
+        return "1-0"
 
 
 class FakeEmbeddingClient:
@@ -183,3 +188,17 @@ def test_track_events_route_returns_retryable_503_when_redis_write_fails(monkeyp
 
     assert exc.value.status_code == 503
     assert "retry" in exc.value.detail.lower()
+
+
+def test_event_persistence_success_keeps_ack_contract_and_utc_timestamp():
+    service = _service()
+    payload = {"events": [{"event_type": "impression"}]}
+    asyncio.run(service.track_events(payload))
+
+    assert len(service.redis.streams) == 1
+    stream, fields, options = service.redis.streams[0]
+    assert stream == "ml:training:events"
+    assert json.loads(fields["payload"]) == payload
+    assert fields["ts"].endswith("+00:00")
+    assert options["maxlen"] > 0
+    assert options["approximate"] is True
