@@ -181,6 +181,78 @@ def test_api_reports_partial_provider_failures_without_polluting_rate(monkeypatc
     assert result["mention_rate"] == 0.5
 
 
+class CitationProvider:
+    name = "perplexity"
+
+    async def ask(self, prompt: str) -> str:
+        return "Example Brand is mentioned positively."
+
+    async def ask_with_metadata(self, prompt: str) -> dict:
+        return {
+            "text": "Example Brand is mentioned positively.",
+            "citations": ["https://example.com/source"],
+            "model": "sonar",
+        }
+
+
+def test_provider_citations_and_model_are_preserved():
+    tracker = AEOVisibilityTracker(provider=CitationProvider(), redis_client=None)
+    result = asyncio.run(
+        tracker._call_with_retry("Example Brand", "prompt", "prompt", attempts=1)
+    )
+
+    assert result["engine"] == "perplexity"
+    assert result["model"] == "sonar"
+    assert result["citations"] == ["https://example.com/source"]
+    assert result["mentioned"] is True
+
+
+def test_multi_engine_rates_are_separate_not_combined(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    monkeypatch.setenv("PERPLEXITY_API_KEY", "test-perplexity-key")
+    app = _load_app()
+
+    async def openai_results(*args, **kwargs):
+        return [{"engine": "openai", "status": "ok", "mentioned": True}]
+
+    async def perplexity_results(*args, **kwargs):
+        return [{"engine": "perplexity", "status": "ok", "mentioned": False}]
+
+    monkeypatch.setattr(app.tracker, "check_mentions", openai_results)
+    monkeypatch.setattr(app.perplexity_tracker, "check_mentions", perplexity_results)
+    request = app.MentionRequest(
+        brand="Example Brand",
+        prompts=["one"],
+        engines=["openai", "perplexity"],
+    )
+    result = asyncio.run(app.check_mentions(request))
+
+    assert result["status"] == "ok"
+    assert result["mention_rate"] is None
+    assert result["mention_rate_by_engine"]["openai"]["mention_rate"] == 1.0
+    assert result["mention_rate_by_engine"]["perplexity"]["mention_rate"] == 0.0
+    assert {item["engine"] for item in result["results"]} == {"openai", "perplexity"}
+
+
+def test_unconfigured_engine_is_unavailable_not_negative(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)
+    app = _load_app()
+    request = app.MentionRequest(
+        brand="Example Brand",
+        prompts=["one"],
+        engines=["perplexity"],
+    )
+
+    response = asyncio.run(app.check_mentions(request))
+    assert response.status_code == 503
+    payload = json.loads(response.body)
+    assert payload["status"] == "unavailable"
+    assert payload["mention_rate"] is None
+    assert payload["results"][0]["mentioned"] is None
+    assert payload["results"][0]["error_code"] == "provider_not_configured"
+
+
 def test_api_returns_503_when_no_provider_result_is_available(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     app = _load_app()
