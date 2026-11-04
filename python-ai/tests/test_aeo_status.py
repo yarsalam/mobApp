@@ -24,7 +24,17 @@ if "openai" not in sys.modules:
     openai_stub.AsyncOpenAI = DummyAsyncOpenAI
     sys.modules["openai"] = openai_stub
 
-from core.aeo_tracker import AEOVisibilityTracker
+def _load_aeo_core():
+    path = SERVICE_ROOT / "core" / "aeo_tracker.py"
+    spec = importlib.util.spec_from_file_location("aeo_tracker_under_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module.AEOVisibilityTracker
+
+
+AEOVisibilityTracker = _load_aeo_core()
 
 
 class FakeRedis:
@@ -48,12 +58,35 @@ class FailingProvider:
 
 
 def _load_app():
+    # app.py uses the runtime import path "core.aeo_tracker". Temporarily map
+    # that package to this service and restore the Matching package afterwards.
+    previous_core = sys.modules.get("core")
+    previous_aeo_core = sys.modules.get("core.aeo_tracker")
+    core_package = types.ModuleType("core")
+    core_package.__path__ = [str(SERVICE_ROOT / "core")]
+    sys.modules["core"] = core_package
+    tracker_path = SERVICE_ROOT / "core" / "aeo_tracker.py"
+    tracker_spec = importlib.util.spec_from_file_location("core.aeo_tracker", tracker_path)
+    assert tracker_spec is not None and tracker_spec.loader is not None
+    tracker_module = importlib.util.module_from_spec(tracker_spec)
+    sys.modules["core.aeo_tracker"] = tracker_module
+    tracker_spec.loader.exec_module(tracker_module)
+
     path = SERVICE_ROOT / "app.py"
     spec = importlib.util.spec_from_file_location("aeo_app_under_test", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+
+    if previous_core is None:
+        sys.modules.pop("core", None)
+    else:
+        sys.modules["core"] = previous_core
+    if previous_aeo_core is None:
+        sys.modules.pop("core.aeo_tracker", None)
+    else:
+        sys.modules["core.aeo_tracker"] = previous_aeo_core
     return module
 
 
