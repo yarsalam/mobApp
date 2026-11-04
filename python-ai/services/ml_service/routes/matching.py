@@ -64,7 +64,13 @@ async def recommend(payload: RecommendIn):
 @router.post("/predict")
 async def predict_match(payload: PredictIn):
     score = await rec_service.predict_match_score(payload.user_a, payload.user_b)
+    if score is None:
+        raise HTTPException(
+            503,
+            "Match score unavailable: valid embeddings are required for both entities",
+        )
     return {
+        "status": "ok",
         "score": round(score, 4),
         "user_a": payload.user_a,
         "user_b": payload.user_b,

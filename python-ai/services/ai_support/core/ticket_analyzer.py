@@ -69,9 +69,11 @@ def _get_sentiment_model():
         try:
             from transformers import pipeline
 
+            model_path = os.getenv("MODEL_PATH", "/app/models")
             _SENTIMENT_MODEL = pipeline(
                 "sentiment-analysis",
-                model="/app/models",
+                model=model_path,
+                local_files_only=os.getenv("TRANSFORMERS_OFFLINE", "1") == "1",
             )
             logger.info("Farsi sentiment model loaded")
         except Exception as exc:
@@ -89,7 +91,7 @@ class AISupportEngine:
 
     def analyze_ticket(self, ticket_data: Dict) -> Dict:
         content: str = ticket_data.get("content", "")
-        category = self._classify(content)
+        category, confidence = self._classify_with_confidence(content)
         priority = self._priority(content, ticket_data)
         sentiment = self._sentiment(content)
         keywords = self._keywords(content)
@@ -97,7 +99,9 @@ class AISupportEngine:
         return {
             "suggested_category": category,
             "suggested_priority": priority,
-            "confidence_score": 0.85,
+            "confidence_score": confidence,
+            "confidence_type": "uncalibrated_keyword_heuristic",
+            "classification_method": "keyword_rules",
             "sentiment": sentiment,
             "keywords": keywords,
             "similar_tickets": [],
@@ -107,6 +111,7 @@ class AISupportEngine:
             "auto_response": self._auto_response(category, sentiment),
             "urgency_score": self._urgency(sentiment, priority, ticket_data),
             "revenue_impact": _REVENUE_IMPACT.get(category, -0.1),
+            "revenue_impact_type": "relative_heuristic_score_not_currency",
             "seo_signals": self._seo_signals(content, keywords),
         }
 
@@ -116,32 +121,36 @@ class AISupportEngine:
         return {"status": "learned"}
 
     def get_seo_insights(self, days: int = 30) -> Dict:
+        # Do not invent counts or trends. The API adapter computes real insights
+        # from retained Redis analytics records; this engine alone has no dataset.
         return {
-            "top_issues": [
-                {"issue": "مشکل پرداخت", "count": 45, "trend": "+12%"},
-                {"issue": "فراموشی رمز", "count": 32, "trend": "-5%"},
-                {"issue": "سرعت پایین", "count": 28, "trend": "+8%"},
-            ],
-            "user_sentiment_trend": {
-                "positive": "45%",
-                "neutral": "35%",
-                "negative": "20%",
-            },
-            "feature_requests": [
-                {"feature": "چت گروهی", "requests": 23},
-                {"feature": "فیلتر پیشرفته", "requests": 18},
-            ],
+            "status": "insufficient_data",
+            "period_days": days,
+            "sample_count": 0,
+            "reason": "Insights require retained ticket-analysis records.",
+            "top_issues": [],
+            "user_sentiment_trend": {},
+            "feature_requests": [],
         }
 
     # ── private helpers ────────────────────────────────────────────────────────
 
     def _classify(self, content: str) -> str:
+        return self._classify_with_confidence(content)[0]
+
+    def _classify_with_confidence(self, content: str) -> tuple[str, float]:
         text = content.lower()
         scores = {
             cat: sum(1 for kw in kws if kw in text) for cat, kws in _CATEGORIES.items()
         }
-        best = max(scores, key=scores.get)
-        return best if scores[best] > 0 else "other"
+        ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+        best, hits = ranked[0]
+        second_hits = ranked[1][1] if len(ranked) > 1 else 0
+        if hits == 0:
+            return "other", 0.0
+        # This is a transparent rule-based heuristic, not a calibrated ML probability.
+        score = min(0.95, 0.55 + 0.10 * hits + 0.05 * max(0, hits - second_hits))
+        return best, round(score, 2)
 
     def _priority(self, content: str, ticket_data: Dict) -> str:
         text = content.lower()

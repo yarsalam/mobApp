@@ -169,7 +169,17 @@ class ModerationEngine:
                         "layer": "semantic",
                     }
 
-        except Exception as exc:
-            logger.error("Semantic moderation failed, defaulting to allow: %s", exc)
+        except Exception:
+            # A commercial safety filter must not silently approve content when
+            # the semantic dependency is unavailable. Callers can route this
+            # result to human review instead of treating it as a confident block.
+            logger.exception("Semantic moderation failed; failing closed")
+            return {
+                "allowed": False,
+                "reason": "semantic_check_unavailable",
+                "confidence": 0.0,
+                "layer": "semantic_error",
+                "review_required": True,
+            }
 
         return {"allowed": True, "reason": None, "confidence": 1.0, "layer": "semantic"}

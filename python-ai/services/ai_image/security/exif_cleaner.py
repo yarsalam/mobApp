@@ -8,7 +8,7 @@ class EXIFCleaner:
     """حذف EXIF data برای حفظ حریم خصوصی"""
     
     @staticmethod
-    def clean(image_data: bytes) -> bytes:
+    def clean(image_data: bytes) -> bytes | None:
         """
         حذف تمام متادیتاهای EXIF از تصویر
         """
@@ -30,4 +30,4 @@ class EXIFCleaner:
             
         except Exception as e:
             logger.error(f"EXIF cleaning failed: {e}")
-            raise None
+            return None

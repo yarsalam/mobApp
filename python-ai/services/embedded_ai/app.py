@@ -18,6 +18,8 @@ logging.basicConfig(
 MODEL_NAME = os.getenv(
     "MODEL_NAME", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 )
+# Set EMBEDDING_MODEL_REVISION to an immutable Hugging Face commit SHA for releases.
+MODEL_REVISION = os.getenv("MODEL_REVISION", "main")
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
 model: SentenceTransformer = None
@@ -27,9 +29,9 @@ redis_client: aioredis.Redis = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global model, redis_client
-    model = SentenceTransformer(MODEL_NAME)
+    model = SentenceTransformer(MODEL_NAME, revision=MODEL_REVISION)
     redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
-    logger.info("Embedding hub started, model loaded: %s", MODEL_NAME)
+    logger.info("Embedding hub started, model loaded: %s@%s", MODEL_NAME, MODEL_REVISION)
     yield
     await redis_client.aclose()
     logger.info("Embedding hub stopped")
@@ -60,6 +62,7 @@ async def get_embedding(data: TextInput):
     return {
         "embedding": embedding,
         "model_name": MODEL_NAME,
+        "model_revision": MODEL_REVISION,
         "dimension": len(embedding),
     }
 
@@ -75,6 +78,7 @@ async def get_batch_embeddings(data: BatchTextInput):
     return {
         "embeddings": embeddings,
         "model_name": MODEL_NAME,
+        "model_revision": MODEL_REVISION,
         "dimension": len(embeddings[0]),
     }
 
@@ -98,9 +102,14 @@ async def health():
         redis_ok = True
     except Exception:
         pass
-    return {
-        "status": "healthy",
+    model_loaded = model is not None
+    payload = {
+        "status": "healthy" if model_loaded and redis_ok else ("degraded" if model_loaded else "unavailable"),
         "service": "embedding_hub",
-        "model_loaded": model is not None,
+        "model_loaded": model_loaded,
+        "model_name": MODEL_NAME,
+        "model_revision": MODEL_REVISION,
         "redis": redis_ok,
     }
+    from fastapi.responses import JSONResponse
+    return JSONResponse(content=payload, status_code=200 if model_loaded else 503)

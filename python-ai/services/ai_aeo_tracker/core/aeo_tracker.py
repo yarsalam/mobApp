@@ -45,6 +45,13 @@ class AEOProvider:
         )
         return response.choices[0].message.content or ""
 
+    async def ask_with_metadata(self, prompt: str) -> Dict:
+        return {
+            "text": await self.ask(prompt),
+            "citations": [],
+            "model": OPENAI_MODEL,
+        }
+
 class AEOVisibilityTracker:
     def __init__(self, provider: Optional[AEOProvider] = None, redis_client=None):
         self.provider = provider or AEOProvider()
@@ -57,6 +64,7 @@ class AEOVisibilityTracker:
             client = redis.Redis(
                 host=os.getenv("REDIS_HOST", "redis"),
                 port=int(os.getenv("REDIS_PORT", 6379)),
+                password=os.getenv("REDIS_PASSWORD") or None,
                 decode_responses=True,
                 socket_connect_timeout=2,
             )
@@ -86,11 +94,18 @@ class AEOVisibilityTracker:
         if self._redis:
             cached = self._redis.get(cache_key)
             if cached:
-                return json.loads(cached)
+                cached_result = json.loads(cached)
+                # Old cached failures used mentioned=False. Never reinterpret them
+                # as a valid negative mention result.
+                if "status" not in cached_result:
+                    cached_result["status"] = "unavailable" if cached_result.get("error") else "ok"
+                    if cached_result["status"] == "unavailable":
+                        cached_result["mentioned"] = None
+                return cached_result
 
         result = await self._call_with_retry(brand, prompt, rendered_prompt)
 
-        if self._redis:
+        if self._redis and result.get("status") == "ok":
             try:
                 self._redis.setex(cache_key, CACHE_TTL_SECONDS, json.dumps(result))
             except Exception as exc:
@@ -104,13 +119,20 @@ class AEOVisibilityTracker:
         last_error: Optional[Exception] = None
         for attempt in range(attempts):
             try:
-                text = await self.provider.ask(rendered_prompt)
+                if hasattr(self.provider, "ask_with_metadata"):
+                    answer = await self.provider.ask_with_metadata(rendered_prompt)
+                else:
+                    answer = {"text": await self.provider.ask(rendered_prompt), "citations": [], "model": None}
+                text = answer.get("text", "")
                 mentioned = brand.lower() in text.lower()
                 return {
                     "prompt": original_prompt,
                     "engine": self.provider.name,
+                    "model": answer.get("model"),
+                    "status": "ok",
                     "mentioned": mentioned,
                     "sentiment": await self._analyze_sentiment(text, brand),
+                    "citations": answer.get("citations", []),
                     "response_preview": text[:200],
                     "checked_at": datetime.now(timezone.utc).isoformat(),
                 }
@@ -124,9 +146,10 @@ class AEOVisibilityTracker:
         return {
             "prompt": original_prompt,
             "engine": self.provider.name,
-            "mentioned": False,
+            "status": "unavailable",
+            "mentioned": None,
             "sentiment": "unknown",
-            "error": str(last_error),
+            "error_code": "provider_unavailable",
             "checked_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -156,14 +179,29 @@ class AEOVisibilityTracker:
             return "unknown"
 
     def _cache_key(self, brand: str, rendered_prompt: str) -> str:
-        digest = hashlib.sha256(f"{brand}:{rendered_prompt}".encode()).hexdigest()[:16]
+        model = getattr(self.provider, "model", None) or "default"
+        digest = hashlib.sha256(
+            f"{self.provider.name}:{model}:{brand}:{rendered_prompt}".encode()
+        ).hexdigest()[:16]
         return f"aeo:cache:{self.provider.name}:{digest}"
 
     def _save_snapshot(self, brand: str, results: List[Dict]) -> None:
         key = HISTORY_REDIS_KEY_FMT.format(brand=brand)
+        available = [
+            result for result in results
+            if result.get("status", "ok") == "ok" and isinstance(result.get("mentioned"), bool)
+        ]
+        unavailable_count = len(results) - len(available)
         snapshot = {
             "date": datetime.now(timezone.utc).date().isoformat(),
-            "mention_rate": sum(1 for r in results if r.get("mentioned")) / max(len(results), 1),
+            "status": "unavailable" if not available else ("partial" if unavailable_count else "ok"),
+            "sample_count": len(results),
+            "available_count": len(available),
+            "unavailable_count": unavailable_count,
+            "mention_rate": (
+                sum(1 for result in available if result.get("mentioned")) / len(available)
+                if available else None
+            ),
             "results": results,
         }
         try:
