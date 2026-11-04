@@ -151,7 +151,7 @@ async def get_history(brand: str, engine: str = "openai"):
         raise HTTPException(422, "Unsupported AEO engine")
     history = engine_tracker.get_history(brand)
     if not history:
-        raise HTTPException(404, "No history found for this brand and engine")
+        raise HTTPException(404, "تاریخچه‌ای برای این برند و موتور انتخاب‌شده ثبت نشده")
     return {"brand": brand, "engine": engine_name, "history": history}
 
 
