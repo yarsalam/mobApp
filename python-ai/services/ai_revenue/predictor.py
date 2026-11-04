@@ -88,7 +88,9 @@ class RevenuePredictor:
         # cross-validation leaks information from validation folds into training.
         self._cv_score = None
         cv_status = "insufficient_samples"
+        cv_strategy = "not_evaluated"
         if len(X_array) >= 10:
+            cv_strategy = "random_kfold_5"
             cv_pipeline = Pipeline([
                 ("scaler", StandardScaler()),
                 ("model", GradientBoostingRegressor(
@@ -125,6 +127,7 @@ class RevenuePredictor:
             "cv_r2": self._cv_score,
             "cv_score": self._cv_score,  # backward-compatible alias; not confidence
             "cv_status": cv_status,
+            "cv_strategy": cv_strategy,
         }
 
     def predict_ltv(self, features: List[float]) -> Dict:
@@ -147,6 +150,7 @@ class RevenuePredictor:
                 "confidence": None,
                 "confidence_status": "not_calibrated",
                 "cv_r2": self._cv_score,
+                "cv_strategy": "random_kfold_5" if self._cv_score is not None else "not_evaluated",
                 "range": None,
                 "prediction_interval": None,
                 "interval_status": "not_calibrated",
@@ -164,6 +168,7 @@ class RevenuePredictor:
             "confidence": None,
             "confidence_status": "not_calibrated",
             "cv_r2": None,
+            "cv_strategy": "not_evaluated",
             "range": None,
             "prediction_interval": None,
             "interval_status": "not_calibrated",
