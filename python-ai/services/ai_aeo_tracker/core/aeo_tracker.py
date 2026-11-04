@@ -45,6 +45,13 @@ class AEOProvider:
         )
         return response.choices[0].message.content or ""
 
+    async def ask_with_metadata(self, prompt: str) -> Dict:
+        return {
+            "text": await self.ask(prompt),
+            "citations": [],
+            "model": OPENAI_MODEL,
+        }
+
 class AEOVisibilityTracker:
     def __init__(self, provider: Optional[AEOProvider] = None, redis_client=None):
         self.provider = provider or AEOProvider()
@@ -112,14 +119,20 @@ class AEOVisibilityTracker:
         last_error: Optional[Exception] = None
         for attempt in range(attempts):
             try:
-                text = await self.provider.ask(rendered_prompt)
+                if hasattr(self.provider, "ask_with_metadata"):
+                    answer = await self.provider.ask_with_metadata(rendered_prompt)
+                else:
+                    answer = {"text": await self.provider.ask(rendered_prompt), "citations": [], "model": None}
+                text = answer.get("text", "")
                 mentioned = brand.lower() in text.lower()
                 return {
                     "prompt": original_prompt,
                     "engine": self.provider.name,
+                    "model": answer.get("model"),
                     "status": "ok",
                     "mentioned": mentioned,
                     "sentiment": await self._analyze_sentiment(text, brand),
+                    "citations": answer.get("citations", []),
                     "response_preview": text[:200],
                     "checked_at": datetime.now(timezone.utc).isoformat(),
                 }
