@@ -179,7 +179,10 @@ class AEOVisibilityTracker:
             return "unknown"
 
     def _cache_key(self, brand: str, rendered_prompt: str) -> str:
-        digest = hashlib.sha256(f"{brand}:{rendered_prompt}".encode()).hexdigest()[:16]
+        model = getattr(self.provider, "model", None) or "default"
+        digest = hashlib.sha256(
+            f"{self.provider.name}:{model}:{brand}:{rendered_prompt}".encode()
+        ).hexdigest()[:16]
         return f"aeo:cache:{self.provider.name}:{digest}"
 
     def _save_snapshot(self, brand: str, results: List[Dict]) -> None:
