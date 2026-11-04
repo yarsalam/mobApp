@@ -116,7 +116,7 @@ export class FeatureStoreRevenueService {
     }, 0);
 
     const channelType = this.encodeChannel(
-      user?.metadata?.acquisitionSource || 'organic',
+      user.acquisitionSource || user.metadata?.acquisitionSource || 'organic',
     );
 
     const timeToConversion = firstPayment

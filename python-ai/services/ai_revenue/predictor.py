@@ -91,38 +91,42 @@ class RevenuePredictor:
 
     def predict_ltv(self, features: List[float]) -> Dict:
         arr = np.asarray(features, dtype=np.float32)
-        if arr.size == 0 or np.isnan(arr).any():
-            return self._fallback()
+        if arr.ndim != 1 or arr.size != len(FEATURE_NAMES) or not np.isfinite(arr).all():
+            return self._fallback("invalid_features")
 
         if not hasattr(self.gb_model, "estimators_"):
-            return self._fallback()
+            return self._fallback("model_not_trained")
 
         try:
             X_scaled = self.scaler.transform([arr])
             prediction = float(self.gb_model.predict(X_scaled)[0])
 
-            if prediction < 0 or prediction > 10_000:
-                return self._fallback()
+            if not np.isfinite(prediction) or prediction < 0 or prediction > 10_000:
+                return self._fallback("prediction_out_of_range")
 
             return {
                 "predicted_ltv": round(prediction, 2),
-                "confidence": self._cv_score,  # confidence واقعی از cross validation
+                "confidence": self._cv_score,  # CV score, not a calibrated probability
                 "range": self._calculate_range(prediction),
                 "fallback": False,
             }
         except Exception as exc:
             logger.error("Prediction failed: %s", exc)
-            return self._fallback()
+            return self._fallback("prediction_error")
 
     @staticmethod
     def _calculate_range(prediction: float, margin: float = 0.15) -> List[float]:
         m = prediction * margin
         return [round(max(0.0, prediction - m), 2), round(prediction + m, 2)]
 
-    def _fallback(self) -> Dict:
+    @staticmethod
+    def _fallback(reason: str) -> Dict:
+        # Never manufacture an LTV estimate when the model is unavailable.
+        # Callers can detect fallback=True and use a documented data-backed fallback.
         return {
-            "predicted_ltv": 150.0,
-            "confidence": 0.3,
-            "range": [100.0, 200.0],
+            "predicted_ltv": None,
+            "confidence": 0.0,
+            "range": None,
             "fallback": True,
+            "fallback_reason": reason,
         }
