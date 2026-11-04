@@ -150,8 +150,9 @@ def test_history_mention_rate_excludes_unavailable_results():
         {"status": "ok", "mentioned": False},
     ])
 
-    key = "aeo:history:Example Brand"
+    key = "aeo:history:Example Brand:openai"
     snapshot = json.loads(redis.values[key])[0]
+    assert snapshot["engine"] == "openai"
     assert snapshot["status"] == "partial"
     assert snapshot["sample_count"] == 3
     assert snapshot["available_count"] == 2
