@@ -48,8 +48,15 @@ class UpliftModel:
                     else "legacy_model_estimate_unverified",
                 )
                 if self._use_fallback:
-                    self.trained = True
-                    logger.info("Descriptive uplift fallback loaded")
+                    if self._treated_count >= 2 and self._control_count >= 2:
+                        self.trained = True
+                        logger.info("Descriptive uplift fallback loaded")
+                    else:
+                        # Legacy fallback metadata did not record group counts;
+                        # do not trust a possibly fabricated zero or mean difference.
+                        self.trained = False
+                        self._effect_type = "legacy_fallback_unverified"
+                        logger.warning("Ignoring legacy uplift fallback without sample counts")
             except Exception as exc:
                 logger.warning("Could not load uplift meta: %s", exc)
 
