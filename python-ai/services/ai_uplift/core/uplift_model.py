@@ -19,6 +19,9 @@ class UpliftModel:
         self.trained: bool = False
         self._avg_uplift: float = 0.0
         self._use_fallback: bool = False
+        self._effect_type = "unavailable"
+        self._treated_count = 0
+        self._control_count = 0
         self._load()
 
     def _load(self) -> None:
@@ -26,47 +29,50 @@ class UpliftModel:
             try:
                 data = joblib.load(MODEL_PATH)
                 self.model = data.get("model")
-                self.trained = True
+                self.trained = self.model is not None
                 logger.info("Uplift model loaded")
             except Exception as exc:
                 logger.warning("Could not load uplift model: %s", exc)
 
-        # بارگذاری meta (شامل avg_uplift برای fallback)
         if os.path.exists(META_PATH):
             try:
-                with open(META_PATH, "r") as f:
-                    meta = json.load(f)
-                self._avg_uplift = meta.get("avg_uplift", 0.0)
-                self._use_fallback = meta.get("use_fallback", False)
+                with open(META_PATH, "r", encoding="utf-8") as handle:
+                    meta = json.load(handle)
+                self._avg_uplift = float(meta.get("avg_uplift", 0.0))
+                self._use_fallback = bool(meta.get("use_fallback", False))
+                self._treated_count = int(meta.get("treated_count", 0))
+                self._control_count = int(meta.get("control_count", 0))
+                self._effect_type = meta.get(
+                    "effect_type",
+                    "legacy_descriptive_difference" if self._use_fallback
+                    else "legacy_model_estimate_unverified",
+                )
                 if self._use_fallback:
                     self.trained = True
-                    logger.info("Fallback uplift loaded: avg=%.4f", self._avg_uplift)
+                    logger.info("Descriptive uplift fallback loaded")
             except Exception as exc:
                 logger.warning("Could not load uplift meta: %s", exc)
 
     def _save(self) -> None:
         os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
-
         if not self._use_fallback and self.model is not None:
             tmp = MODEL_PATH + ".tmp"
             joblib.dump({"model": self.model}, tmp)
             os.replace(tmp, MODEL_PATH)
 
-        # ذخیره meta همیشه
-        with open(META_PATH, "w") as f:
+        meta_tmp = META_PATH + ".tmp"
+        with open(meta_tmp, "w", encoding="utf-8") as handle:
             json.dump(
                 {
                     "avg_uplift": self._avg_uplift,
                     "use_fallback": self._use_fallback,
+                    "effect_type": self._effect_type,
+                    "treated_count": self._treated_count,
+                    "control_count": self._control_count,
                 },
-                f,
+                handle,
             )
-
-        logger.info(
-            "Uplift model saved (fallback=%s, avg_uplift=%.4f)",
-            self._use_fallback,
-            self._avg_uplift,
-        )
+        os.replace(meta_tmp, META_PATH)
 
     def train(
         self,
@@ -77,58 +83,92 @@ class UpliftModel:
     ) -> Dict:
         if treatment_col not in df.columns or outcome_col not in df.columns:
             raise ValueError(f"Columns '{treatment_col}' or '{outcome_col}' not found")
-        missing = [f for f in features if f not in df.columns]
+        if not features:
+            raise ValueError("At least one feature column is required")
+        missing = [feature for feature in features if feature not in df.columns]
         if missing:
             raise ValueError(f"Feature columns missing: {missing}")
 
-        T = df[treatment_col].values
-        Y = df[outcome_col].values
-        X = df[features].values
+        treatment = pd.to_numeric(df[treatment_col], errors="coerce").to_numpy(dtype=float)
+        outcome = pd.to_numeric(df[outcome_col], errors="coerce").to_numpy(dtype=float)
+        feature_matrix = df[features].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
 
-        # محاسبه avg_uplift برای fallback (همیشه)
-        treated_mean = float(Y[T == 1].mean()) if (T == 1).any() else 0.0
-        control_mean = float(Y[T == 0].mean()) if (T == 0).any() else 0.0
+        if not np.isfinite(treatment).all() or not np.isfinite(outcome).all():
+            raise ValueError("Treatment and outcome must contain only finite numeric values")
+        if not np.isfinite(feature_matrix).all():
+            raise ValueError("Features must contain only finite numeric values")
+        if not set(np.unique(treatment)).issubset({0.0, 1.0}):
+            raise ValueError("Treatment must be binary with values 0 or 1")
+
+        self._treated_count = int(np.sum(treatment == 1))
+        self._control_count = int(np.sum(treatment == 0))
+        if self._treated_count < 2 or self._control_count < 2:
+            raise ValueError("At least two treated and two control samples are required")
+
+        treated_mean = float(np.mean(outcome[treatment == 1]))
+        control_mean = float(np.mean(outcome[treatment == 0]))
         self._avg_uplift = treated_mean - control_mean
 
         try:
             from econml.dml import LinearDML
-            from sklearn.ensemble import GradientBoostingRegressor
+            from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
 
-            model = LinearDML(
-                model_y=GradientBoostingRegressor(n_estimators=100),
-                model_t=GradientBoostingRegressor(n_estimators=100),
+            estimator = LinearDML(
+                model_y=GradientBoostingRegressor(n_estimators=100, random_state=42),
+                model_t=GradientBoostingClassifier(n_estimators=100, random_state=42),
                 discrete_treatment=True,
                 cv=2,
             )
-            model.fit(Y, T, X=X)
-            self.model = model
+            estimator.fit(outcome, treatment, X=feature_matrix)
+            self.model = estimator
             self._use_fallback = False
+            self._effect_type = "model_estimated_effect_unverified"
             self.trained = True
             self._save()
-            return {
-                "status": "trained",
-                "samples": len(df),
-                "avg_uplift": round(self._avg_uplift, 4),
-            }
+            return self._training_result(
+                status="trained",
+                method="LinearDML",
+            )
 
         except ImportError:
-            logger.warning("econml not available, using mean-difference fallback")
+            logger.warning("econml unavailable; retaining descriptive group difference only")
+            self.model = None
             self._use_fallback = True
+            self._effect_type = "descriptive_group_difference"
             self.trained = True
             self._save()
-            return {
-                "status": "trained_fallback",
-                "samples": len(df),
-                "avg_uplift": round(self._avg_uplift, 4),
-            }
+            return self._training_result(
+                status="trained_fallback",
+                method="group_mean_difference",
+            )
+
+    def _training_result(self, status: str, method: str) -> Dict:
+        return {
+            "status": status,
+            "method": method,
+            "effect_type": self._effect_type,
+            "causal_claim": False,
+            "causal_claim_reason": "Randomized assignment and causal identification were not verified by this API.",
+            "samples": self._treated_count + self._control_count,
+            "treated_count": self._treated_count,
+            "control_count": self._control_count,
+            "avg_uplift": round(self._avg_uplift, 4),
+            "confidence_interval": None,
+            "interval_status": "not_calibrated",
+        }
 
     def predict_uplift(self, X: np.ndarray) -> List[float]:
         if not self.trained:
             raise ValueError("Model not trained yet")
 
-        if self._use_fallback or self.model is None:
-            return [round(self._avg_uplift, 4)] * len(X)
+        X_array = np.asarray(X, dtype=np.float32)
+        if X_array.ndim != 2 or not np.isfinite(X_array).all():
+            raise ValueError("Prediction features must be a finite 2D matrix")
 
-        X_arr = np.asarray(X, dtype=np.float32)
-        uplift = self.model.effect(X_arr)
-        return [round(float(v), 4) for v in uplift]
+        if self._use_fallback or self.model is None:
+            # This is one descriptive group mean difference repeated for each row,
+            # not an individualized or causally identified treatment effect.
+            return [round(self._avg_uplift, 4)] * len(X_array)
+
+        effects = self.model.effect(X_array)
+        return [round(float(value), 4) for value in effects]
