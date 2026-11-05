@@ -55,7 +55,7 @@ def test_prediction_rejects_values_without_complete_provenance():
 
 def test_prediction_rejects_non_finite_feature_values():
     payload = complete_payload()
-    payload["campaignCost"] = float("nan")
+    payload["campaignCost"] = "NaN"
 
     response = client.post("/predict/ltv", json=payload)
 
