@@ -400,6 +400,7 @@ export class RevenueAttributionService {
             competitorPressure: features.competitorPressure,
             seasonalityFactor: features.seasonalityFactor,
             segmentSize: features.segmentSize,
+            featureProvenance: features.featureProvenance,
           },
           { timeout },
         ),
@@ -423,9 +424,21 @@ export class RevenueAttributionService {
 
       return predictedLtv;
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
+      const response = (error as {
+        response?: { status?: number; data?: { detail?: { code?: string } } };
+      })?.response;
+      if (
+        response?.status === 422 &&
+        response.data?.detail?.code === 'insufficient_data'
+      ) {
+        this.logger.warn(
+          `ML prediction unavailable for user ${userId}: required feature data/provenance is missing`,
+        );
+        return null;
+      }
 
-      this.logger.error(`ML prediction failed, using fallback: ${message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`ML prediction failed, using cohort fallback: ${message}`);
 
       const user = await this.userRepo.findOne({
         where: { id: userId },

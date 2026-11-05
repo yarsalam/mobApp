@@ -1,0 +1,29 @@
+name: Revenue LTV TypeScript build
+
+on:
+  pull_request:
+    paths:
+      - "src/feature-store-rvenue/**"
+      - "src/revenue/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/revenue-ltv-typescript.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  nest-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Compile NestJS backend
+        run: npm run build
+      - name: Test Revenue feature provenance contract
+        run: npm test -- --runInBand feature-store-rvenue.service.spec.ts
