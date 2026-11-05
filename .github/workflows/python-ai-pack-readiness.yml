@@ -32,4 +32,4 @@ jobs:
       - name: Compile service source
         run: python -m compileall -q python-ai/services
       - name: Run focused regression tests
-        run: python -m pytest -q python-ai/tests/test_pack_readiness.py python-ai/tests/test_aeo_status.py python-ai/tests/test_matching_scoring.py python-ai/tests/test_uplift_causality_contract.py
+        run: python -m pytest -q python-ai/tests/test_pack_readiness.py python-ai/tests/test_aeo_status.py python-ai/tests/test_matching_scoring.py python-ai/tests/test_uplift_causality_contract.py python-ai/tests/test_revenue_feature_contract.py python-ai/tests/test_ai_revenue_predictor.py
