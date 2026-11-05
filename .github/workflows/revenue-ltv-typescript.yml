@@ -25,3 +25,5 @@ jobs:
         run: npm ci
       - name: Compile NestJS backend
         run: npm run build
+      - name: Test Revenue feature provenance contract
+        run: npm test -- --runInBand --runTestsByPath src/feature-store-rvenue/feature-store-rvenue.service.spec.ts
