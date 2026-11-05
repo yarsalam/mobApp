@@ -54,10 +54,12 @@ class LTVRequest(BaseModel):
             provenance = self.featureProvenance.get(name)
             if (
                 value is None
+                or not np.isfinite(float(value))
                 or provenance is None
                 or provenance.status == "missing"
                 or not provenance.source
                 or not provenance.asOf
+                or not provenance.window
                 or not provenance.units
                 or not provenance.transformation
                 or provenance.revision != FEATURE_REVISION
