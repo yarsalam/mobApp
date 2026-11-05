@@ -11,22 +11,22 @@ describe('FeatureStoreRevenueService provenance contract', () => {
     metadata: {},
   };
 
-  const makeService = (userRecord: unknown = user) => {
+  const makeService = (userRecord: typeof user | null = user) => {
     const redis = {
-      get: jest.fn().mockResolvedValue(null),
-      set: jest.fn().mockResolvedValue('OK'),
-      del: jest.fn().mockResolvedValue(1),
+      get: jest.fn<() => Promise<string | null>>().mockResolvedValue(null),
+      set: jest.fn<() => Promise<string>>().mockResolvedValue('OK'),
+      del: jest.fn<() => Promise<number>>().mockResolvedValue(1),
     };
     const userRepo = {
-      findOne: jest.fn().mockResolvedValue(userRecord),
-      count: jest.fn()
+      findOne: jest.fn<() => Promise<typeof user | null>>().mockResolvedValue(userRecord),
+      count: jest.fn<() => Promise<number>>()
         .mockResolvedValueOnce(10)
         .mockResolvedValueOnce(100),
     };
-    const paymentRepo = { find: jest.fn().mockResolvedValue([]) };
-    const eventRepo = { find: jest.fn().mockResolvedValue([]) };
+    const paymentRepo = { find: jest.fn<() => Promise<unknown[]>>().mockResolvedValue([]) };
+    const eventRepo = { find: jest.fn<() => Promise<unknown[]>>().mockResolvedValue([]) };
     const seoActivityRepo = {};
-    const externalSEOTools = { getKeywordDifficulty: jest.fn().mockResolvedValue(null) };
+    const externalSEOTools = { getKeywordDifficulty: jest.fn<() => Promise<number | null>>().mockResolvedValue(null) };
 
     const service = new FeatureStoreRevenueService(
       redis as never,
