@@ -1,0 +1,30 @@
+# Runtime-only NestJS API. No build context or dependency service is declared.
+services:
+  backend:
+    image: ghcr.io/yarsalam/yarsalam-backend:${BACKEND_IMAGE_TAG:?Set BACKEND_IMAGE_TAG to an immutable GHCR tag}
+    container_name: backend
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      PORT: "5000"
+      DB_SYNC: "false"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      DB_HOST: user-mysql
+      DB_PORT: "3306"
+      DB_USER: ${MYSQL_USER:-appuser}
+      DB_PASS: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env.production}
+      DB_NAME: ${MYSQL_DATABASE:-yarsalam}
+    ports:
+      - "127.0.0.1:5001:5000"
+    volumes:
+      - ${PUBLIC_ASSETS_DIR:?Set PUBLIC_ASSETS_DIR to the existing persistent public-assets directory}:/app/public
+    networks:
+      - yarsalam_network
+
+networks:
+  yarsalam_network:
+    external: true
+    name: yarsalam_network

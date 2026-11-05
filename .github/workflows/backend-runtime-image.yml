@@ -10,6 +10,8 @@ on:
       - "src/**"
       - "tsconfig*.json"
       - "nest-cli.json"
+      - "docker-compose.runtime.yml"
+      - "docs/BACKEND_RUNTIME_DEPLOYMENT.md"
       - ".github/workflows/backend-runtime-image.yml"
   push:
     branches: [main]
@@ -83,3 +85,27 @@ jobs:
         run: |
           docker tag "yarsalam-backend:ci-${GITHUB_SHA}" ghcr.io/yarsalam/yarsalam-backend:latest
           docker push ghcr.io/yarsalam/yarsalam-backend:latest
+
+  validate-runtime-compose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate image-only runtime Compose
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/runtime.env" <<'ENV'
+          BACKEND_IMAGE_TAG=ci-placeholder
+          PUBLIC_ASSETS_DIR=/tmp/yarsalam-public
+          MYSQL_USER=appuser
+          MYSQL_PASSWORD=ci-placeholder
+          MYSQL_DATABASE=yarsalam
+          ENV
+          # Compose validates the declared runtime env_file path even for config-only checks.
+          # This empty placeholder exists only on the disposable CI runner.
+          : > .env.production
+          docker compose --env-file "$RUNNER_TEMP/runtime.env" -f docker-compose.runtime.yml config --quiet
+          docker compose --env-file "$RUNNER_TEMP/runtime.env" -f docker-compose.runtime.yml config --format json \
+            | python -c 'import json,sys; c=json.load(sys.stdin); s=c["services"]; assert set(s)=={"backend"}, set(s); assert "build" not in s["backend"]; assert s["backend"]["image"].startswith("ghcr.io/yarsalam/yarsalam-backend:"); print("Runtime-only backend Compose validated.")'
