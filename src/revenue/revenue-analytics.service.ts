@@ -49,7 +49,7 @@ export class RevenueAnalyticsService {
       .addSelect('COUNT(DISTINCT p.userId)', 'payingUsers')
       .where('p.status = :status', { status: 'paid' })
       .andWhere('p.currency = :currency', { currency })
-      .andWhere('p.confirmedAt >= :since', { since: sinceDays(days) })
+      .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since: sinceDays(days) })
       .groupBy('u.gender')
       .getRawMany();
 
@@ -94,7 +94,7 @@ export class RevenueAnalyticsService {
       .addSelect('COUNT(DISTINCT p.userId)', 'payingUsers')
       .where('p.status = :status', { status: 'paid' })
       .andWhere('p.currency = :currency', { currency })
-      .andWhere('p.confirmedAt >= :since', { since: sinceDays(days) })
+      .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since: sinceDays(days) })
       .groupBy(productExpr)
       .orderBy('SUM(p.amount)', 'DESC')
       .getRawMany();
@@ -123,13 +123,13 @@ export class RevenueAnalyticsService {
         .addSelect('COUNT(*)', 'paymentCount')
         .where('p.status = :status', { status: 'paid' })
         .andWhere('p.currency = :currency', { currency })
-        .andWhere('p.confirmedAt >= :since', { since })
+        .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since })
         .getRawOne(),
       this.payments.createQueryBuilder('p')
         .select('COUNT(DISTINCT p.userId)', 'payingUsers')
         .where('p.status = :status', { status: 'paid' })
         .andWhere('p.currency = :currency', { currency })
-        .andWhere('p.confirmedAt >= :since', { since })
+        .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since })
         .getRawOne(),
       this.users.createQueryBuilder('u')
         .where('u.status = :status', { status: 'active' })
@@ -157,16 +157,16 @@ export class RevenueAnalyticsService {
     const since = new Date();
     since.setMonth(since.getMonth() - months);
     const rows = await this.users.createQueryBuilder('u')
-      .leftJoin('u.payments', 'p', 'p.status = :status AND p.currency = :currency AND p.confirmedAt >= u.createdAt', {
+      .leftJoin('u.payments', 'p', 'p.status = :status AND p.currency = :currency AND COALESCE(p.confirmedAt, p.createdAt) >= u.createdAt', {
         status: 'paid',
         currency,
       })
       .select("DATE_FORMAT(u.createdAt, '%Y-%m')", 'cohort')
       .addSelect('COUNT(DISTINCT u.id)', 'users')
-      .addSelect("SUM(CASE WHEN p.confirmedAt < DATE_ADD(u.createdAt, INTERVAL 30 DAY) THEN p.amount ELSE 0 END)", 'revenue30d')
-      .addSelect("SUM(CASE WHEN p.confirmedAt < DATE_ADD(u.createdAt, INTERVAL 60 DAY) THEN p.amount ELSE 0 END)", 'revenue60d')
-      .addSelect("SUM(CASE WHEN p.confirmedAt < DATE_ADD(u.createdAt, INTERVAL 90 DAY) THEN p.amount ELSE 0 END)", 'revenue90d')
-      .addSelect("SUM(CASE WHEN p.confirmedAt < DATE_ADD(u.createdAt, INTERVAL 180 DAY) THEN p.amount ELSE 0 END)", 'revenue180d')
+      .addSelect("SUM(CASE WHEN COALESCE(p.confirmedAt, p.createdAt) < DATE_ADD(u.createdAt, INTERVAL 30 DAY) THEN p.amount ELSE 0 END)", 'revenue30d')
+      .addSelect("SUM(CASE WHEN COALESCE(p.confirmedAt, p.createdAt) < DATE_ADD(u.createdAt, INTERVAL 60 DAY) THEN p.amount ELSE 0 END)", 'revenue60d')
+      .addSelect("SUM(CASE WHEN COALESCE(p.confirmedAt, p.createdAt) < DATE_ADD(u.createdAt, INTERVAL 90 DAY) THEN p.amount ELSE 0 END)", 'revenue90d')
+      .addSelect("SUM(CASE WHEN COALESCE(p.confirmedAt, p.createdAt) < DATE_ADD(u.createdAt, INTERVAL 180 DAY) THEN p.amount ELSE 0 END)", 'revenue180d')
       .where('u.createdAt >= :since', { since })
       .groupBy("DATE_FORMAT(u.createdAt, '%Y-%m')")
       .orderBy('cohort', 'ASC')
@@ -178,7 +178,10 @@ export class RevenueAnalyticsService {
       unit: currencyUnit(currency),
       cohorts: rows.map(row => {
         const cohortDate = new Date(`${row.cohort}-01T00:00:00`);
-        const ageDays = Math.floor((now - cohortDate.getTime()) / 86_400_000);
+        const cohortEnd = new Date(cohortDate);
+        cohortEnd.setMonth(cohortEnd.getMonth() + 1);
+        cohortEnd.setDate(0);
+        const ageDays = Math.floor((now - cohortEnd.getTime()) / 86_400_000);
         return {
           cohort: String(row.cohort),
           users: finite(row.users),
@@ -199,12 +202,12 @@ export class RevenueAnalyticsService {
       this.users.createQueryBuilder('u').where('u.createdAt >= :since', { since }).getCount(),
       this.users.createQueryBuilder('u').where('u.createdAt >= :since', { since })
         .andWhere('u.isCompleted = :completed', { completed: true }).getCount(),
-      this.payments.createQueryBuilder('p').select('COUNT(DISTINCT p.userId)', 'users')
+      this.payments.createQueryBuilder('p').innerJoin('p.user', 'u').select('COUNT(DISTINCT p.userId)', 'users')
         .where('p.status = :status', { status: 'paid' }).andWhere('p.currency = :currency', { currency })
-        .andWhere('p.confirmedAt >= :since', { since }).getRawOne(),
-      this.payments.createQueryBuilder('p').select('COALESCE(SUM(p.amount), 0)', 'revenue')
+        .andWhere('u.createdAt >= :since', { since }).andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since }).getRawOne(),
+      this.payments.createQueryBuilder('p').innerJoin('p.user', 'u').select('COALESCE(SUM(p.amount), 0)', 'revenue')
         .where('p.status = :status', { status: 'paid' }).andWhere('p.currency = :currency', { currency })
-        .andWhere('p.confirmedAt >= :since', { since }).getRawOne(),
+        .andWhere('u.createdAt >= :since', { since }).andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since }).getRawOne(),
     ]);
     const payingUsers = finite(payerRow?.users);
     const revenue = Math.round(finite(revenueRow?.revenue));
@@ -228,7 +231,7 @@ export class RevenueAnalyticsService {
       .addSelect('SUM(p.amount)', 'revenue')
       .where('p.status = :status', { status: 'paid' })
       .andWhere('p.currency = :currency', { currency })
-      .andWhere('p.confirmedAt >= :since', { since: sinceDays(days) })
+      .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since: sinceDays(days) })
       .groupBy('p.userId')
       .orderBy('SUM(p.amount)', 'DESC')
       .getRawMany();
@@ -289,7 +292,7 @@ export class RevenueAnalyticsService {
     const [grossRevenue, activeVip] = await Promise.all([
       this.payments.createQueryBuilder('p').select('COALESCE(SUM(p.amount), 0)', 'revenue')
         .where('p.status = :status', { status: 'paid' }).andWhere('p.currency = :currency', { currency })
-        .andWhere('p.confirmedAt >= :since', { since }).getRawOne(),
+        .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since }).getRawOne(),
       this.vips.createQueryBuilder('v').select('COUNT(DISTINCT v.userId)', 'count')
         .where('v.active = :active', { active: true }).andWhere('v.expiresAt > :now', { now: new Date() }).getRawOne(),
     ]);
@@ -307,7 +310,7 @@ export class RevenueAnalyticsService {
     };
   }
 
-  async forecastAccuracy(history: { date: string; amount: number }[]) {
+  async forecastAccuracy(history: { date: string; amount: number }[], currency: PaymentCurrency = 'IRT') {
     if (history.length < 15) {
       return { dataAvailable: false, mape: null, rmse: null, lastEvaluatedAt: null, history: [], evaluationMethod: '7-day rolling mean backtest', reason: 'At least 15 daily observations are required.' };
     }
@@ -323,7 +326,7 @@ export class RevenueAnalyticsService {
     const rmse = Math.sqrt(evaluations.reduce((sum, row) => sum + row.error ** 2, 0) / evaluations.length);
     return {
       dataAvailable: true,
-      currency: 'history_currency_not_included',
+      currency,
       mape: mape === null ? null : Math.round(mape * 100) / 100,
       rmse: Math.round(rmse * 100) / 100,
       lastEvaluatedAt: new Date().toISOString(),
