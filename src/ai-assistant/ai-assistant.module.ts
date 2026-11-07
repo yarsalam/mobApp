@@ -26,6 +26,7 @@ import { AssistantConversation } from './entities/assistant-conversation.entity'
 import { AssistantMessage } from './entities/assistant-message.entity';
 import { ProfileVisitor } from 'src/profile-visitors/entities/profile-visitor.entity';
 import { User } from 'src/users/entities/user.entity';
+import { Message } from 'src/message/entities/message.entity';
 import { SupportTicket } from 'src/ai-support/entities/ticket.entity';
 import { TicketFeedback } from 'src/ai-support/entities/ticket-feedback.entity';
 import { TicketMessage } from 'src/ai-support/entities/ticket-message.entity';
@@ -48,6 +49,7 @@ import { ProfileVisitorsService } from 'src/profile-visitors/profile-visitors.se
       TicketFeedback,
       TicketMessage,
       User,
+      Message,
     ]),
     QueuesModule, // ← Bull queues (phase-check, ai-support)
     HttpModule,
