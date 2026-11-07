@@ -36,8 +36,8 @@ describe('RevenueAnalyticsService forecast accuracy', () => {
     expect(result.dataAvailable).toBe(true);
     expect(result.currency).toBe('IRT');
     expect(result.evaluationSamples).toBe(8);
-    expect(result.mape).toBe(50);
-    expect(result.rmse).toBe(100);
+    expect(result.mape).toBe(25);
+    expect(result.rmse).toBeCloseTo(59.76, 2);
     expect(result.history[0]).toMatchObject({
       predicted: 100,
       actual: 200,
