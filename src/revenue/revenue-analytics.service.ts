@@ -433,13 +433,19 @@ export class RevenueAnalyticsService {
     const since = sinceDays(30);
     const reasonExpr = "JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.reason'))";
     const amountExpr = "CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.amountRials')), '0') AS DECIMAL(20,0))";
-    const [depositRevenue, salesRow, activeVip] = await Promise.all([
+    const [depositRevenue, checkoutDebit, fulfilledSales, activeVip] = await Promise.all([
       this.payments.createQueryBuilder('p').select('COALESCE(SUM(p.amount), 0)', 'revenue')
         .where('p.status = :status', { status: 'paid' }).andWhere('p.currency = :currency', { currency })
         .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since }).getRawOne(),
       this.events.createQueryBuilder('e').select(`COALESCE(SUM(${amountExpr}), 0)`, 'revenue')
         .where('e.type = :type', { type: EventType.CREDITS_SPENT })
         .andWhere(`${reasonExpr} LIKE :reason`, { reason: 'buy:%' })
+        .andWhere('e.createdAt >= :since', { since }).getRawOne(),
+      this.events.createQueryBuilder('e').select(`COALESCE(SUM(${amountExpr}), 0)`, 'revenue')
+        .addSelect('COUNT(*)', 'purchaseCount')
+        .where('e.type = :type', { type: EventType.PURCHASE })
+        .andWhere("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.isCommercialPurchase')) = 'true'")
+        .andWhere("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.currency')) = 'IRT'")
         .andWhere('e.createdAt >= :since', { since }).getRawOne(),
       this.vips.createQueryBuilder('v').select('COUNT(DISTINCT v.userId)', 'count')
         .where('v.active = :active', { active: true }).andWhere('v.expiresAt > :now', { now: new Date() }).getRawOne(),
@@ -456,9 +462,11 @@ export class RevenueAnalyticsService {
       recurringRevenueAvailable: false,
       grossRevenue30d: Math.round(finite(depositRevenue?.revenue)),
       walletDeposits30d: Math.round(finite(depositRevenue?.revenue)),
-      grossSales30d: Math.round(finite(salesRow?.revenue)),
+      walletDebits30d: Math.round(finite(checkoutDebit?.revenue)),
+      grossSales30d: Math.round(finite(fulfilledSales?.revenue)),
+      fulfilledPurchaseCount30d: finite(fulfilledSales?.purchaseCount),
       activeVipUsers: finite(activeVip?.count),
-      limitation: 'MRR/ARR require subscription plan, period, price, currency and renewal linkage. Wallet deposits, wallet-funded bundle sales and active VIP counts are shown as separate factual measures; one-time events are not treated as recurring revenue.',
+      limitation: 'MRR/ARR require subscription plan, period, price, currency and renewal linkage. Wallet deposits, checkout debits, fulfilled wallet-funded bundle sales and active VIP counts are shown as separate factual measures; one-time events are not treated as recurring revenue.',
     };
   }
 
