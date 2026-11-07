@@ -427,16 +427,16 @@ export class RevenueIntelligenceService {
 
     const rows = await this.paymentRepository
       .createQueryBuilder('payment')
-      .select('DATE(payment.createdAt)', 'date')
+      .select('DATE(COALESCE(payment.confirmedAt, payment.createdAt))', 'date')
       .addSelect('SUM(payment.amount)', 'revenue')
       .where('payment.status = :status', { status: 'paid' })
       .andWhere('payment.currency = :currency', { currency })
-      .andWhere('payment.createdAt >= :start', { start })
-      .andWhere('payment.createdAt < :end', {
+      .andWhere('COALESCE(payment.confirmedAt, payment.createdAt) >= :start', { start })
+      .andWhere('COALESCE(payment.confirmedAt, payment.createdAt) < :end', {
         end: new Date(end.getTime() + 24 * 60 * 60 * 1000),
       })
-      .groupBy('DATE(payment.createdAt)')
-      .orderBy('DATE(payment.createdAt)', 'ASC')
+      .groupBy('DATE(COALESCE(payment.confirmedAt, payment.createdAt))')
+      .orderBy('DATE(COALESCE(payment.confirmedAt, payment.createdAt))', 'ASC')
       .getRawMany<{ date: string; revenue: string }>();
 
     const byDate = new Map(
