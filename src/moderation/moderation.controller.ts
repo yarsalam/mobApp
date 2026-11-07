@@ -48,7 +48,7 @@ export class ModerationController {
     return {
       success: true,
       data: {
-        allowed: result.action === 'allow',
+        allowed: result.action === 'allow' && result.severity === 'low',
         severity: result.severity,
         ...(process.env.NODE_ENV === 'development' && {
           flags: result.flags,
