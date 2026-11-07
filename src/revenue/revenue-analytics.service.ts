@@ -74,6 +74,7 @@ export class RevenueAnalyticsService {
       unit: currencyUnit(currency),
       periodDays: days,
       source: 'payments.status=paid; confirmedAt with createdAt fallback',
+      genderBasis: 'current_user_profile_gender_at_query_time',
       ...result,
       total: {
         revenue: result.male.revenue + result.female.revenue + result.unknown.revenue,
