@@ -1,3 +1,4 @@
+import { describe, expect, it } from '@jest/globals';
 import { RevenueAnalyticsService } from './revenue-analytics.service';
 
 describe('RevenueAnalyticsService forecast accuracy', () => {
