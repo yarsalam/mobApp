@@ -337,7 +337,7 @@ export class ModerationService {
         userId,
         messageHash,
         messagePreview,
-        isSafe: result.is_safe,
+        isSafe: result.isSafe ?? result.is_safe ?? false,
         confidence: result.confidence,
         severity: result.severity,
         flags: result.flags || [],
