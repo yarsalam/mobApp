@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - "src/revenue/**"
+      - "src/moderation/**"
+      - "src/message/**"
+      - "python-ai/services/ai_moderation/**"
+      - "python-ai/tests/test_ai_moderation_fail_closed.py"
       - "src/admin-api/controllers/revenue/**"
       - "package.json"
       - "package-lock.json"
@@ -30,7 +34,7 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Revenue analytics unit tests
+      - name: Revenue and moderation unit tests
         run: npm test -- --runInBand revenue-analytics.service.spec.ts
 
       - name: Compile backend
