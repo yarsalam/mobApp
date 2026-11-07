@@ -6,6 +6,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -91,6 +92,20 @@ export class MessageService {
       undefined,
       dto.acceptModerationWarning === true,
     );
+
+    if (
+      moderationResult.action === 'pending' ||
+      moderationResult.flags?.includes('moderation_unavailable')
+    ) {
+      throw new ServiceUnavailableException({
+        statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+        code: 'MODERATION_UNAVAILABLE',
+        message:
+          moderationResult.warning ??
+          'بررسی امنیتی موقتاً در دسترس نیست؛ پیام تا تکمیل بررسی ارسال نمی‌شود.',
+        retryable: true,
+      });
+    }
 
     if (
       moderationResult.severity === 'medium' &&
