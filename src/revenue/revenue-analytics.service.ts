@@ -144,33 +144,82 @@ export class RevenueAnalyticsService {
   async byProduct(_depositCurrency: PaymentCurrency = 'IRT', days = 90) {
     const reasonExpr = "JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.reason'))";
     const amountExpr = "CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.amountRials')), '0') AS DECIMAL(20,0))";
+    const fulfilledAmountExpr = "CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.amountRials')), '0') AS DECIMAL(20,0))";
     const productExpr = `SUBSTRING(${reasonExpr}, 5)`;
-    const rows = await this.events.createQueryBuilder('e')
-      .select(productExpr, 'product')
-      .addSelect(`SUM(${amountExpr})`, 'revenue')
-      .addSelect('COUNT(*)', 'transactionCount')
-      .addSelect('COUNT(DISTINCT e.userId)', 'payingUsers')
-      .where('e.type = :type', { type: EventType.CREDITS_SPENT })
-      .andWhere(`${reasonExpr} LIKE :reason`, { reason: 'buy:%' })
-      .andWhere('e.createdAt >= :since', { since: sinceDays(days) })
-      .groupBy(productExpr)
-      .orderBy(`SUM(${amountExpr})`, 'DESC')
-      .getRawMany();
+    const since = sinceDays(days);
 
-    const total = rows.reduce((sum, row) => sum + finite(row.revenue), 0);
+    const [debitRows, fulfilledRows] = await Promise.all([
+      this.events.createQueryBuilder('e')
+        .select(productExpr, 'product')
+        .addSelect(`SUM(${amountExpr})`, 'revenue')
+        .addSelect('COUNT(*)', 'transactionCount')
+        .addSelect('COUNT(DISTINCT e.userId)', 'payingUsers')
+        .where('e.type = :type', { type: EventType.CREDITS_SPENT })
+        .andWhere(`${reasonExpr} LIKE :reason`, { reason: 'buy:%' })
+        .andWhere('e.createdAt >= :since', { since })
+        .groupBy(productExpr)
+        .orderBy(`SUM(${amountExpr})`, 'DESC')
+        .getRawMany(),
+      this.events.createQueryBuilder('e')
+        .select("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.bundleCode'))", 'product')
+        .addSelect(`SUM(${fulfilledAmountExpr})`, 'fulfilledRevenue')
+        .addSelect('COUNT(*)', 'fulfilledPurchaseCount')
+        .addSelect('COUNT(DISTINCT e.userId)', 'fulfilledPayingUsers')
+        .where('e.type = :type', { type: EventType.PURCHASE })
+        .andWhere("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.isCommercialPurchase')) = 'true'")
+        .andWhere("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.currency')) = 'IRT'")
+        .andWhere('e.createdAt >= :since', { since })
+        .groupBy("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.bundleCode'))")
+        .getRawMany(),
+    ]);
+
+    const fulfilledByProduct = new Map<string, {
+      revenue: number;
+      count: number;
+      users: number;
+    }>();
+    for (const row of fulfilledRows) {
+      const product = String(row.product ?? 'unclassified');
+      fulfilledByProduct.set(product, {
+        revenue: finite(row.fulfilledRevenue),
+        count: finite(row.fulfilledPurchaseCount),
+        users: finite(row.fulfilledPayingUsers),
+      });
+    }
+
+    const products = debitRows.map(row => {
+      const product = String(row.product ?? 'unclassified');
+      const fulfilled = fulfilledByProduct.get(product);
+      return {
+        product,
+        revenue: Math.round(finite(row.revenue)),
+        fulfilledRevenue: Math.round(fulfilled?.revenue ?? 0),
+        fulfilledPurchaseCount: fulfilled?.count ?? 0,
+        fulfilledPayingUsers: fulfilled?.users ?? 0,
+        share: 0,
+        transactionCount: finite(row.transactionCount),
+        payingUsers: finite(row.payingUsers),
+      };
+    });
+
+    const totalDebit = products.reduce((sum, row) => sum + row.revenue, 0);
+    const totalFulfilled = products.reduce((sum, row) => sum + row.fulfilledRevenue, 0);
+    const fulfilledPurchaseCount = products.reduce((sum, row) => sum + row.fulfilledPurchaseCount, 0);
+
+    for (const row of products) {
+      row.share = totalDebit > 0 ? Math.round((row.revenue / totalDebit) * 10000) / 100 : 0;
+    }
+
     return {
       currency: 'IRT',
       unit: 'rial',
       periodDays: days,
-      source: 'user_events.type=credits_spent; metadata.reason starts with buy:',
-      totalRevenue: Math.round(total),
-      rows: rows.map(row => ({
-        product: String(row.product ?? 'unclassified'),
-        revenue: Math.round(finite(row.revenue)),
-        share: total > 0 ? Math.round((finite(row.revenue) / total) * 10000) / 100 : 0,
-        transactionCount: finite(row.transactionCount),
-        payingUsers: finite(row.payingUsers),
-      })),
+      source: 'wallet debit events for checkout spend',
+      fulfilledPurchaseSource: 'purchase events with commercial flag and amount after bundle grant success',
+      totalRevenue: Math.round(totalDebit),
+      totalFulfilledRevenue: Math.round(totalFulfilled),
+      fulfilledPurchaseCount,
+      rows: products,
     };
   }
 
