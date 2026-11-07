@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Personality } from './entities/personality.entity';
@@ -8,15 +8,46 @@ import {
   DEFAULT_PERSONALITY_WEIGHTS,
 } from './services/personality-weight.service';
 import { PersonalityLearningService } from './services/personality-learning.service';
+import { User } from '../users/entities/user.entity';
+import { Message } from '../message/entities/message.entity';
+import { OpenRouterClientService } from '../ai-assistant/llm/openrouter-client.service';
 
 @Injectable()
+const OCEAN_AXES = [
+  'openness',
+  'conscientiousness',
+  'extraversion',
+  'agreeableness',
+  'neuroticism',
+] as const;
+
+type OceanAxis = (typeof OCEAN_AXES)[number];
+
+function normalizeEvidenceText(value: string): string {
+  return value
+    .normalize('NFKC')
+    .replace(/[ي]/g, 'ی')
+    .replace(/[ك]/g, 'ک')
+    .replaceAll('\n', ' ')
+    .replaceAll('\r', ' ')
+    .trim()
+    .replaceAll('  ', ' ');
+}
+
 export class PersonalityService {
+  private readonly logger = new Logger(PersonalityService.name);
+
   constructor(
     @InjectRepository(Personality)
     private readonly repo: Repository<Personality>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
+    @InjectRepository(Message)
+    private readonly messageRepo: Repository<Message>,
     private readonly aiClient: PersonalityAIClient,
     private readonly weightService: PersonalityWeightService,
     private readonly learningService: PersonalityLearningService,
+    private readonly llm: OpenRouterClientService,
   ) {}
 
   async analyzeSentiment(messages: string[]): Promise<any> {
