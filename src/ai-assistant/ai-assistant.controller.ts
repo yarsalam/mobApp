@@ -111,6 +111,7 @@ export class AiAssistantController {
       userId,
       body.convId,
       body.message,
+      body.targetUserId,
     );
 
     return { reply };
