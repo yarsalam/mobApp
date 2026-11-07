@@ -5,8 +5,6 @@ import { Payment, PaymentCurrency } from '../payments/entities/payment.entity';
 import { User } from '../users/entities/user.entity';
 import { UserVip } from '../payments/vip/entities/vip.entity';
 
-const CURRENCIES: PaymentCurrency[] = ['IRT', 'USDT', 'BTC', 'USD'];
-
 function finite(value: unknown): number {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -75,7 +73,7 @@ export class RevenueAnalyticsService {
       currency,
       unit: currencyUnit(currency),
       periodDays: days,
-      source: 'payments.status=paid; payments.confirmedAt',
+      source: 'payments.status=paid; confirmedAt with createdAt fallback',
       ...result,
       total: {
         revenue: result.male.revenue + result.female.revenue + result.unknown.revenue,
