@@ -326,61 +326,60 @@ export class PersonalityService {
   }
 
   async analyzePersonality(userId: number) {
-    const personality = await this.repo.findOne({ where: { userId } });
-    if (!personality) {
-      return {
-        ocean: {},
-        sentiment: 'neutral',
-        emotion: 'neutral',
-        weights: {},
-      };
+    const [personality, user] = await Promise.all([
+      this.repo.findOne({ where: { userId } }),
+      this.userRepo.findOne({
+        where: { id: userId },
+        select: ['id', 'metadata'],
+      }),
+    ]);
+
+    const consent = user?.metadata?.personalityTextAnalysisConsent;
+    const latestTextEstimate =
+      consent?.enabled === true
+        ? user?.metadata?.personalityTextAnalysis?.latestAssessment
+        : undefined;
+
+    const ocean: Partial<Record<OceanAxis, number>> = {};
+    if (latestTextEstimate?.scores) {
+      for (const axis of OCEAN_AXES) {
+        const value = latestTextEstimate.scores[axis]?.score;
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          ocean[axis] = value;
+        }
+      }
+    } else if (personality) {
+      // Legacy values are exposed with an explicit unverified status.
+      // Missing dimensions remain missing; no synthetic 0.5 values are created.
+      for (const axis of OCEAN_AXES) {
+        const value = (personality as any)[axis] ?? personality.ocean?.[axis];
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          ocean[axis] = value;
+        }
+      }
     }
 
-    // ساخت ocean از ستون‌های مستقل یا JSON قدیمی
-    const rawOcean = {
-      openness: personality.openness ?? personality.ocean?.openness ?? 0.5,
-      conscientiousness:
-        personality.conscientiousness ??
-        personality.ocean?.conscientiousness ??
-        0.5,
-      extraversion:
-        personality.extraversion ?? personality.ocean?.extraversion ?? 0.5,
-      agreeableness:
-        personality.agreeableness ?? personality.ocean?.agreeableness ?? 0.5,
-      neuroticism:
-        personality.neuroticism ?? personality.ocean?.neuroticism ?? 0.5,
-    };
-
-    if (!Object.values(rawOcean).some((v) => v !== 0.5)) {
-      return {
-        ocean: {},
-        sentiment: 'neutral',
-        emotion: 'neutral',
-        weights: {},
-      };
-    }
-
-    // بارگذاری موازی وزن‌ها
     const weightKeys = Object.keys(DEFAULT_PERSONALITY_WEIGHTS);
     const weightValues = await Promise.all(
-      weightKeys.map((k) => this.weightService.getWeight(k)),
+      weightKeys.map((key) => this.weightService.getWeight(key)),
     );
     const weights: Record<string, number> = Object.fromEntries(
-      weightKeys.map((k, i) => [k, weightValues[i]]),
+      weightKeys.map((key, index) => [key, weightValues[index]]),
     );
 
-    const weightedOcean = {
-      openness: rawOcean.openness * weights.openness,
-      conscientiousness: rawOcean.conscientiousness * weights.conscientiousness,
-      extraversion: rawOcean.extraversion * weights.extraversion,
-      agreeableness: rawOcean.agreeableness * weights.agreeableness,
-      neuroticism: rawOcean.neuroticism * weights.neuroticism,
-    };
-
     return {
-      ocean: weightedOcean,
-      sentiment: personality.sentiment || 'neutral',
-      emotion: personality.emotion || 'neutral',
+      ocean,
+      oceanStatus:
+        latestTextEstimate?.status ??
+        (Object.keys(ocean).length ? 'legacy_unverified' : 'insufficient_data'),
+      oceanSource:
+        latestTextEstimate?.source ??
+        (Object.keys(ocean).length ? 'legacy_unknown' : null),
+      oceanAssessment: latestTextEstimate ?? null,
+      matchingEligible: false,
+      calibrated: false,
+      sentiment: personality?.sentiment || 'neutral',
+      emotion: personality?.emotion || 'neutral',
       weights,
     };
   }
@@ -390,6 +389,13 @@ export class PersonalityService {
       this.analyzePersonality(userId1),
       this.analyzePersonality(userId2),
     ]);
+
+    // Match acceptance alone is not psychometric ground truth. Keep this
+    // integration point, but don't train trait weights until validated labels
+    // and appropriate longitudinal outcomes are available.
+    if (!p1.matchingEligible || !p2.matchingEligible) {
+      return;
+    }
 
     await this.learningService.learnFromMatch(
       p1.ocean as Record<string, number>,
