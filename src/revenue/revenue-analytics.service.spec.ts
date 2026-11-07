@@ -3,7 +3,7 @@ import { RevenueAnalyticsService } from './revenue-analytics.service';
 
 describe('RevenueAnalyticsService forecast accuracy', () => {
   const createService = () =>
-    new RevenueAnalyticsService({} as any, {} as any, {} as any);
+    new RevenueAnalyticsService({} as any, {} as any, {} as any, {} as any);
 
   it('does not report accuracy when the observed history is too short', async () => {
     const service = createService();
