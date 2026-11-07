@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Personality } from './entities/personality.entity';
 import { PersonalityAIClient } from './services/personality-ai-client.service';
 import {
@@ -56,6 +56,27 @@ export class PersonalityService {
 
   async analyzeEmotion(messages: string[]): Promise<any> {
     return this.aiClient.analyzeEmotion(messages);
+  }
+
+  async getBatchMatchingEligibility(userIds: number[]): Promise<Map<number, boolean>> {
+    const safeIds = [...new Set(userIds.filter((id) => Number.isSafeInteger(id) && id > 0))];
+    if (!safeIds.length) return new Map();
+
+    const users = await this.userRepo.find({
+      where: { id: In(safeIds) },
+      select: ['id', 'metadata'],
+    });
+
+    return new Map(
+      users.map((user) => {
+        const assessment = user.metadata?.personalityAssessment;
+        const eligible =
+          assessment?.source === 'validated_questionnaire' &&
+          assessment?.status === 'validated' &&
+          assessment?.consentForMatching === true;
+        return [user.id, eligible];
+      }),
+    );
   }
 
   async getTextAnalysisConsent(userId: number) {
@@ -339,9 +360,21 @@ export class PersonalityService {
       consent?.enabled === true
         ? user?.metadata?.personalityTextAnalysis?.latestAssessment
         : undefined;
+    const validatedAssessment = user?.metadata?.personalityAssessment;
+    const matchingEligible =
+      validatedAssessment?.source === 'validated_questionnaire' &&
+      validatedAssessment?.status === 'validated' &&
+      validatedAssessment?.consentForMatching === true;
 
     const ocean: Partial<Record<OceanAxis, number>> = {};
-    if (latestTextEstimate?.scores) {
+    if (matchingEligible && personality) {
+      for (const axis of OCEAN_AXES) {
+        const value = (personality as any)[axis] ?? personality.ocean?.[axis];
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          ocean[axis] = value;
+        }
+      }
+    } else if (latestTextEstimate?.scores) {
       for (const axis of OCEAN_AXES) {
         const value = latestTextEstimate.scores[axis]?.score;
         if (typeof value === 'number' && Number.isFinite(value)) {
@@ -349,8 +382,6 @@ export class PersonalityService {
         }
       }
     } else if (personality) {
-      // Legacy values are exposed with an explicit unverified status.
-      // Missing dimensions remain missing; no synthetic 0.5 values are created.
       for (const axis of OCEAN_AXES) {
         const value = (personality as any)[axis] ?? personality.ocean?.[axis];
         if (typeof value === 'number' && Number.isFinite(value)) {
@@ -369,15 +400,17 @@ export class PersonalityService {
 
     return {
       ocean,
-      oceanStatus:
-        latestTextEstimate?.status ??
-        (Object.keys(ocean).length ? 'legacy_unverified' : 'insufficient_data'),
-      oceanSource:
-        latestTextEstimate?.source ??
-        (Object.keys(ocean).length ? 'legacy_unknown' : null),
+      oceanStatus: matchingEligible
+        ? 'validated_questionnaire'
+        : latestTextEstimate?.status ??
+          (Object.keys(ocean).length ? 'legacy_unverified' : 'insufficient_data'),
+      oceanSource: matchingEligible
+        ? 'validated_questionnaire'
+        : latestTextEstimate?.source ??
+          (Object.keys(ocean).length ? 'legacy_unknown' : null),
       oceanAssessment: latestTextEstimate ?? null,
-      matchingEligible: false,
-      calibrated: false,
+      matchingEligible,
+      calibrated: matchingEligible,
       sentiment: personality?.sentiment || 'neutral',
       emotion: personality?.emotion || 'neutral',
       weights,
@@ -390,12 +423,8 @@ export class PersonalityService {
       this.analyzePersonality(userId2),
     ]);
 
-    // Match acceptance alone is not psychometric ground truth. Keep this
-    // integration point, but don't train trait weights until validated labels
-    // and appropriate longitudinal outcomes are available.
-    if (!p1.matchingEligible || !p2.matchingEligible) {
-      return;
-    }
+    // Match acceptance alone is not psychometric ground truth.
+    if (!p1.matchingEligible || !p2.matchingEligible) return;
 
     await this.learningService.learnFromMatch(
       p1.ocean as Record<string, number>,
