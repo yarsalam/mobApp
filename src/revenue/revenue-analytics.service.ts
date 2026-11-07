@@ -4,6 +4,8 @@ import { Repository } from 'typeorm';
 import { Payment, PaymentCurrency } from '../payments/entities/payment.entity';
 import { User } from '../users/entities/user.entity';
 import { UserVip } from '../payments/vip/entities/vip.entity';
+import { PartitionedEvent } from '../user-event/entities/partitioned-event.entity';
+import { EventType } from '../user-event/type/event-type.enum';
 
 function finite(value: unknown): number {
   const parsed = Number(value ?? 0);
@@ -36,73 +38,107 @@ export class RevenueAnalyticsService {
     @InjectRepository(Payment) private readonly payments: Repository<Payment>,
     @InjectRepository(User) private readonly users: Repository<User>,
     @InjectRepository(UserVip) private readonly vips: Repository<UserVip>,
+    @InjectRepository(PartitionedEvent) private readonly events: Repository<PartitionedEvent>,
   ) {}
 
   async byGender(currency: PaymentCurrency = 'IRT', days = 90) {
-    const rows = await this.payments.createQueryBuilder('p')
-      .innerJoin('p.user', 'u')
-      .select('u.gender', 'gender')
-      .addSelect('SUM(p.amount)', 'revenue')
-      .addSelect('COUNT(*)', 'paymentCount')
-      .addSelect('COUNT(DISTINCT p.userId)', 'payingUsers')
-      .where('p.status = :status', { status: 'paid' })
-      .andWhere('p.currency = :currency', { currency })
-      .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since: sinceDays(days) })
-      .groupBy('u.gender')
-      .getRawMany();
+    const since = sinceDays(days);
+    const reasonExpr = "JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.reason'))";
+    const amountExpr = "CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.amountRials')), '0') AS DECIMAL(20,0))";
+
+    const [purchaseRows, depositRows] = await Promise.all([
+      this.events.createQueryBuilder('e')
+        .innerJoin('e.user', 'u')
+        .select('u.gender', 'gender')
+        .addSelect(`SUM(${amountExpr})`, 'revenue')
+        .addSelect('COUNT(*)', 'purchaseCount')
+        .addSelect('COUNT(DISTINCT e.userId)', 'payingUsers')
+        .where('e.type = :type', { type: EventType.CREDITS_SPENT })
+        .andWhere(`${reasonExpr} LIKE :reason`, { reason: 'buy:%' })
+        .andWhere('e.createdAt >= :since', { since })
+        .groupBy('u.gender')
+        .getRawMany(),
+      this.payments.createQueryBuilder('p')
+        .innerJoin('p.user', 'u')
+        .select('u.gender', 'gender')
+        .addSelect('SUM(p.amount)', 'depositRevenue')
+        .addSelect('COUNT(*)', 'depositCount')
+        .addSelect('COUNT(DISTINCT p.userId)', 'depositingUsers')
+        .where('p.status = :status', { status: 'paid' })
+        .andWhere('p.currency = :currency', { currency })
+        .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since })
+        .groupBy('u.gender')
+        .getRawMany(),
+    ]);
 
     const result = {
-      male: { revenue: 0, payingUsers: 0, paymentCount: 0, arppu: 0 },
-      female: { revenue: 0, payingUsers: 0, paymentCount: 0, arppu: 0 },
-      unknown: { revenue: 0, payingUsers: 0, paymentCount: 0, arppu: 0 },
+      male: { revenue: 0, payingUsers: 0, paymentCount: 0, arppu: 0, depositRevenue: 0, depositingUsers: 0, depositCount: 0 },
+      female: { revenue: 0, payingUsers: 0, paymentCount: 0, arppu: 0, depositRevenue: 0, depositingUsers: 0, depositCount: 0 },
+      unknown: { revenue: 0, payingUsers: 0, paymentCount: 0, arppu: 0, depositRevenue: 0, depositingUsers: 0, depositCount: 0 },
     };
 
-    for (const row of rows) {
+    for (const row of purchaseRows) {
       const key = classifyGender(row.gender);
       result[key].revenue += finite(row.revenue);
       result[key].payingUsers += finite(row.payingUsers);
-      result[key].paymentCount += finite(row.paymentCount);
+      result[key].paymentCount += finite(row.purchaseCount);
+    }
+    for (const row of depositRows) {
+      const key = classifyGender(row.gender);
+      result[key].depositRevenue += finite(row.depositRevenue);
+      result[key].depositingUsers += finite(row.depositingUsers);
+      result[key].depositCount += finite(row.depositCount);
     }
 
     for (const row of Object.values(result)) {
       row.revenue = Math.round(row.revenue);
+      row.depositRevenue = Math.round(row.depositRevenue);
       row.arppu = row.payingUsers > 0 ? Math.round(row.revenue / row.payingUsers) : 0;
     }
 
     return {
-      currency,
-      unit: currencyUnit(currency),
+      currency: 'IRT',
+      unit: 'rial',
+      depositCurrency: currency,
+      depositUnit: currencyUnit(currency),
       periodDays: days,
-      source: 'payments.status=paid; confirmedAt with createdAt fallback',
+      purchaseSource: 'user_events.type=credits_spent; metadata.reason starts with buy:; metadata.amountRials',
+      depositSource: 'payments.status=paid; confirmedAt with createdAt fallback',
       genderBasis: 'current_user_profile_gender_at_query_time',
       ...result,
       total: {
         revenue: result.male.revenue + result.female.revenue + result.unknown.revenue,
         payingUsers: result.male.payingUsers + result.female.payingUsers + result.unknown.payingUsers,
         paymentCount: result.male.paymentCount + result.female.paymentCount + result.unknown.paymentCount,
+        depositRevenue: result.male.depositRevenue + result.female.depositRevenue + result.unknown.depositRevenue,
+        depositingUsers: result.male.depositingUsers + result.female.depositingUsers + result.unknown.depositingUsers,
+        depositCount: result.male.depositCount + result.female.depositCount + result.unknown.depositCount,
       },
     };
   }
 
-  async byProduct(currency: PaymentCurrency = 'IRT', days = 90) {
-    const productExpr = "COALESCE(NULLIF(TRIM(p.productType), ''), NULLIF(TRIM(p.productCode), ''), NULLIF(TRIM(p.productId), ''), 'unclassified')";
-    const rows = await this.payments.createQueryBuilder('p')
+  async byProduct(_depositCurrency: PaymentCurrency = 'IRT', days = 90) {
+    const reasonExpr = "JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.reason'))";
+    const amountExpr = "CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.amountRials')), '0') AS DECIMAL(20,0))";
+    const productExpr = `SUBSTRING(${reasonExpr}, 5)`;
+    const rows = await this.events.createQueryBuilder('e')
       .select(productExpr, 'product')
-      .addSelect('SUM(p.amount)', 'revenue')
+      .addSelect(`SUM(${amountExpr})`, 'revenue')
       .addSelect('COUNT(*)', 'transactionCount')
-      .addSelect('COUNT(DISTINCT p.userId)', 'payingUsers')
-      .where('p.status = :status', { status: 'paid' })
-      .andWhere('p.currency = :currency', { currency })
-      .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since: sinceDays(days) })
+      .addSelect('COUNT(DISTINCT e.userId)', 'payingUsers')
+      .where('e.type = :type', { type: EventType.CREDITS_SPENT })
+      .andWhere(`${reasonExpr} LIKE :reason`, { reason: 'buy:%' })
+      .andWhere('e.createdAt >= :since', { since: sinceDays(days) })
       .groupBy(productExpr)
-      .orderBy('SUM(p.amount)', 'DESC')
+      .orderBy(`SUM(${amountExpr})`, 'DESC')
       .getRawMany();
 
     const total = rows.reduce((sum, row) => sum + finite(row.revenue), 0);
     return {
-      currency,
-      unit: currencyUnit(currency),
+      currency: 'IRT',
+      unit: 'rial',
       periodDays: days,
+      source: 'user_events.type=credits_spent; metadata.reason starts with buy:',
       totalRevenue: Math.round(total),
       rows: rows.map(row => ({
         product: String(row.product ?? 'unclassified'),
@@ -114,20 +150,25 @@ export class RevenueAnalyticsService {
     };
   }
 
-  async arppu(currency: PaymentCurrency = 'IRT', days = 30) {
+  async arppu(depositCurrency: PaymentCurrency = 'IRT', days = 30) {
     const since = sinceDays(days);
-    const [revenueRow, payerRow, activeUsers] = await Promise.all([
-      this.payments.createQueryBuilder('p')
-        .select('COALESCE(SUM(p.amount), 0)', 'revenue')
-        .addSelect('COUNT(*)', 'paymentCount')
-        .where('p.status = :status', { status: 'paid' })
-        .andWhere('p.currency = :currency', { currency })
-        .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since })
+    const reasonExpr = "JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.reason'))";
+    const amountExpr = "CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.amountRials')), '0') AS DECIMAL(20,0))";
+    const [purchaseRow, depositRow, activeUsers] = await Promise.all([
+      this.events.createQueryBuilder('e')
+        .select(`COALESCE(SUM(${amountExpr}), 0)`, 'revenue')
+        .addSelect('COUNT(*)', 'purchaseCount')
+        .addSelect('COUNT(DISTINCT e.userId)', 'payingUsers')
+        .where('e.type = :type', { type: EventType.CREDITS_SPENT })
+        .andWhere(`${reasonExpr} LIKE :reason`, { reason: 'buy:%' })
+        .andWhere('e.createdAt >= :since', { since })
         .getRawOne(),
       this.payments.createQueryBuilder('p')
-        .select('COUNT(DISTINCT p.userId)', 'payingUsers')
+        .select('COALESCE(SUM(p.amount), 0)', 'depositRevenue')
+        .addSelect('COUNT(*)', 'depositCount')
+        .addSelect('COUNT(DISTINCT p.userId)', 'depositingUsers')
         .where('p.status = :status', { status: 'paid' })
-        .andWhere('p.currency = :currency', { currency })
+        .andWhere('p.currency = :currency', { currency: depositCurrency })
         .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since })
         .getRawOne(),
       this.users.createQueryBuilder('u')
@@ -136,36 +177,45 @@ export class RevenueAnalyticsService {
         .getCount(),
     ]);
 
-    const totalRevenue = Math.round(finite(revenueRow?.revenue));
-    const payingUsers = finite(payerRow?.payingUsers);
+    const totalRevenue = Math.round(finite(purchaseRow?.revenue));
+    const payingUsers = finite(purchaseRow?.payingUsers);
     return {
-      currency,
-      unit: currencyUnit(currency),
+      currency: 'IRT',
+      unit: 'rial',
+      depositCurrency,
+      depositUnit: currencyUnit(depositCurrency),
       periodDays: days,
       totalRevenue,
-      paymentCount: finite(revenueRow?.paymentCount),
+      paymentCount: finite(purchaseRow?.purchaseCount),
       payingUsers,
-      activeUsers: activeUsers,
       arppu: payingUsers > 0 ? Math.round(totalRevenue / payingUsers) : 0,
+      activeUsers,
       payingRate: activeUsers > 0 ? Math.round((payingUsers / activeUsers) * 10000) / 100 : 0,
-      definition: 'payingUsers = distinct users with paid payments in period; activeUsers = active accounts active in period',
+      depositRevenue: Math.round(finite(depositRow?.depositRevenue)),
+      depositCount: finite(depositRow?.depositCount),
+      depositingUsers: finite(depositRow?.depositingUsers),
+      definition: 'ARPPU = wallet-funded bundle purchase amount (IRT) / distinct buyers; deposit metrics are reported separately from actual purchases.',
     };
   }
 
-  async cohort(currency: PaymentCurrency = 'IRT', months = 12) {
+  async cohort(_depositCurrency: PaymentCurrency = 'IRT', months = 12) {
     const since = new Date();
     since.setMonth(since.getMonth() - months);
+    const reasonExpr = "JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.reason'))";
+    const amountExpr = "CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.amountRials')), '0') AS DECIMAL(20,0))";
     const rows = await this.users.createQueryBuilder('u')
-      .leftJoin('u.payments', 'p', 'p.status = :status AND p.currency = :currency AND COALESCE(p.confirmedAt, p.createdAt) >= u.createdAt', {
-        status: 'paid',
-        currency,
-      })
+      .leftJoin(
+        'u.userEvents',
+        'e',
+        `e.type = :eventType AND ${reasonExpr} LIKE :reason AND e.createdAt >= u.createdAt`,
+        { eventType: EventType.CREDITS_SPENT, reason: 'buy:%' },
+      )
       .select("DATE_FORMAT(u.createdAt, '%Y-%m')", 'cohort')
       .addSelect('COUNT(DISTINCT u.id)', 'users')
-      .addSelect("SUM(CASE WHEN COALESCE(p.confirmedAt, p.createdAt) < DATE_ADD(u.createdAt, INTERVAL 30 DAY) THEN p.amount ELSE 0 END)", 'revenue30d')
-      .addSelect("SUM(CASE WHEN COALESCE(p.confirmedAt, p.createdAt) < DATE_ADD(u.createdAt, INTERVAL 60 DAY) THEN p.amount ELSE 0 END)", 'revenue60d')
-      .addSelect("SUM(CASE WHEN COALESCE(p.confirmedAt, p.createdAt) < DATE_ADD(u.createdAt, INTERVAL 90 DAY) THEN p.amount ELSE 0 END)", 'revenue90d')
-      .addSelect("SUM(CASE WHEN COALESCE(p.confirmedAt, p.createdAt) < DATE_ADD(u.createdAt, INTERVAL 180 DAY) THEN p.amount ELSE 0 END)", 'revenue180d')
+      .addSelect(`SUM(CASE WHEN e.createdAt < DATE_ADD(u.createdAt, INTERVAL 30 DAY) THEN ${amountExpr} ELSE 0 END)`, 'revenue30d')
+      .addSelect(`SUM(CASE WHEN e.createdAt < DATE_ADD(u.createdAt, INTERVAL 60 DAY) THEN ${amountExpr} ELSE 0 END)`, 'revenue60d')
+      .addSelect(`SUM(CASE WHEN e.createdAt < DATE_ADD(u.createdAt, INTERVAL 90 DAY) THEN ${amountExpr} ELSE 0 END)`, 'revenue90d')
+      .addSelect(`SUM(CASE WHEN e.createdAt < DATE_ADD(u.createdAt, INTERVAL 180 DAY) THEN ${amountExpr} ELSE 0 END)`, 'revenue180d')
       .where('u.createdAt >= :since', { since })
       .groupBy("DATE_FORMAT(u.createdAt, '%Y-%m')")
       .orderBy('cohort', 'ASC')
@@ -173,8 +223,9 @@ export class RevenueAnalyticsService {
 
     const now = Date.now();
     return {
-      currency,
-      unit: currencyUnit(currency),
+      currency: 'IRT',
+      unit: 'rial',
+      source: 'user_events wallet bundle purchase spend; cohort revenue is cumulative from signup',
       cohorts: rows.map(row => {
         const cohortDate = new Date(`${row.cohort}-01T00:00:00`);
         const cohortEnd = new Date(cohortDate);
@@ -195,44 +246,50 @@ export class RevenueAnalyticsService {
     };
   }
 
-  async funnel(currency: PaymentCurrency = 'IRT', days = 30) {
+  async funnel(_depositCurrency: PaymentCurrency = 'IRT', days = 30) {
     const since = sinceDays(days);
-    const [registered, completed, payerRow, revenueRow] = await Promise.all([
+    const reasonExpr = "JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.reason'))";
+    const amountExpr = "CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.amountRials')), '0') AS DECIMAL(20,0))";
+    const [registered, completed, purchaseRow] = await Promise.all([
       this.users.createQueryBuilder('u').where('u.createdAt >= :since', { since }).getCount(),
       this.users.createQueryBuilder('u').where('u.createdAt >= :since', { since })
         .andWhere('u.isCompleted = :completed', { completed: true }).getCount(),
-      this.payments.createQueryBuilder('p').innerJoin('p.user', 'u').select('COUNT(DISTINCT p.userId)', 'users')
-        .where('p.status = :status', { status: 'paid' }).andWhere('p.currency = :currency', { currency })
-        .andWhere('u.createdAt >= :since', { since }).andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since }).getRawOne(),
-      this.payments.createQueryBuilder('p').innerJoin('p.user', 'u').select('COALESCE(SUM(p.amount), 0)', 'revenue')
-        .where('p.status = :status', { status: 'paid' }).andWhere('p.currency = :currency', { currency })
-        .andWhere('u.createdAt >= :since', { since }).andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since }).getRawOne(),
+      this.events.createQueryBuilder('e').innerJoin('e.user', 'u')
+        .select('COUNT(DISTINCT e.userId)', 'buyers')
+        .addSelect(`COALESCE(SUM(${amountExpr}), 0)`, 'revenue')
+        .where('e.type = :type', { type: EventType.CREDITS_SPENT })
+        .andWhere(`${reasonExpr} LIKE :reason`, { reason: 'buy:%' })
+        .andWhere('e.createdAt >= :since', { since })
+        .andWhere('u.createdAt >= :since', { since })
+        .getRawOne(),
     ]);
-    const payingUsers = finite(payerRow?.users);
-    const revenue = Math.round(finite(revenueRow?.revenue));
+    const buyers = finite(purchaseRow?.buyers);
+    const revenue = Math.round(finite(purchaseRow?.revenue));
     const rate = (value: number) => registered > 0 ? Math.round((value / registered) * 10000) / 100 : 0;
     return {
-      currency,
-      unit: currencyUnit(currency),
+      currency: 'IRT',
+      unit: 'rial',
       periodDays: days,
       steps: [
         { step: 'registered', users: registered, revenue: 0, conversionRate: 100 },
         { step: 'profile_completed', users: completed, revenue: 0, conversionRate: rate(completed) },
-        { step: 'paid_user', users: payingUsers, revenue, conversionRate: rate(payingUsers) },
+        { step: 'paid_user', users: buyers, revenue, conversionRate: rate(buyers) },
       ],
-      note: 'Payment conversion is based on confirmed paid payments in selected currency; profile completion is based on users.isCompleted.',
+      note: 'paid_user counts distinct users with a wallet-funded bundle purchase. Wallet top-ups are not counted as product purchases.',
     };
   }
 
-  async concentration(currency: PaymentCurrency = 'IRT', days = 365) {
-    const rows = await this.payments.createQueryBuilder('p')
-      .select('p.userId', 'userId')
-      .addSelect('SUM(p.amount)', 'revenue')
-      .where('p.status = :status', { status: 'paid' })
-      .andWhere('p.currency = :currency', { currency })
-      .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since: sinceDays(days) })
-      .groupBy('p.userId')
-      .orderBy('SUM(p.amount)', 'DESC')
+  async concentration(_depositCurrency: PaymentCurrency = 'IRT', days = 365) {
+    const reasonExpr = "JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.reason'))";
+    const amountExpr = "CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.amountRials')), '0') AS DECIMAL(20,0))";
+    const rows = await this.events.createQueryBuilder('e')
+      .select('e.userId', 'userId')
+      .addSelect(`SUM(${amountExpr})`, 'revenue')
+      .where('e.type = :type', { type: EventType.CREDITS_SPENT })
+      .andWhere(`${reasonExpr} LIKE :reason`, { reason: 'buy:%' })
+      .andWhere('e.createdAt >= :since', { since: sinceDays(days) })
+      .groupBy('e.userId')
+      .orderBy(`SUM(${amountExpr})`, 'DESC')
       .getRawMany();
 
     const values = rows.map(row => finite(row.revenue)).filter(value => value >= 0).sort((a, b) => a - b);
@@ -246,9 +303,10 @@ export class RevenueAnalyticsService {
     const weighted = values.reduce((sum, value, index) => sum + (index + 1) * value, 0);
     const giniCoefficient = n > 0 && total > 0 ? Math.max(0, Math.min(1, (2 * weighted) / (n * total) - (n + 1) / n)) : 0;
     return {
-      currency,
-      unit: currencyUnit(currency),
+      currency: 'IRT',
+      unit: 'rial',
       periodDays: days,
+      source: 'user_events wallet bundle purchase spend',
       payingUsers: n,
       totalRevenue: Math.round(total),
       top1pct: top(0.01),
@@ -288,24 +346,34 @@ export class RevenueAnalyticsService {
 
   async mrr(currency: PaymentCurrency = 'IRT') {
     const since = sinceDays(30);
-    const [grossRevenue, activeVip] = await Promise.all([
+    const reasonExpr = "JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.reason'))";
+    const amountExpr = "CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.amountRials')), '0') AS DECIMAL(20,0))";
+    const [depositRevenue, salesRow, activeVip] = await Promise.all([
       this.payments.createQueryBuilder('p').select('COALESCE(SUM(p.amount), 0)', 'revenue')
         .where('p.status = :status', { status: 'paid' }).andWhere('p.currency = :currency', { currency })
         .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since }).getRawOne(),
+      this.events.createQueryBuilder('e').select(`COALESCE(SUM(${amountExpr}), 0)`, 'revenue')
+        .where('e.type = :type', { type: EventType.CREDITS_SPENT })
+        .andWhere(`${reasonExpr} LIKE :reason`, { reason: 'buy:%' })
+        .andWhere('e.createdAt >= :since', { since }).getRawOne(),
       this.vips.createQueryBuilder('v').select('COUNT(DISTINCT v.userId)', 'count')
         .where('v.active = :active', { active: true }).andWhere('v.expiresAt > :now', { now: new Date() }).getRawOne(),
     ]);
     return {
-      currency,
-      unit: currencyUnit(currency),
+      currency: 'IRT',
+      unit: 'rial',
+      depositCurrency: currency,
+      depositUnit: currencyUnit(currency),
       mrr: null,
       arr: null,
       mrrGrowth: null,
       mrrHistory: [],
       recurringRevenueAvailable: false,
-      grossRevenue30d: Math.round(finite(grossRevenue?.revenue)),
+      grossRevenue30d: Math.round(finite(depositRevenue?.revenue)),
+      walletDeposits30d: Math.round(finite(depositRevenue?.revenue)),
+      grossSales30d: Math.round(finite(salesRow?.revenue)),
       activeVipUsers: finite(activeVip?.count),
-      limitation: 'Payments do not store subscription plan, service period or renewal linkage, and UserVip does not reference its source payment. Gross paid revenue and active VIP counts are reported separately; MRR/ARR are not inferred from one-time receipts.',
+      limitation: 'MRR/ARR require subscription plan, period, price, currency and renewal linkage. Wallet deposits, wallet-funded bundle sales and active VIP counts are shown as separate factual measures; one-time events are not treated as recurring revenue.',
     };
   }
 
