@@ -32,7 +32,11 @@ export class PaymentsService {
     private readonly vipService: VipService,
   ) {}
 
-  async grantBundle(userId: number, bundleCode: string) {
+  async grantBundle(
+    userId: number,
+    bundleCode: string,
+    purchaseContext?: { amountRials: number; source: 'wallet' | 'payment' },
+  ) {
     try {
       const bundle = await this.bundleRepo.findOne({
         where: { code: bundleCode, active: true },
@@ -57,7 +61,17 @@ export class PaymentsService {
       await this.userEventService.log({
         userId,
         type: EventType.PURCHASE,
-        metadata: { bundleCode },
+        metadata: {
+          bundleCode,
+          isCommercialPurchase: Boolean(purchaseContext),
+          ...(purchaseContext
+            ? {
+                amountRials: purchaseContext.amountRials,
+                currency: 'IRT',
+                source: purchaseContext.source,
+              }
+            : { source: 'admin_or_system_grant' }),
+        },
       });
 
       try {

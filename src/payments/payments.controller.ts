@@ -101,7 +101,10 @@ export class PaymentsController {
     await this.walletService.debit(userId, bundle.price, `buy:${bundleCode}`);
 
     // grant محصول
-    await this.paymentsService.grantBundle(userId, bundleCode);
+    await this.paymentsService.grantBundle(userId, bundleCode, {
+      amountRials: bundle.price,
+      source: 'wallet',
+    });
 
     return { success: true, message: 'خرید با موفقیت انجام شد' };
   }

@@ -81,7 +81,8 @@ class ModerationEngine:
         if result["allowed"]:
             result = await self._semantic_check(text)
 
-        self._cache[cache_key] = result
+        if result.get("layer") != "semantic_unavailable":
+            self._cache[cache_key] = result
         return result
 
     async def moderate_batch(
@@ -170,6 +171,12 @@ class ModerationEngine:
                     }
 
         except Exception as exc:
-            logger.error("Semantic moderation failed, defaulting to allow: %s", exc)
+            logger.error("Semantic moderation failed; refusing pending review: %s", exc)
+            return {
+                "allowed": False,
+                "reason": "moderation_unavailable",
+                "confidence": 0.0,
+                "layer": "semantic_unavailable",
+            }
 
         return {"allowed": True, "reason": None, "confidence": 1.0, "layer": "semantic"}

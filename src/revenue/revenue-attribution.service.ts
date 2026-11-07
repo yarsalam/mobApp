@@ -257,17 +257,17 @@ export class RevenueAttributionService {
 
     const dailyRows = await this.paymentRepo
       .createQueryBuilder('p')
-      .select('DATE(p.createdAt)', 'day')
+      .select('DATE(COALESCE(p.confirmedAt, p.createdAt))', 'day')
       .addSelect('p.currency', 'currency')
       .addSelect('SUM(p.amount)', 'revenue')
       .addSelect('COUNT(*)', 'txCount')
       .where('p.status = :status', { status: 'paid' })
-      .andWhere('p.createdAt >= :startDate', {
+      .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :startDate', {
         startDate: thirtyDaysAgo,
       })
-      .groupBy('DATE(p.createdAt)')
+      .groupBy('DATE(COALESCE(p.confirmedAt, p.createdAt))')
       .addGroupBy('p.currency')
-      .orderBy('DATE(p.createdAt)', 'ASC')
+      .orderBy('DATE(COALESCE(p.confirmedAt, p.createdAt))', 'ASC')
       .getRawMany<{
         day: string;
         currency: PaymentCurrency;

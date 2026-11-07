@@ -36,6 +36,10 @@ export class WalletService {
     amountRials: number,
     source: string,
   ): Promise<UserWallet> {
+    if (!Number.isSafeInteger(amountRials) || amountRials <= 0) {
+      throw new BadRequestException('amountRials must be a positive safe integer');
+    }
+
     await this.get(userId);
 
     await this.repo
@@ -68,6 +72,10 @@ export class WalletService {
     amountRials: number,
     reason: string,
   ): Promise<UserWallet> {
+    if (!Number.isSafeInteger(amountRials) || amountRials <= 0) {
+      throw new BadRequestException('amountRials must be a positive safe integer');
+    }
+
     const wallet = await this.get(userId);
 
     if (Number(wallet.balance) < amountRials) {
@@ -78,7 +86,7 @@ export class WalletService {
       });
     }
 
-    await this.repo
+    const debitResult = await this.repo
       .createQueryBuilder()
       .update(UserWallet)
       .set({ balance: () => `balance - ${amountRials}` })
@@ -87,6 +95,17 @@ export class WalletService {
         amount: amountRials,
       })
       .execute();
+
+    // A concurrent debit may consume the balance after the pre-check.
+    // Never log or grant a purchase unless the atomic debit actually affected one row.
+    if (!debitResult.affected) {
+      const latestWallet = await this.get(userId);
+      throw new BadRequestException({
+        code: 'INSUFFICIENT_BALANCE',
+        required: amountRials,
+        current: Number(latestWallet.balance),
+      });
+    }
 
     const updatedWallet = await this.get(userId);
 

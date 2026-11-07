@@ -89,13 +89,24 @@ export class CryptoWatcherProcessor extends WorkerHost {
       : await this.checkTronGrid(payment);
 
     if (confirmed) {
-      await this.walletService.credit(
-        payment.userId,
-        payment.amount,
-        `payment:${payment.id}`,
-      );
+      if (payment.currency !== 'USDT') {
+        throw new Error(
+          `Unsupported crypto wallet credit currency: ${payment.currency}`,
+        );
+      }
 
-      await this.entitlementService.grantFromPayment(payment);
+      // Payment.amount is stored in USDT cents, while the wallet balance is IRT rials.
+      const amountRials = WalletService.usdtCentsToRials(Number(payment.amount));
+
+      if (payment.productCode === 'wallet_charge') {
+        await this.walletService.credit(
+          payment.userId,
+          amountRials,
+          `payment:${payment.id}`,
+        );
+      } else {
+        await this.entitlementService.grantFromPayment(payment, amountRials);
+      }
 
       await this.paymentRepo.update(
         { id: paymentId },
@@ -103,7 +114,7 @@ export class CryptoWatcherProcessor extends WorkerHost {
       );
 
       this.logger.log(
-        `Crypto payment ${paymentId} confirmed for user ${payment.userId}`,
+        `Crypto payment ${paymentId} confirmed for user ${payment.userId}; credited/granted value=${amountRials} IRT rials`,
       );
     }
   }
@@ -127,23 +138,44 @@ export class CryptoWatcherProcessor extends WorkerHost {
       );
 
       const txs: any[] = response.data?.data || [];
-      const amountUsdt = payment.amount / 100; // سنت به USDT
+      const expectedMicroUsdt = BigInt(Number(payment.amount)) * 10_000n;
 
       for (const tx of txs) {
-        const txAmount = Number(tx.value) / 1_000_000; // USDT decimals=6
-        const txTime = tx.block_timestamp;
-
         if (
-          txAmount >= amountUsdt &&
-          txTime > payment.createdAt.getTime() &&
-          tx.to === payment.walletAddress
+          typeof tx.transaction_id !== 'string' ||
+          typeof tx.value !== 'string' ||
+          !tx.value.match(/^\\d+$/)
         ) {
-          await this.paymentRepo.update(
-            { id: payment.id },
-            { txHash: tx.transaction_id },
-          );
-          return true;
+          continue;
         }
+
+        const txTime = Number(tx.block_timestamp);
+        if (
+          !Number.isFinite(txTime) ||
+          txTime <= payment.createdAt.getTime() ||
+          String(tx.to).toLowerCase() !== String(payment.walletAddress).toLowerCase()
+        ) {
+          continue;
+        }
+
+        // One on-chain transfer can settle only one payment. Overpayments are
+        // held for manual reconciliation instead of being silently over-credited.
+        const existingPayment = await this.paymentRepo.findOne({
+          where: { txHash: tx.transaction_id },
+        });
+        if (existingPayment && existingPayment.id !== payment.id) {
+          continue;
+        }
+
+        if (BigInt(tx.value) !== expectedMicroUsdt) {
+          continue;
+        }
+
+        await this.paymentRepo.update(
+          { id: payment.id, status: 'pending' },
+          { txHash: tx.transaction_id },
+        );
+        return true;
       }
     } catch (err) {
       this.logger.error(`TronGrid check failed: ${err.message}`);
