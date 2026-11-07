@@ -27,4 +27,4 @@ jobs:
       - name: Verify fail-closed behavior
         env:
           PYTHONPATH: python-ai/services/ai_moderation
-        run: python -m unittest -v python-ai/tests/test_ai_moderation_fail_closed.py
+        run: python python-ai/tests/test_ai_moderation_fail_closed.py -v
