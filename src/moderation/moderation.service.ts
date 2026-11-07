@@ -90,7 +90,7 @@ export class ModerationService {
 
       return {
         ...result,
-        action: this.determineAction(result),
+        action: result.action === 'pending' ? 'pending' : this.determineAction(result),
         warning:
           result.severity === 'medium'
             ? 'هشدار: پیام شما محتوای نامناسب دارد. تکرار این رفتار می‌تواند باعث کاهش نمایش پروفایل و پیشنهادهای کمتر شود؛ حتی Boost نیز این محدودیت‌ها را خنثی نمی‌کند.'
@@ -405,46 +405,65 @@ export class ModerationService {
 
     const raw = value as Record<string, unknown>;
 
-    const severity = raw.severity;
+    const reason = typeof raw.reason === 'string' ? raw.reason : undefined;
+    const unavailable =
+      reason === 'moderation_unavailable' ||
+      raw.layer === 'semantic_unavailable';
 
-    if (!this.isValidSeverity(severity)) {
-      throw new Error(`Invalid moderation severity: ${String(severity)}`);
+    const rawAllowed =
+      typeof raw.allowed === 'boolean'
+        ? raw.allowed
+        : typeof raw.isSafe === 'boolean'
+          ? raw.isSafe
+          : typeof raw.is_safe === 'boolean'
+            ? raw.is_safe
+            : undefined;
+
+    if (rawAllowed === undefined) {
+      throw new Error('Invalid moderation safety flag');
     }
 
-    const confidence = Number(raw.confidence);
+    const severity: ModerationResult['severity'] = this.isValidSeverity(raw.severity)
+      ? raw.severity
+      : unavailable
+        ? 'low'
+        : rawAllowed
+          ? 'low'
+          : reason === 'violence_keyword'
+            ? 'high'
+            : 'medium';
 
-    if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
-      throw new Error('Invalid moderation confidence');
-    }
+    const parsedConfidence = Number(raw.confidence);
+    const confidence =
+      Number.isFinite(parsedConfidence) && parsedConfidence >= 0 && parsedConfidence <= 1
+        ? parsedConfidence
+        : rawAllowed
+          ? 1
+          : 0;
 
     const flags = Array.isArray(raw.flags)
       ? raw.flags.filter(
           (flag): flag is string =>
             typeof flag === 'string' && flag.length <= 100,
         )
-      : [];
+      : reason
+        ? [reason]
+        : [];
 
     if (raw.flags !== undefined && !Array.isArray(raw.flags)) {
       throw new Error('Invalid moderation flags');
     }
 
-    const isSafe =
-      typeof raw.isSafe === 'boolean'
-        ? raw.isSafe
-        : typeof raw.is_safe === 'boolean'
-          ? raw.is_safe
-          : undefined;
-
-    if (isSafe === undefined) {
-      throw new Error('Invalid moderation safety flag');
+    if (typeof raw.matched === 'string' && raw.matched.length <= 100) {
+      flags.push(`matched:${raw.matched}`);
     }
 
     return {
-      isSafe,
+      isSafe: rawAllowed,
       confidence,
       flags,
       severity,
-      action: this.determineAction({ severity }),
+      action: unavailable ? 'pending' : this.determineAction({ severity }),
     };
   }
 
