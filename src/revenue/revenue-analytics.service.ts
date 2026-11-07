@@ -26,7 +26,7 @@ function currencyUnit(currency: PaymentCurrency): string {
     case 'IRT': return 'rial';
     case 'USDT': return 'cent';
     case 'BTC': return 'satoshi';
-    case 'USD': return 'cent';
+    case 'USD': return 'raw_unit_unverified';
   }
 }
 
