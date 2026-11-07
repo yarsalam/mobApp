@@ -227,13 +227,22 @@ export class RevenueAnalyticsService {
     const since = sinceDays(days);
     const reasonExpr = "JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.reason'))";
     const amountExpr = "CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.amountRials')), '0') AS DECIMAL(20,0))";
-    const [purchaseRow, depositRow, activeUsers] = await Promise.all([
+    const [debitRow, fulfilledRow, depositRow, activeUsers] = await Promise.all([
       this.events.createQueryBuilder('e')
         .select(`COALESCE(SUM(${amountExpr}), 0)`, 'revenue')
-        .addSelect('COUNT(*)', 'purchaseCount')
+        .addSelect('COUNT(*)', 'debitCount')
         .addSelect('COUNT(DISTINCT e.userId)', 'payingUsers')
         .where('e.type = :type', { type: EventType.CREDITS_SPENT })
         .andWhere(`${reasonExpr} LIKE :reason`, { reason: 'buy:%' })
+        .andWhere('e.createdAt >= :since', { since })
+        .getRawOne(),
+      this.events.createQueryBuilder('e')
+        .select(`COALESCE(SUM(${amountExpr}), 0)`, 'fulfilledRevenue')
+        .addSelect('COUNT(*)', 'fulfilledCount')
+        .addSelect('COUNT(DISTINCT e.userId)', 'fulfilledUsers')
+        .where('e.type = :type', { type: EventType.PURCHASE })
+        .andWhere("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.isCommercialPurchase')) = 'true'")
+        .andWhere("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.currency')) = 'IRT'")
         .andWhere('e.createdAt >= :since', { since })
         .getRawOne(),
       this.payments.createQueryBuilder('p')
@@ -250,8 +259,8 @@ export class RevenueAnalyticsService {
         .getCount(),
     ]);
 
-    const totalRevenue = Math.round(finite(purchaseRow?.revenue));
-    const payingUsers = finite(purchaseRow?.payingUsers);
+    const totalRevenue = Math.round(finite(debitRow?.revenue));
+    const payingUsers = finite(debitRow?.payingUsers);
     return {
       currency: 'IRT',
       unit: 'rial',
@@ -259,15 +268,18 @@ export class RevenueAnalyticsService {
       depositUnit: currencyUnit(depositCurrency),
       periodDays: days,
       totalRevenue,
-      paymentCount: finite(purchaseRow?.purchaseCount),
+      paymentCount: finite(debitRow?.debitCount),
       payingUsers,
       arppu: payingUsers > 0 ? Math.round(totalRevenue / payingUsers) : 0,
+      fulfilledRevenue: Math.round(finite(fulfilledRow?.fulfilledRevenue)),
+      fulfilledPurchaseCount: finite(fulfilledRow?.fulfilledCount),
+      fulfilledPayingUsers: finite(fulfilledRow?.fulfilledUsers),
       activeUsers,
       payingRate: activeUsers > 0 ? Math.round((payingUsers / activeUsers) * 10000) / 100 : 0,
       depositRevenue: Math.round(finite(depositRow?.depositRevenue)),
       depositCount: finite(depositRow?.depositCount),
       depositingUsers: finite(depositRow?.depositingUsers),
-      definition: 'ARPPU = wallet-funded bundle purchase amount (IRT) / distinct buyers; deposit metrics are reported separately from actual purchases.',
+      definition: 'ARPPU = wallet-funded checkout debits (IRT) / distinct buyers; fulfilled purchase event is recorded after bundle grants succeed; deposits are separate.',
     };
   }
 
