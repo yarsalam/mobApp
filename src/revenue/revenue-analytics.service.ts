@@ -45,16 +45,29 @@ export class RevenueAnalyticsService {
     const since = sinceDays(days);
     const reasonExpr = "JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.reason'))";
     const amountExpr = "CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.amountRials')), '0') AS DECIMAL(20,0))";
+    const purchaseAmountExpr = "CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.amountRials')), '0') AS DECIMAL(20,0))";
 
-    const [purchaseRows, depositRows] = await Promise.all([
+    const [debitRows, fulfilledRows, depositRows] = await Promise.all([
       this.events.createQueryBuilder('e')
         .innerJoin('e.user', 'u')
         .select('u.gender', 'gender')
-        .addSelect(`SUM(${amountExpr})`, 'revenue')
-        .addSelect('COUNT(*)', 'purchaseCount')
-        .addSelect('COUNT(DISTINCT e.userId)', 'payingUsers')
+        .addSelect(`SUM(${amountExpr})`, 'debitRevenue')
+        .addSelect('COUNT(*)', 'debitCount')
+        .addSelect('COUNT(DISTINCT e.userId)', 'debitUsers')
         .where('e.type = :type', { type: EventType.CREDITS_SPENT })
         .andWhere(`${reasonExpr} LIKE :reason`, { reason: 'buy:%' })
+        .andWhere('e.createdAt >= :since', { since })
+        .groupBy('u.gender')
+        .getRawMany(),
+      this.events.createQueryBuilder('e')
+        .innerJoin('e.user', 'u')
+        .select('u.gender', 'gender')
+        .addSelect(`SUM(${purchaseAmountExpr})`, 'fulfilledRevenue')
+        .addSelect('COUNT(*)', 'fulfilledCount')
+        .addSelect('COUNT(DISTINCT e.userId)', 'fulfilledUsers')
+        .where('e.type = :type', { type: EventType.PURCHASE })
+        .andWhere("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.isCommercialPurchase')) = 'true'")
+        .andWhere("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.currency')) = 'IRT'")
         .andWhere('e.createdAt >= :since', { since })
         .groupBy('u.gender')
         .getRawMany(),
@@ -72,16 +85,22 @@ export class RevenueAnalyticsService {
     ]);
 
     const result = {
-      male: { revenue: 0, payingUsers: 0, paymentCount: 0, arppu: 0, depositRevenue: 0, depositingUsers: 0, depositCount: 0 },
-      female: { revenue: 0, payingUsers: 0, paymentCount: 0, arppu: 0, depositRevenue: 0, depositingUsers: 0, depositCount: 0 },
-      unknown: { revenue: 0, payingUsers: 0, paymentCount: 0, arppu: 0, depositRevenue: 0, depositingUsers: 0, depositCount: 0 },
+      male: { revenue: 0, payingUsers: 0, paymentCount: 0, arppu: 0, fulfilledRevenue: 0, fulfilledPurchaseCount: 0, fulfilledPayingUsers: 0, depositRevenue: 0, depositingUsers: 0, depositCount: 0 },
+      female: { revenue: 0, payingUsers: 0, paymentCount: 0, arppu: 0, fulfilledRevenue: 0, fulfilledPurchaseCount: 0, fulfilledPayingUsers: 0, depositRevenue: 0, depositingUsers: 0, depositCount: 0 },
+      unknown: { revenue: 0, payingUsers: 0, paymentCount: 0, arppu: 0, fulfilledRevenue: 0, fulfilledPurchaseCount: 0, fulfilledPayingUsers: 0, depositRevenue: 0, depositingUsers: 0, depositCount: 0 },
     };
 
-    for (const row of purchaseRows) {
+    for (const row of debitRows) {
       const key = classifyGender(row.gender);
-      result[key].revenue += finite(row.revenue);
-      result[key].payingUsers += finite(row.payingUsers);
-      result[key].paymentCount += finite(row.purchaseCount);
+      result[key].revenue += finite(row.debitRevenue);
+      result[key].payingUsers += finite(row.debitUsers);
+      result[key].paymentCount += finite(row.debitCount);
+    }
+    for (const row of fulfilledRows) {
+      const key = classifyGender(row.gender);
+      result[key].fulfilledRevenue += finite(row.fulfilledRevenue);
+      result[key].fulfilledPurchaseCount += finite(row.fulfilledCount);
+      result[key].fulfilledPayingUsers += finite(row.fulfilledUsers);
     }
     for (const row of depositRows) {
       const key = classifyGender(row.gender);
@@ -92,6 +111,7 @@ export class RevenueAnalyticsService {
 
     for (const row of Object.values(result)) {
       row.revenue = Math.round(row.revenue);
+      row.fulfilledRevenue = Math.round(row.fulfilledRevenue);
       row.depositRevenue = Math.round(row.depositRevenue);
       row.arppu = row.payingUsers > 0 ? Math.round(row.revenue / row.payingUsers) : 0;
     }
@@ -102,7 +122,8 @@ export class RevenueAnalyticsService {
       depositCurrency: currency,
       depositUnit: currencyUnit(currency),
       periodDays: days,
-      purchaseSource: 'user_events.type=credits_spent; metadata.reason starts with buy:; metadata.amountRials',
+      purchaseSource: 'wallet debit events with reason buy:<bundleCode>; checkout spend, not a fulfilment guarantee',
+      fulfilledPurchaseSource: 'purchase events with isCommercialPurchase=true and stored IRT amount; event is written after bundle grants succeed',
       depositSource: 'payments.status=paid; confirmedAt with createdAt fallback',
       genderBasis: 'current_user_profile_gender_at_query_time',
       ...result,
@@ -110,6 +131,9 @@ export class RevenueAnalyticsService {
         revenue: result.male.revenue + result.female.revenue + result.unknown.revenue,
         payingUsers: result.male.payingUsers + result.female.payingUsers + result.unknown.payingUsers,
         paymentCount: result.male.paymentCount + result.female.paymentCount + result.unknown.paymentCount,
+        fulfilledRevenue: result.male.fulfilledRevenue + result.female.fulfilledRevenue + result.unknown.fulfilledRevenue,
+        fulfilledPurchaseCount: result.male.fulfilledPurchaseCount + result.female.fulfilledPurchaseCount + result.unknown.fulfilledPurchaseCount,
+        fulfilledPayingUsers: result.male.fulfilledPayingUsers + result.female.fulfilledPayingUsers + result.unknown.fulfilledPayingUsers,
         depositRevenue: result.male.depositRevenue + result.female.depositRevenue + result.unknown.depositRevenue,
         depositingUsers: result.male.depositingUsers + result.female.depositingUsers + result.unknown.depositingUsers,
         depositCount: result.male.depositCount + result.female.depositCount + result.unknown.depositCount,
