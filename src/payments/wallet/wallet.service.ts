@@ -36,6 +36,10 @@ export class WalletService {
     amountRials: number,
     source: string,
   ): Promise<UserWallet> {
+    if (!Number.isSafeInteger(amountRials) || amountRials <= 0) {
+      throw new BadRequestException('amountRials must be a positive safe integer');
+    }
+
     await this.get(userId);
 
     await this.repo
