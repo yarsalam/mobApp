@@ -121,6 +121,39 @@ describe('PersonalityService text consent and OCEAN safeguards', () => {
     expect(llm.ask).not.toHaveBeenCalled();
   });
 
+  it('returns the stored text estimate only while explicit consent remains enabled', async () => {
+    const { service, userRepo } = createService();
+    const assessment = {
+      status: 'text_estimate_uncalibrated',
+      matchingEligible: false,
+      scores: { openness: { score: 0.6, confidence: 0.3, evidence: ['شاهد واقعی'] } },
+    };
+
+    userRepo.findOne.mockResolvedValueOnce({
+      id: 12,
+      metadata: {
+        personalityTextAnalysisConsent: { enabled: true },
+        personalityTextAnalysis: { latestAssessment: assessment },
+      },
+    });
+    await expect(service.getTextPersonalityEstimate(12)).resolves.toEqual({
+      enabled: true,
+      assessment,
+    });
+
+    userRepo.findOne.mockResolvedValueOnce({
+      id: 12,
+      metadata: {
+        personalityTextAnalysisConsent: { enabled: false },
+        personalityTextAnalysis: { latestAssessment: assessment },
+      },
+    });
+    await expect(service.getTextPersonalityEstimate(12)).resolves.toEqual({
+      enabled: false,
+      assessment: null,
+    });
+  });
+
   it('rejects invented evidence quotes and never marks a text estimate matching-eligible', async () => {
     const { service, userRepo, llm } = createService();
     const quote = 'این یک شاهد واقعی برای آزمایش است';
