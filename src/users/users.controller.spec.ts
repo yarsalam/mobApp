@@ -6,12 +6,27 @@ describe('UsersController account actions', () => {
   const usersService = {
     suspendAccount: jest.fn(),
     resignAccount: jest.fn(),
+    update: jest.fn(),
   } as unknown as UsersService;
 
   const controller = new UsersController(usersService);
 
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it('rejects profile updates targeting another account', async () => {
+    await expect(
+      controller.update(99, {} as never, { user: { sub: '42' } }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(usersService.update).not.toHaveBeenCalled();
+  });
+
+  it('allows a profile update only for the authenticated account', async () => {
+    const dto = {} as never;
+    await controller.update(42, dto, { user: { sub: '42' } });
+    expect(usersService.update).toHaveBeenCalledWith(42, dto);
   });
 
   it('derives self-suspension target from the authenticated JWT subject', async () => {
