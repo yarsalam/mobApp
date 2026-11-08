@@ -279,3 +279,40 @@ Start by reading this file and `docs/AI_PLATFORM_COMPLETION_PLAN.md`, then refre
 - An earlier focused test run failed only because a Jest test used dynamic import without VM modules; changed to static import and the latest focused test suite passed.
 - Full-repository lint/Jest baseline debt remains in Issues #9 and #10; focused changed-file gates are blocking.
 
+
+
+## 2026-11-08 owner-directed release push — mobile is current public client
+
+Owner decision: the public website is deferred and is not a release blocker. Current release scope is mobile app + backend + private admin panel. Do not interpret this as replacing the future public website. This scope was recorded in [Issue #20](https://github.com/yarsalam/mobApp/issues/20).
+
+### Exact current PR heads (refreshed)
+- Backend PR #17: `10a0f071b8063dc459d235454c9bbff7a1d3db70` (Draft).
+  - Backend Revenue Quality run #80 (`42463008615`): PASS — locked dependency install, Revenue/moderation unit tests, Nest compile.
+  - Python Moderation Contract run #73 (`42463008707`): PASS — compile and fail-closed contract.
+- Mobile PR #8: `3efd824a0e0d4e1e566a66edc024d4e7058f311a` (Draft).
+  - Android run #77 (`42463163921`) is still IN_PROGRESS at this handoff: changed-file lint and focused wallet tests passed; repo-wide lint/Jest audit steps completed as non-blocking; Android APK build is still running and no artifact is available yet. Do not report this head as APK-ready until build, per-ABI packaging, checksums, and artifact upload complete.
+  - Existing issue #7 remains a real legacy Basket route finding: route is registered, and `BasketScreen.tsx` still points to `https://yoursite.com/payment` and `https://yoursite.com/cart`. It is not currently navigated from the Products flow found in repository inspection, but it is reachable by the registered Basket route. Direct-vs-wallet semantics and price unit are undocumented; do not silently repoint or delete it. Owner decision is required for that legacy behavior.
+  - OCEAN consent/estimate UI is still absent (Issue #11). Backend endpoints exist in PR #17, but mobile integration, explicit opt-in, evidence/uncertainty display, withdrawal, and tests are not implemented yet.
+- Admin PR #38: latest source head `d59bb82f3d6ba1a3ecbce4141cba963bc56dc40e` (Draft).
+  - Revenue controller registration and response/UI corrections are present in source.
+  - First exact-head validation failed during install because the hosted runner received HTTP 429 from the custom Iran npm mirror `npm.devneeds.ir`; a follow-up attempted an unsupported pnpm flag and failed immediately.
+  - Remediation committed: rewrite 1,079 lockfile tarball URLs from the throttled custom mirror to canonical `https://registry.npmjs.org/`, and simplify the install command to `pnpm install --frozen-lockfile --registry=https://registry.npmjs.org`. Commit: `d59bb82f3d6ba1a3ecbce4141cba963bc56dc40e`. A new successful validation for this exact head has not yet been observed; do not claim Admin is green.
+  - Separate Admin PR #37 has a successful Revenue Admin Validation run #34 (`42460759669`) on its own head `23ec314894c3212a51fc26aca9d6dc715f085745`; this does not certify PR #38's extra controller registration or exact-head build.
+
+### Newly verified release blockers
+- Backend Issue #18 remains open: no crash-injection/concurrency proof or synthetic ledger/entitlement reconciliation. PR #17 changes do not establish exactly-once side effects under all crash boundaries.
+- Backend Issue #16 remains open: previous npm audit reported 54 vulnerabilities (8 low, 24 moderate, 17 high, 5 critical). Exact current lockfile audit, exploitability/reachability classification, remediation and SBOM are not complete.
+- Backend Issue #19 remains open: purchase-time immutable gender snapshot is not implemented; historic female/male attribution uses current profile gender.
+- No production Revenue report was queried. Do not invent female/male purchase totals or access customer/financial data without explicit read-only authorization.
+- Production deployment package is not certified: verify production runtime Compose/image path, DB migrations/bootstrap, health checks, backup/restore, rollback, secret/env configuration and private admin exposure before deployment.
+- No PR was merged, no Production deploy/restart occurred, and no production customer data was read/exported.
+
+### Immediate next actions
+1. Verify Admin PR #38 CI after the canonical-registry lockfile fix; if it still fails, use the exact logs to repair and rerun.
+2. Finish Mobile run #77 and record final APK artifact ID, SHA-256 and exact source head.
+3. Integrate mobile OCEAN consent/estimate UI using existing backend endpoints and existing profile/personality UI; do not create a parallel personality model.
+4. Resolve legacy Basket behavior only after the owner confirms the price unit and intended direct-payment vs wallet-funding semantics; preserve both existing payment choices until then.
+5. Add reproducible payment crash-injection and reconciliation tests; complete current dependency audit/SBOM; address high/critical runtime-reachable findings safely.
+6. Validate backend/mobile/admin contracts and create production deployment bundle/runbook including health, backup/restore and rollback. Production action remains separately authorized.
+
+This handoff reflects GitHub evidence only. A green targeted workflow or test APK is not equivalent to a signed production release or a successful live deployment.
