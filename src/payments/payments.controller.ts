@@ -1,6 +1,8 @@
 import {
   Body,
   Controller,
+  Headers,
+  BadRequestException,
   Get,
   NotFoundException,
   Param,
@@ -91,19 +93,33 @@ export class PaymentsController {
   async buyWithWallet(
     @CurrentUser('sub') userId: number,
     @Param('bundleCode') bundleCode: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
+    const stableKey = idempotencyKey?.trim();
+    if (!stableKey || stableKey.length > 80) {
+      throw new BadRequestException(
+        'Idempotency-Key header is required and must be at most 80 characters',
+      );
+    }
+
     const bundle = await this.bundleRepo.findOne({
       where: { code: bundleCode, active: true },
     });
     if (!bundle) throw new NotFoundException('محصول یافت نشد');
 
     // کسر از wallet به ریال
-    await this.walletService.debit(userId, bundle.price, `buy:${bundleCode}`);
+    await this.walletService.debitOnce(
+      userId,
+      bundle.price,
+      `buy:${bundleCode}`,
+      `wallet-checkout:${stableKey}:debit`,
+    );
 
     // grant محصول
     await this.paymentsService.grantBundle(userId, bundleCode, {
       amountRials: bundle.price,
       source: 'wallet',
+      idempotencyKey: `wallet-checkout:${stableKey}`,
     });
 
     return { success: true, message: 'خرید با موفقیت انجام شد' };
