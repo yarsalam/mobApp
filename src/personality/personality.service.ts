@@ -12,7 +12,6 @@ import { User } from '../users/entities/user.entity';
 import { Message } from '../message/entities/message.entity';
 import { OpenRouterClientService } from '../ai-assistant/llm/openrouter-client.service';
 
-@Injectable()
 const OCEAN_AXES = [
   'openness',
   'conscientiousness',
@@ -34,6 +33,8 @@ function normalizeEvidenceText(value: string): string {
     .replaceAll('  ', ' ');
 }
 
+
+@Injectable()
 export class PersonalityService {
   private readonly logger = new Logger(PersonalityService.name);
 
