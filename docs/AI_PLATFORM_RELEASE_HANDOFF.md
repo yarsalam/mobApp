@@ -425,3 +425,11 @@ No release-ready claim is justified until remaining critical/high production dep
 - Mobile PR #8 latest head: `19c5c299dd907d3362a70d72550e72601b07b04d`. Android run `42465041567` passed Android SDK setup, JS install, API URL validation, blocking changed-file lint (including OCEAN), repository lint audit (non-blocking), and focused wallet Jest tests. Full Jest is now running after adding DeviceInfo, Notifee and BackgroundFetch test mocks. APK build/artifact steps have not started.
 - Admin PR #37 latest head remains `a92239c9f1ecded25a87cc6c52c2b06ff41e88ac`; Revenue validation and admin runtime image + `/login` smoke runs remain green.
 - All three PRs remain Draft. No GHCR publish, APK distribution, merge, server change, or production deployment occurred.
+
+
+### Backend runtime image candidate artifact — verified
+- Exact source SHA `0409893b79fb13f35303ec38142a8a42955e6e31`.
+- Runtime image build PASS; Trivy CRITICAL/HIGH scan PASS.
+- Export/upload PASS: artifact `yarsalam-backend-runtime-image-candidate`, ID `13611216919`, size 225,965,929 bytes, SHA-256 `6b67ef2cca63c75def7c30fac5309b8d4e25533892ee73cb9c9700f06dd62c44`.
+- Workflow run: https://github.com/yarsalam/mobApp/actions/runs/42465122119. Artifact retention expires 2026-11-22.
+- It is an image tar candidate only. No GHCR publish, server transfer, or deployment occurred.
