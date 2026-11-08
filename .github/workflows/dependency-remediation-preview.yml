@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   safe-remediation:
@@ -34,8 +34,10 @@ jobs:
       - name: Install updated lockfile
         run: npm ci
       - name: Build backend
+        id: build
         run: npm run build
       - name: Run backend unit tests
+        id: tests
         run: npm test -- --runInBand
       - name: Generate production audit after remediation
         if: always()
@@ -64,6 +66,22 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
           if ((counts.critical ?? 0) > 0 || (counts.high ?? 0) > 0) process.exit(1);
           NODE
+      - name: Commit tested semver-compatible lockfile updates to the PR branch
+        if: always() && github.event_name == 'pull_request' && steps.build.outcome == 'success' && steps.tests.outcome == 'success'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          if git diff --cached --quiet; then
+            echo "No semver-compatible lockfile changes to commit."
+            exit 0
+          fi
+          git commit -m "fix(deps): apply tested semver-compatible security updates"
+          git push origin "HEAD:${HEAD_REF}"
       - name: Upload remediation candidate
         if: always()
         uses: actions/upload-artifact@v4
