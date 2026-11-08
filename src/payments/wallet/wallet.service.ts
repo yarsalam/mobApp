@@ -87,7 +87,17 @@ export class WalletService {
       const existing = await eventRepo.findOne({
         where: { userId, idempotencyKey },
       });
-      if (existing) return;
+      if (existing) {
+        const metadata = existing.metadata ?? {};
+        if (
+          existing.type !== EventType.CREDITS_GRANTED ||
+          Number(metadata.amountRials) !== amountRials ||
+          metadata.source !== source
+        ) {
+          throw new BadRequestException('Idempotency key was already used for a different wallet credit');
+        }
+        return;
+      }
 
       const walletRepo = manager.getRepository(UserWallet);
       await walletRepo
@@ -146,7 +156,17 @@ export class WalletService {
       const existing = await eventRepo.findOne({
         where: { userId, idempotencyKey },
       });
-      if (existing) return;
+      if (existing) {
+        const metadata = existing.metadata ?? {};
+        if (
+          existing.type !== EventType.CREDITS_SPENT ||
+          Number(metadata.amountRials) !== amountRials ||
+          metadata.reason !== reason
+        ) {
+          throw new BadRequestException('Idempotency key was already used for a different wallet debit');
+        }
+        return;
+      }
 
       const walletRepo = manager.getRepository(UserWallet);
       await walletRepo
