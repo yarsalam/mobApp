@@ -464,7 +464,12 @@ export class MessageService {
       .getMany();
   }
 
-  async editMessage(messageId: number, userId: number, content: string) {
+  async editMessage(
+    messageId: number,
+    userId: number,
+    content: string,
+    acceptModerationWarning = false,
+  ) {
     const message = await this.messageRepo.findOne({
       where: { id: messageId, from_id: userId, read_at: IsNull() },
     });
@@ -478,6 +483,32 @@ export class MessageService {
       message.from_id,
       message.to_id,
     );
+
+    if (
+      moderationResult.action === 'pending' ||
+      moderationResult.flags?.includes('moderation_unavailable')
+    ) {
+      throw new ServiceUnavailableException({
+        statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+        code: 'MODERATION_UNAVAILABLE',
+        message: 'بررسی امنیتی در دسترس نیست؛ ویرایش پیام انجام نشد.',
+        retryable: true,
+      });
+    }
+
+    if (
+      moderationResult.severity === 'medium' &&
+      moderationResult.action !== 'block' &&
+      !acceptModerationWarning
+    ) {
+      throw new ConflictException({
+        statusCode: HttpStatus.CONFLICT,
+        code: 'MODERATION_CONFIRMATION_REQUIRED',
+        message: 'این ویرایش دارای هشدار محتوایی متوسط است؛ تأیید صریح لازم است.',
+        severity: moderationResult.severity,
+        requiresConfirmation: true,
+      });
+    }
 
     if (moderationResult.action === 'block') {
       this.logger.warn(
