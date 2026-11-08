@@ -82,7 +82,17 @@ export class VipService {
       const existingEvent = await events.findOne({
         where: { userId, idempotencyKey },
       });
-      if (existingEvent) return;
+      if (existingEvent) {
+        const metadata = existingEvent.metadata ?? {};
+        if (
+          existingEvent.type !== EventType.VIP_ACTIVATED ||
+          Number(metadata.durationDays) !== durationDays ||
+          metadata.bundleCode !== bundleCode
+        ) {
+          throw new Error('Idempotency key was already used for a different VIP grant');
+        }
+        return;
+      }
 
       const vipRepo = manager.getRepository(UserVip);
       const now = new Date();
