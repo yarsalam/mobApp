@@ -223,3 +223,34 @@ Start by reading this file and `docs/AI_PLATFORM_COMPLETION_PLAN.md`, then refre
 - The separate public website frontend is still not present in the accessible `yarsalam` repository list. The six capability pillars must not be declared complete based solely on backend or mobile work.
 - Admin PR #38 latest head remains `e5e6708715f10a37b6c1972d461b6e7475f2d346`; manual server/web validation has not been run. Do not call the admin revenue dashboard release-ready yet.
 - Actual production female/male revenue totals have not been retrieved. The endpoint and UI are being aligned, but a read-only production reporting authorization is still required to collect real values.
+
+
+## 2026-11-08 moderation acknowledgement and latest PR checkpoint
+
+### Backend moderation contract
+- Backend PR #17 now returns explicit `requiresConfirmation` and `blocked` flags from the moderation check endpoint, in addition to `allowed` and `severity`.
+- Message edits now use a validated `UpdateMessageDto`, fail closed for pending/unavailable moderation, and require explicit `acceptModerationWarning=true` for medium-risk edits. High/block outcomes remain blocked even if a client sends the acknowledgement.
+- Latest backend source head: `43a5f58ad0d3668504c48d7d115e23c0d03658a7`. Backend Revenue Quality run #77 and Python Moderation Contract run #77: PASS (tests/compile and Python fail-closed contract respectively).
+
+### Mobile PR #8 latest state
+- Latest head: `da192e660a6139ee65fb1e393d19bf835a870d40`; Draft.
+- Client now distinguishes allow / explicit medium-risk confirmation / block / moderation unavailable using backend `requiresConfirmation` and `blocked` fields.
+- The same explicit acknowledgement is forwarded for both message creation and message editing. High-risk or unavailable moderation cannot be overridden in the client.
+- Added focused tests for wallet retry idempotency, real-chat reply suggestions, moderation decision outcomes, and send/edit acknowledgement serialization.
+- Latest run #75 (`42462885646`) was **IN_PROGRESS** at this checkpoint. Earlier runs on intermediate commits are also still in progress and are not substitutes for the latest-head result. Refresh the latest run and verify the APK build and artifact upload before reporting.
+- Mobile baseline debt remains tracked separately in Issues #9 and #10; do not silently suppress or delete tests/features.
+
+### Admin PR #38 latest state
+- Latest head: `f7ccfbac0282d0964a25060a37a776b3e16170d5`; Draft.
+- Revenue trends are labelled as paid payments (not wallet deposits); wallet top-ups are separately filtered in backend PR #17.
+- Admin validation workflow has not been run. Manual workflow dispatch against this branch is still required before this PR can be considered validated.
+
+### Remaining release gates already recorded in Git
+- Issue #13: LTV feature provenance/missingness and no synthetic defaults; commercial LTV/CAC/ROI claims remain NO-GO.
+- Issue #14: Matching event schema, idempotency, hard constraints, and recommendation attribution remain incomplete.
+- Issue #16: dependency vulnerability scan was previously 54 findings; current lockfile scan and triage remain outstanding.
+- Issue #18: payment crash-injection, concurrency, stale-lease recovery, and ledger reconciliation remain incomplete.
+- Issue #19: immutable purchase-time gender attribution snapshot remains outstanding.
+- Mobile Issue #7: legacy Basket route still contains placeholder URLs; route is registered but no direct current navigation call was found. Preserve it until reachability, price units, and intended direct-vs-wallet payment semantics are confirmed.
+- Mobile Issue #11: OCEAN text-analysis consent and estimate UI is absent from the current mobile tree; reuse backend endpoints and existing profile UI after PR #17 is available.
+- Public website frontend repository and authorized read-only production revenue access remain unavailable.
