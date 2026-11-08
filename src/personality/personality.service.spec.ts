@@ -4,9 +4,9 @@ import { PersonalityService } from './personality.service';
 
 const createService = () => {
   const userRepo = {
-    findOne: jest.fn(),
-    find: jest.fn(),
-    save: jest.fn(async (user: any) => user),
+    findOne: jest.fn<(...args: any[]) => Promise<any>>(),
+    find: jest.fn<(...args: any[]) => Promise<any[]>>(),
+    save: jest.fn<(user: any) => Promise<any>>(async (user: any) => user),
   };
   const messageQuery: any = {
     where: jest.fn(() => messageQuery),
@@ -18,7 +18,7 @@ const createService = () => {
   const messageRepo = {
     createQueryBuilder: jest.fn(() => messageQuery),
   };
-  const llm = { ask: jest.fn() };
+  const llm = { ask: jest.fn<(...args: any[]) => Promise<string>>() };
   const service = new PersonalityService(
     {} as any,
     userRepo as any,
@@ -155,8 +155,8 @@ describe('PersonalityService text consent and OCEAN safeguards', () => {
 
     expect(result.matchingEligible).toBe(false);
     expect(result.calibrated).toBe(false);
-    expect(result.scores.openness).not.toBeNull();
-    expect(result.scores.openness.confidence).toBeLessThanOrEqual(0.5);
-    expect(result.scores.conscientiousness).toBeNull();
+    expect((result.scores as Record<string, any>).openness).not.toBeNull();
+    expect((result.scores as Record<string, any>).openness.confidence).toBeLessThanOrEqual(0.5);
+    expect((result.scores as Record<string, any>).conscientiousness).toBeNull();
   });
 });
