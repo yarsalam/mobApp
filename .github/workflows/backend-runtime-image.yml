@@ -61,6 +61,25 @@ jobs:
             --ignore-unfixed \
             "yarsalam-backend:ci-${GITHUB_SHA}"
 
+      - name: Export scanned pull-request image candidate
+        if: github.event_name == 'pull_request' && success()
+        run: |
+          docker save "yarsalam-backend:ci-${GITHUB_SHA}" | gzip -1 > backend-runtime-image.tar.gz
+          sha256sum backend-runtime-image.tar.gz > backend-runtime-image.tar.gz.sha256
+          printf '%s\\n' "${GITHUB_SHA}" > backend-runtime-image.source-commit.txt
+
+      - name: Upload scanned runtime image candidate
+        if: github.event_name == 'pull_request' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yarsalam-backend-runtime-image-candidate
+          path: |
+            backend-runtime-image.tar.gz
+            backend-runtime-image.tar.gz.sha256
+            backend-runtime-image.source-commit.txt
+          retention-days: 14
+          if-no-files-found: error
+
       - name: Log in to GitHub Container Registry
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
