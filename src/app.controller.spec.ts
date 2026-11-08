@@ -38,7 +38,17 @@ describe('HealthController', () => {
     };
     const controller = new HealthController(dataSource as any, redis as any);
 
-    await expect(controller.readiness()).rejects.toBeInstanceOf(ServiceUnavailableException);
-    await expect(controller.readiness()).rejects.toThrow('not_ready');
+    try {
+      await controller.readiness();
+      throw new Error('Expected readiness to fail when MySQL is unavailable');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ServiceUnavailableException);
+      expect((error as ServiceUnavailableException).getResponse()).toEqual({
+        status: 'not_ready',
+        checks: { database: 'unavailable', redis: 'ok' },
+        timestamp: expect.any(String),
+      });
+      expect(String(error)).not.toContain('private database details');
+    }
   });
 });
