@@ -12,14 +12,14 @@ function createHarness(existingEvent: any = null, updateAffected = 1) {
     update: jest.fn(() => builder),
     set: jest.fn(() => builder),
     where: jest.fn(() => builder),
-    execute: jest.fn().mockResolvedValue({ affected: updateAffected }),
+    execute: jest.fn<() => Promise<any>>().mockResolvedValue({ affected: updateAffected }),
   };
   const eventRepo: any = {
-    findOne: jest.fn().mockResolvedValue(existingEvent),
+    findOne: jest.fn<() => Promise<any>>().mockResolvedValue(existingEvent),
   };
   const walletTxRepo: any = {
     createQueryBuilder: jest.fn(() => builder),
-    findOne: jest.fn().mockResolvedValue({ userId: 7, balance: 900 }),
+    findOne: jest.fn<() => Promise<any>>().mockResolvedValue({ userId: 7, balance: 900 }),
   };
   const manager: any = {
     getRepository: jest.fn((entity: unknown) =>
@@ -32,16 +32,16 @@ function createHarness(existingEvent: any = null, updateAffected = 1) {
     ),
   };
   const rootRepo: any = {
-    insert: jest.fn().mockResolvedValue({}),
-    findOne: jest.fn().mockResolvedValue({
+    insert: jest.fn<() => Promise<any>>().mockResolvedValue({}),
+    findOne: jest.fn<() => Promise<any>>().mockResolvedValue({
       userId: 7,
       balance: 900,
       currency: 'IRT',
     }),
   };
   const userEventService: any = {
-    logWithManager: jest.fn().mockResolvedValue(true),
-    log: jest.fn().mockResolvedValue(undefined),
+    logWithManager: jest.fn<() => Promise<any>>().mockResolvedValue(true),
+    log: jest.fn<() => Promise<any>>().mockResolvedValue(undefined),
   };
   const service = new WalletService(rootRepo, userEventService, dataSource);
 
