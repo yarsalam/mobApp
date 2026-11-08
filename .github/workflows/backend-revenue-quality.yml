@@ -4,6 +4,10 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - "src/personality/**"
+      - "src/feature-store/**"
+      - "src/suggestion/scoring/**"
+      - "src/ai-assistant/**"
       - "src/revenue/**"
       - "src/moderation/**"
       - "src/message/**"
