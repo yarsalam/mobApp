@@ -383,3 +383,18 @@ No release-ready claim is justified until remaining critical/high production dep
 - Full Jest run on PR #8 head `247bb6...` failed only in `__tests__/App.test.tsx` due `react-native-device-info` creating a NativeEventEmitter with no native module in Jest.
 - Added `jest.setup.js` mock for the device-info module and configured it in `jest.config.js`; Android workflow now triggers on Jest config/setup changes and full Jest is blocking.
 - Latest mobile exact-head workflow must be refreshed; do not claim full Jest or APK build passed until the new run completes.
+
+
+## 2026-11-08 exact-head confirmation
+
+- Current backend PR #17 head: `bc9d8a6f945d20f29594c21e20fcb04710a3993b`.
+- Current exact-head Backend Revenue Quality run `42464680472`: PASS, including Revenue/Personality unit tests, the new health readiness spec, and Nest compile.
+- Current exact-head Python Moderation Contract run `42464680471`: PASS.
+- Current exact-head Compose validation run `42464680515`: PASS.
+- Current exact-head dependency audit run `42464680556`: PASS, production audit **0 critical / 0 high / 3 moderate**. Remaining moderate findings are TypeORM 0.3.31 plus its glob/minimatch chain; upgrade suggestion TypeORM 1.1.2 is semver-major and not applied.
+- Current audit/SBOM artifact ID `13610724743`, SHA-256 `a9d4ef1d3f79dda0848de555528aaa4f80af4adfdfadedb98d23fcce001320a1`.
+- The tested candidate uses bcrypt 6.0.0, sharp 0.35.5, multer 2.5.0, ip-address 10.7.4 and brace-expansion@1 1.1.21. CI install/build/full backend tests and zero-critical/high audit gate passed before the candidate package files were committed.
+- Current exact-head Backend runtime image build/Trivy run `42464680552`: IN_PROGRESS at this refresh. No GHCR publish or image digest is available yet.
+- New `GET /health/ready` readiness probe and `src/app.controller.spec.ts` tests are included in the passing Backend Revenue Quality run. It checks MySQL SELECT 1 and Redis PING; current route is readiness for those two dependencies only, not payment/queue/Qdrant readiness.
+- Current mobile PR #8 head: `c06c491dc1505dd1d88b474f36f74e2a50d0f7ba`. Android test workflow `42464723027` is IN_PROGRESS. Previous run `42464399149` passed targeted lint and wallet tests but full Jest failed only because `react-native-device-info` required a native event emitter in Jest; a test mock and Jest setup have been added, and the new exact-head run is pending. APK build and artifact are not yet confirmed.
+- Admin PR #37 exact head `a92239c9f1ecded25a87cc6c52c2b06ff41e88ac`: Revenue validation run `42463415048` PASS; admin runtime image build + `/login` smoke run `42463414826` PASS. No admin image publish.
