@@ -38,7 +38,11 @@ export class EntitlementService {
       await this.paymentsService.grantBundle(
         payment.userId,
         payment.productCode,
-        { amountRials: Number(normalizedAmountRials), source: 'payment' },
+        {
+          amountRials: Number(normalizedAmountRials),
+          source: 'payment',
+          idempotencyKey: `payment:${payment.id}:bundle`,
+        },
       );
       this.logger.log(
         `Entitlement granted: user=${payment.userId} bundle=${payment.productCode}`,
