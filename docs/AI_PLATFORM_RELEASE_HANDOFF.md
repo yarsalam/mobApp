@@ -398,3 +398,10 @@ No release-ready claim is justified until remaining critical/high production dep
 - New `GET /health/ready` readiness probe and `src/app.controller.spec.ts` tests are included in the passing Backend Revenue Quality run. It checks MySQL SELECT 1 and Redis PING; current route is readiness for those two dependencies only, not payment/queue/Qdrant readiness.
 - Current mobile PR #8 head: `c06c491dc1505dd1d88b474f36f74e2a50d0f7ba`. Android test workflow `42464723027` is IN_PROGRESS. Previous run `42464399149` passed targeted lint and wallet tests but full Jest failed only because `react-native-device-info` required a native event emitter in Jest; a test mock and Jest setup have been added, and the new exact-head run is pending. APK build and artifact are not yet confirmed.
 - Admin PR #37 exact head `a92239c9f1ecded25a87cc6c52c2b06ff41e88ac`: Revenue validation run `42463415048` PASS; admin runtime image build + `/login` smoke run `42463414826` PASS. No admin image publish.
+
+
+### Latest audit refresh
+- Current Backend PR #17 head `b5b0f2917d9261a6247ab245602e197732f5e23b` audit run `42464774699`: PASS, 0 critical / 0 high / 3 moderate.
+- Artifact `13611067777`, SHA-256 `b6999d796ad3db44b1dba26b94ff52cdd2cce4a411cab5cb320a65aa6b622213`.
+- Current exact-head runtime image build `42464774684` and full dependency remediation/build/test run `42464774685` are still IN_PROGRESS.
+- Mobile current PR #8 head `240d7bd80ee3a6d8e2df3cc31fc5a884be8ef53f`; Android test workflow run `42464723027` is still IN_PROGRESS at SDK/JS dependency setup. The only change after run #101's checkout was the signed-release artifact action version; no APK artifact exists yet.
