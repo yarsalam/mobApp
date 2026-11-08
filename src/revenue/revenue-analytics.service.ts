@@ -187,20 +187,39 @@ export class RevenueAnalyticsService {
       });
     }
 
-    const products = debitRows.map(row => {
-      const product = String(row.product ?? 'unclassified');
+    const debitByProduct = new Map<string, {
+      revenue: number;
+      count: number;
+      users: number;
+    }>();
+    for (const row of debitRows) {
+      debitByProduct.set(String(row.product ?? 'unclassified'), {
+        revenue: finite(row.revenue),
+        count: finite(row.transactionCount),
+        users: finite(row.payingUsers),
+      });
+    }
+
+    // Union both sources: direct card/crypto purchases have a fulfilled event
+    // but no wallet-debit event, so they must still appear in the product report.
+    const productKeys = new Set<string>([
+      ...debitByProduct.keys(),
+      ...fulfilledByProduct.keys(),
+    ]);
+    const products = Array.from(productKeys).map(product => {
+      const debit = debitByProduct.get(product);
       const fulfilled = fulfilledByProduct.get(product);
       return {
         product,
-        revenue: Math.round(finite(row.revenue)),
+        revenue: Math.round(debit?.revenue ?? 0),
         fulfilledRevenue: Math.round(fulfilled?.revenue ?? 0),
         fulfilledPurchaseCount: fulfilled?.count ?? 0,
         fulfilledPayingUsers: fulfilled?.users ?? 0,
         share: 0,
-        transactionCount: finite(row.transactionCount),
-        payingUsers: finite(row.payingUsers),
+        transactionCount: debit?.count ?? 0,
+        payingUsers: debit?.users ?? 0,
       };
-    });
+    }).sort((a, b) => (b.fulfilledRevenue + b.revenue) - (a.fulfilledRevenue + a.revenue));
 
     const totalDebit = products.reduce((sum, row) => sum + row.revenue, 0);
     const totalFulfilled = products.reduce((sum, row) => sum + row.fulfilledRevenue, 0);
@@ -214,7 +233,7 @@ export class RevenueAnalyticsService {
       currency: 'IRT',
       unit: 'rial',
       periodDays: days,
-      source: 'wallet debit events for checkout spend',
+      source: 'union of wallet debit events and successfully fulfilled commercial purchases',
       fulfilledPurchaseSource: 'purchase events with commercial flag and amount after bundle grant success',
       totalRevenue: Math.round(totalDebit),
       totalFulfilledRevenue: Math.round(totalFulfilled),
