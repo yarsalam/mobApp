@@ -1,0 +1,66 @@
+name: Backend dependency security audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/dependency-security-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Generate full dependency audit report
+        id: full
+        shell: bash
+        run: |
+          mkdir -p security-report
+          npm audit --json > security-report/npm-audit-full.json || echo "full_audit_exit=$?" >> "$GITHUB_OUTPUT"
+      - name: Generate production dependency audit report
+        id: production
+        shell: bash
+        run: |
+          npm audit --omit=dev --json > security-report/npm-audit-production.json || echo "production_audit_exit=$?" >> "$GITHUB_OUTPUT"
+      - name: Generate CycloneDX SBOM
+        run: npm sbom --sbom-format cyclonedx > security-report/npm-sbom.cdx.json
+      - name: Summarize production findings
+        id: summary
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync('security-report/npm-audit-production.json', 'utf8'));
+          const counts = report.metadata?.vulnerabilities ?? {};
+          const summary = [
+            '## Production dependency audit',
+            '',
+            '| Severity | Count |',
+            '|---|---:|',
+            ...['critical','high','moderate','low','info'].map(k => `| ${k} | ${counts[k] ?? 0} |`),
+            '',
+            `Total production dependency findings: ${counts.total ?? 0}`,
+            ''
+          ].join('\n');
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
+          if ((counts.critical ?? 0) > 0 || (counts.high ?? 0) > 0) process.exit(1);
+          NODE
+      - name: Upload audit reports and SBOM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-dependency-security-report
+          path: security-report/
+          retention-days: 30
