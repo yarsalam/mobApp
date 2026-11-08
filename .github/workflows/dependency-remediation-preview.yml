@@ -6,6 +6,9 @@ on:
     paths:
       - "package.json"
       - "package-lock.json"
+      - "src/app.controller.ts"
+      - "src/app.controller.spec.ts"
+      - "src/redis/redis.service.ts"
       - ".github/workflows/dependency-remediation-preview.yml"
   workflow_dispatch:
 
