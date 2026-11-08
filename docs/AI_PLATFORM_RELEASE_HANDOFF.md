@@ -360,3 +360,26 @@ The owner confirmed that the public website is deferred. Current release scope i
 - Mobile Issue #11 now has a first UI implementation in the PR branch; it still requires exact-head lint/build and functional consent/revoke verification.
 
 No release-ready claim is justified until remaining critical/high production dependencies, payment crash proof, mobile APK and signing, and backup/rollback gates are resolved.
+
+
+## 2026-11-08 follow-up — dependency remediation and readiness
+
+### Backend dependency remediation
+- Tested and committed to PR #17 branch: `bcrypt@6.0.0`, `sharp@0.35.5`, `multer@2.5.0`, `ip-address@10.7.4`, and targeted `brace-expansion@1` override to `1.1.21`.
+- Candidate validation: npm ci PASS; backend build PASS; full unit suite PASS; production npm audit PASS at **0 critical / 0 high / 3 moderate**; CycloneDX SBOM generated.
+- Remaining three moderate findings are TypeORM 0.3.31 and its glob/minimatch dependency chain. npm audit suggests TypeORM 1.1.2, a semver-major migration; do not upgrade blindly. Review TypeORM 1.1 API/driver/Nest integration and run migrations/transaction tests before considering it.
+- Candidate artifact `13610881807`, SHA-256 `50330f43475495b07307d2b02674ced451e15158687fff362a9cbd71399462c4`.
+- A previous runtime image build failed because bcrypt 5 tried to download a GitHub-hosted prebuilt binary (504) and the image build stage lacked `make` for source compilation. That run predates bcrypt 6. New exact-head runtime image/Trivy validation is running after the tested dependency update.
+- Backend current PR head at the latest refresh: `07becf3b8885edb7fa06b40fc3496871bce728b2`; later runbook/health workflow commits may advance it; refresh before merging.
+
+### Backend readiness probe
+- Added `GET /health/ready` to complement existing liveness `GET /health`.
+- Readiness runs MySQL `SELECT 1` and Redis `PING`; returns 200 only if both succeed, otherwise 503 with sanitized status and no raw dependency errors.
+- Added `src/app.controller.spec.ts` tests for liveness independence, healthy DB+Redis, and sanitized 503.
+- `RedisService.ping()` exposes only the readiness operation; no credentials or internal error strings are returned.
+- Backend Revenue Quality workflow path filters now include the health controller/spec and Redis service, and run the new readiness test.
+
+### Mobile Jest baseline
+- Full Jest run on PR #8 head `247bb6...` failed only in `__tests__/App.test.tsx` due `react-native-device-info` creating a NativeEventEmitter with no native module in Jest.
+- Added `jest.setup.js` mock for the device-info module and configured it in `jest.config.js`; Android workflow now triggers on Jest config/setup changes and full Jest is blocking.
+- Latest mobile exact-head workflow must be refreshed; do not claim full Jest or APK build passed until the new run completes.
