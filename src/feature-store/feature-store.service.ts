@@ -275,6 +275,14 @@ export class FeatureStoreService implements OnModuleInit {
             validVector(candidate.geoVector, VECTOR_DIMS.geo);
 
           if (valid) {
+            const eligibility =
+              await this.personalityService.getBatchMatchingEligibility([userId]);
+            if (!eligibility.get(userId)) {
+              return {
+                ...candidate,
+                personalityVector: new Array(VECTOR_DIMS.personality).fill(0),
+              };
+            }
             return candidate;
           }
         }
@@ -306,6 +314,15 @@ export class FeatureStoreService implements OnModuleInit {
       FEATURE_CACHE_TTL,
     );
 
+    const eligibility =
+      await this.personalityService.getBatchMatchingEligibility([userId]);
+    if (!eligibility.get(userId)) {
+      return {
+        ...features,
+        personalityVector: new Array(VECTOR_DIMS.personality).fill(0),
+      };
+    }
+
     return features;
   }
 
@@ -315,8 +332,19 @@ export class FeatureStoreService implements OnModuleInit {
     const features = await this.featureRepo.find({
       where: { userId: In(userIds) },
     });
+    const eligibility = await this.personalityService.getBatchMatchingEligibility(userIds);
     const map = new Map<number, UserFeatureSnapshot>();
-    features.forEach((f) => map.set(f.userId, f));
+    features.forEach((feature) => {
+      map.set(
+        feature.userId,
+        eligibility.get(feature.userId)
+          ? feature
+          : {
+              ...feature,
+              personalityVector: new Array(VECTOR_DIMS.personality).fill(0),
+            },
+      );
+    });
     return map;
   }
 
@@ -1273,19 +1301,34 @@ export class FeatureStoreService implements OnModuleInit {
   }
 
   private async encodePersonality(personality: any): Promise<number[]> {
+    if (
+      personality?.matchingEligible !== true ||
+      !personality?.ocean ||
+      ![
+        personality.ocean.openness,
+        personality.ocean.conscientiousness,
+        personality.ocean.extraversion,
+        personality.ocean.agreeableness,
+        personality.ocean.neuroticism,
+      ].every((value) => typeof value === 'number' && Number.isFinite(value))
+    ) {
+      // A neutral zero segment means "unavailable", never an inferred default.
+      return new Array(VECTOR_DIMS.personality).fill(0);
+    }
+
     const weights = await this.getWeightArray(
       'feature:weights:personality',
       DEFAULT_PERSONALITY_WEIGHTS,
     );
-    const ocean = personality?.ocean ?? {};
+    const ocean = personality.ocean;
     const raw = [
-      ocean.openness ?? 0.5,
-      ocean.conscientiousness ?? 0.5,
-      ocean.extraversion ?? 0.5,
-      ocean.agreeableness ?? 0.5,
-      ocean.neuroticism ?? 0.5,
+      ocean.openness,
+      ocean.conscientiousness,
+      ocean.extraversion,
+      ocean.agreeableness,
+      ocean.neuroticism,
     ];
-    return raw.map((v, i) => v * weights[i]);
+    return raw.map((value, index) => value * weights[index]);
   }
 
   /**
