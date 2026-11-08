@@ -35,8 +35,16 @@ export class UsersController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
-    return this.usersService.update(+id, updateUserDto);
+  @UseGuards(JwtAuthGuard)
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() updateUserDto: UpdateUserDto,
+    @Req() req,
+  ) {
+    if (id !== this.authenticatedUserId(req)) {
+      throw new ForbiddenException('فقط می‌توانید پروفایل خود را ویرایش کنید');
+    }
+    return this.usersService.update(id, updateUserDto);
   }
 
   @UseGuards(JwtAuthGuard)
