@@ -128,6 +128,25 @@ export class PersonalityService {
     return this.getTextAnalysisConsent(userId);
   }
 
+  async getTextPersonalityEstimate(userId: number) {
+    const user = await this.userRepo.findOne({
+      where: { id: userId },
+      select: ['id', 'metadata'],
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    const consent = user.metadata?.personalityTextAnalysisConsent;
+    if (consent?.enabled !== true) {
+      return { enabled: false, assessment: null };
+    }
+
+    return {
+      enabled: true,
+      assessment:
+        user.metadata?.personalityTextAnalysis?.latestAssessment ?? null,
+    };
+  }
+
   async analyzeTextPersonality(userId: number) {
     const [user, consent] = await Promise.all([
       this.userRepo.findOne({ where: { id: userId } }),
