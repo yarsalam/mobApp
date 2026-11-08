@@ -77,7 +77,8 @@ export class CryptoWatcherProcessor extends WorkerHost {
       .createQueryBuilder()
       .update(Payment)
       .set({ status: 'expired' })
-      .where('status = :s AND expiresAt < :now', {
+      .where('method = :method AND status = :s AND expiresAt < :now', {
+        method: 'crypto_usdt',
         s: 'pending',
         now: new Date(),
       })
