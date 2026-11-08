@@ -22,15 +22,21 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-      - name: Apply semver-compatible security updates only
+      - name: Record dependency manifest base
+        run: git rev-parse HEAD:package.json > "$RUNNER_TEMP/base-package-json-sha"
+      - name: Apply targeted runtime fixes and semver-compatible security updates
         shell: bash
         run: |
+          set -euo pipefail
+          npm install --save-exact bcrypt@6.0.0 sharp@0.35.5 --registry=https://registry.npmjs.org
+          npm pkg set 'overrides.multer=2.4.1' 'overrides.brace-expansion=1.1.21'
+          npm install --package-lock-only --registry=https://registry.npmjs.org
           set +e
           npm audit fix --package-lock-only
           status=$?
           set -e
           echo "npm audit fix exit code: ${status}"
-          echo "Non-forced compatible updates are retained in package-lock.json; remaining findings are reported by the later production audit."
+          echo "Targeted upgrades and non-forced lockfile updates will be retained only if install, build and unit tests pass."
       - name: Install updated lockfile
         run: npm ci
       - name: Build backend
@@ -46,6 +52,7 @@ jobs:
           mkdir -p security-remediation
           npm audit --omit=dev --json > security-remediation/npm-audit-production.json || true
           npm sbom --sbom-format cyclonedx > security-remediation/npm-sbom.cdx.json
+          cp package.json security-remediation/package.json
           cp package-lock.json security-remediation/package-lock.json
       - name: Enforce no critical/high production findings
         if: always()
@@ -66,27 +73,29 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
           if ((counts.critical ?? 0) > 0 || (counts.high ?? 0) > 0) process.exit(1);
           NODE
-      - name: Commit tested semver-compatible lockfile updates to the PR branch
+      - name: Commit tested dependency updates to the PR branch
         if: always() && github.event_name == 'pull_request' && steps.build.outcome == 'success' && steps.tests.outcome == 'success'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
-          set -euo pipefail
+          CANDIDATE_PACKAGE="$RUNNER_TEMP/package.json"
           CANDIDATE_LOCK="$RUNNER_TEMP/package-lock.json"
-          PACKAGE_JSON_SHA="$(git rev-parse HEAD:package.json)"
+          BASE_PACKAGE_JSON_SHA="$(cat "$RUNNER_TEMP/base-package-json-sha")"
+          cp package.json "$CANDIDATE_PACKAGE"
           cp package-lock.json "$CANDIDATE_LOCK"
           git fetch origin "$HEAD_REF"
           git checkout -B "$HEAD_REF" "origin/$HEAD_REF"
-          if [ "$(git rev-parse HEAD:package.json)" != "$PACKAGE_JSON_SHA" ]; then
-            echo "::error::package.json changed since the candidate was tested; regenerate the lockfile candidate."
+          if [ "$(git rev-parse HEAD:package.json)" != "$BASE_PACKAGE_JSON_SHA" ]; then
+            echo "::error::package.json changed on the PR branch since this candidate was tested; refusing automatic commit."
             exit 1
           fi
+          cp "$CANDIDATE_PACKAGE" package.json
           cp "$CANDIDATE_LOCK" package-lock.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json
+          git add package.json package-lock.json
           if git diff --cached --quiet; then
             echo "No semver-compatible lockfile changes to commit."
             exit 0
