@@ -5,7 +5,6 @@ import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../../redis/redis.constants';
 import { Personality } from '../entities/personality.entity';
 import { Payment } from '../../payments/entities/payment.entity';
-import { Cron } from '@nestjs/schedule';
 
 export const DEFAULT_PERSONALITY_WEIGHTS: Record<string, number> = {
   openness: 1.0,
@@ -47,56 +46,11 @@ export class PersonalityWeightService {
     );
   }
 
-  @Cron('0 5 * * 0') // یکشنبه‌ها
+  // Kept as a callable compatibility method, but deliberately not scheduled:
+  // payment status is not a valid basis for changing personality dimensions.
   async pruneWeights(): Promise<void> {
-    this.logger.log('Pruning personality weights...');
-
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000);
-    const payingUsers = await this.paymentRepo
-      .createQueryBuilder('p')
-      .select('DISTINCT p.userId', 'userId')
-      .where('p.createdAt > :date', { date: thirtyDaysAgo })
-      .andWhere('p.status = :status', { status: 'paid' })
-      .getRawMany();
-
-    const paidUserIds = payingUsers.map((u: any) => Number(u.userId));
-    if (paidUserIds.length < 20) {
-      this.logger.warn('Not enough paying users to prune weights');
-      return;
-    }
-
-    const features = Object.keys(DEFAULT_PERSONALITY_WEIGHTS).filter(
-      (f) => !f.startsWith('sentiment'),
+    this.logger.warn(
+      'Personality weight pruning is disabled pending validated questionnaire labels and outcome research.',
     );
-    const personalities = await this.personalityRepo
-      .createQueryBuilder('p')
-      .where('p.userId IN (:...ids)', { ids: paidUserIds.slice(0, 200) })
-      .getMany();
-
-    const avgWeights: Record<string, number> = {};
-    for (const f of features) {
-      let sum = 0,
-        count = 0;
-      for (const p of personalities) {
-        const val = (p as any)[f] ?? p.ocean?.[f];
-        if (val !== undefined && val !== null) {
-          sum += val;
-          count++;
-        }
-      }
-      avgWeights[f] = count > 0 ? sum / count : 0.5;
-    }
-
-    for (const f of features) {
-      const current = await this.getWeight(f);
-      const avg = avgWeights[f] ?? 0.5;
-      if (avg < 0.4 && current > 0.2) {
-        const newVal = Math.max(0.1, current - 0.05);
-        await this.setWeight(f, newVal);
-        this.logger.log(
-          `Pruned "${f}": ${current.toFixed(2)} → ${newVal.toFixed(2)} (avg in payers: ${avg.toFixed(2)})`,
-        );
-      }
-    }
   }
 }
