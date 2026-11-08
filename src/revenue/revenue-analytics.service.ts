@@ -78,6 +78,7 @@ export class RevenueAnalyticsService {
         .addSelect('COUNT(*)', 'depositCount')
         .addSelect('COUNT(DISTINCT p.userId)', 'depositingUsers')
         .where('p.status = :status', { status: 'paid' })
+        .andWhere('p.productCode = :productCode', { productCode: 'wallet_charge' })
         .andWhere('p.currency = :currency', { currency })
         .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since })
         .groupBy('u.gender')
@@ -124,7 +125,7 @@ export class RevenueAnalyticsService {
       periodDays: days,
       purchaseSource: 'wallet debit events with reason buy:<bundleCode>; checkout spend, not a fulfilment guarantee',
       fulfilledPurchaseSource: 'purchase events with isCommercialPurchase=true and stored IRT amount; event is written after bundle grants succeed',
-      depositSource: 'payments.status=paid; confirmedAt with createdAt fallback',
+      depositSource: 'payments.status=paid AND productCode=wallet_charge; confirmedAt with createdAt fallback',
       genderBasis: 'current_user_profile_gender_at_query_time',
       ...result,
       total: {
@@ -269,6 +270,7 @@ export class RevenueAnalyticsService {
         .addSelect('COUNT(*)', 'depositCount')
         .addSelect('COUNT(DISTINCT p.userId)', 'depositingUsers')
         .where('p.status = :status', { status: 'paid' })
+        .andWhere('p.productCode = :productCode', { productCode: 'wallet_charge' })
         .andWhere('p.currency = :currency', { currency: depositCurrency })
         .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since })
         .getRawOne(),
@@ -490,7 +492,7 @@ export class RevenueAnalyticsService {
     const amountExpr = "CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.amountRials')), '0') AS DECIMAL(20,0))";
     const [depositRevenue, checkoutDebit, fulfilledSales, activeVip] = await Promise.all([
       this.payments.createQueryBuilder('p').select('COALESCE(SUM(p.amount), 0)', 'revenue')
-        .where('p.status = :status', { status: 'paid' }).andWhere('p.currency = :currency', { currency })
+        .where('p.status = :status', { status: 'paid' }).andWhere('p.productCode = :productCode', { productCode: 'wallet_charge' }).andWhere('p.currency = :currency', { currency })
         .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since }).getRawOne(),
       this.events.createQueryBuilder('e').select(`COALESCE(SUM(${amountExpr}), 0)`, 'revenue')
         .where('e.type = :type', { type: EventType.CREDITS_SPENT })
