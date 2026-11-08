@@ -49,7 +49,7 @@ export class CryptoWatcherProcessor extends WorkerHost {
     // Recover claims left behind by a crashed worker. Settlement effects use
     // durable idempotency receipts, so replay is safe even after partial work.
     await this.paymentRepo.update(
-      { status: 'processing', updatedAt: LessThan(new Date(Date.now() - 10 * 60 * 1000)) },
+      { method: 'crypto_usdt', status: 'processing', updatedAt: LessThan(new Date(Date.now() - 10 * 60 * 1000)) },
       { status: 'pending' },
     );
 
@@ -88,13 +88,13 @@ export class CryptoWatcherProcessor extends WorkerHost {
     // Atomic claim: only one active verifier can move this payment from pending
     // to processing. A worker that lost the claim performs no external effects.
     const claim = await this.paymentRepo.update(
-      { id: paymentId, status: 'pending' },
+      { id: paymentId, method: 'crypto_usdt', status: 'pending' },
       { status: 'processing' },
     );
     if (!claim.affected) return;
 
     const payment = await this.paymentRepo.findOne({
-      where: { id: paymentId, status: 'processing' },
+      where: { id: paymentId, method: 'crypto_usdt', status: 'processing' },
     });
     if (!payment) return;
 
