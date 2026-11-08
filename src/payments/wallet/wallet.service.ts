@@ -1,6 +1,7 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { PartitionedEvent } from 'src/user-event/entities/partitioned-event.entity';
 import { UserWallet } from './entities/user-wallet.entity';
 import { UserEventService } from 'src/user-event/user-event.service';
 import { EventType } from 'src/user-event/type/event-type.enum';
@@ -13,6 +14,7 @@ export class WalletService {
     @InjectRepository(UserWallet)
     private readonly repo: Repository<UserWallet>,
     private readonly userEventService: UserEventService,
+    private readonly dataSource: DataSource,
   ) {}
 
   /** دریافت یا ساخت wallet — اتمیک */
@@ -61,6 +63,134 @@ export class WalletService {
       `Wallet credited: user=${userId} +${amountRials}ریال source=${source}`,
     );
     return wallet;
+  }
+
+  /**
+   * Idempotent wallet credit. The balance update and its durable event receipt
+   * are committed together, so a retry after a worker crash cannot double-credit.
+   */
+  async creditOnce(
+    userId: number,
+    amountRials: number,
+    source: string,
+    idempotencyKey: string,
+  ): Promise<UserWallet> {
+    if (!Number.isSafeInteger(amountRials) || amountRials <= 0) {
+      throw new BadRequestException('amountRials must be a positive safe integer');
+    }
+    if (!idempotencyKey?.trim() || idempotencyKey.length > 128) {
+      throw new BadRequestException('A stable idempotency key is required');
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      const eventRepo = manager.getRepository(PartitionedEvent);
+      const existing = await eventRepo.findOne({
+        where: { userId, idempotencyKey },
+      });
+      if (existing) return;
+
+      const walletRepo = manager.getRepository(UserWallet);
+      await walletRepo
+        .createQueryBuilder()
+        .insert()
+        .values({ userId, balance: 0, currency: 'IRT' })
+        .orIgnore()
+        .execute();
+
+      const update = await walletRepo
+        .createQueryBuilder()
+        .update(UserWallet)
+        .set({ balance: () => `balance + ${amountRials}` })
+        .where('userId = :userId', { userId })
+        .execute();
+      if (!update.affected) throw new Error(`Wallet credit affected no rows for user ${userId}`);
+
+      const wallet = await walletRepo.findOne({ where: { userId } });
+      if (!wallet) throw new Error(`Wallet not found for user ${userId}`);
+
+      await this.userEventService.logWithManager(manager, {
+        userId,
+        type: EventType.CREDITS_GRANTED,
+        metadata: {
+          amountRials,
+          source,
+          newBalance: Number(wallet.balance),
+          idempotent: true,
+        },
+        idempotencyKey,
+      });
+    });
+
+    return this.get(userId);
+  }
+
+  /**
+   * Idempotent wallet debit. Balance mutation and its spend event share one
+   * transaction; repeated checkout requests with the same key are no-ops.
+   */
+  async debitOnce(
+    userId: number,
+    amountRials: number,
+    reason: string,
+    idempotencyKey: string,
+  ): Promise<UserWallet> {
+    if (!Number.isSafeInteger(amountRials) || amountRials <= 0) {
+      throw new BadRequestException('amountRials must be a positive safe integer');
+    }
+    if (!idempotencyKey?.trim() || idempotencyKey.length > 128) {
+      throw new BadRequestException('A stable idempotency key is required');
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      const eventRepo = manager.getRepository(PartitionedEvent);
+      const existing = await eventRepo.findOne({
+        where: { userId, idempotencyKey },
+      });
+      if (existing) return;
+
+      const walletRepo = manager.getRepository(UserWallet);
+      await walletRepo
+        .createQueryBuilder()
+        .insert()
+        .values({ userId, balance: 0, currency: 'IRT' })
+        .orIgnore()
+        .execute();
+
+      const debit = await walletRepo
+        .createQueryBuilder()
+        .update(UserWallet)
+        .set({ balance: () => `balance - ${amountRials}` })
+        .where('userId = :userId AND balance >= :amount', {
+          userId,
+          amount: amountRials,
+        })
+        .execute();
+      if (!debit.affected) {
+        const latest = await walletRepo.findOne({ where: { userId } });
+        throw new BadRequestException({
+          code: 'INSUFFICIENT_BALANCE',
+          required: amountRials,
+          current: Number(latest?.balance ?? 0),
+        });
+      }
+
+      const wallet = await walletRepo.findOne({ where: { userId } });
+      if (!wallet) throw new Error(`Wallet not found for user ${userId}`);
+
+      await this.userEventService.logWithManager(manager, {
+        userId,
+        type: EventType.CREDITS_SPENT,
+        metadata: {
+          amountRials,
+          reason,
+          newBalance: Number(wallet.balance),
+          idempotent: true,
+        },
+        idempotencyKey,
+      });
+    });
+
+    return this.get(userId);
   }
 
   /**
