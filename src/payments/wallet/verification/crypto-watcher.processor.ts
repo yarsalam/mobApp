@@ -46,6 +46,13 @@ export class CryptoWatcherProcessor extends WorkerHost {
   }
 
   private async checkAllPending(): Promise<void> {
+    // Recover claims left behind by a crashed worker. Settlement effects use
+    // durable idempotency receipts, so replay is safe even after partial work.
+    await this.paymentRepo.update(
+      { status: 'processing', updatedAt: LessThan(new Date(Date.now() - 10 * 60 * 1000)) },
+      { status: 'pending' },
+    );
+
     const pending = await this.paymentRepo.find({
       where: {
         method: 'crypto_usdt',
@@ -78,17 +85,32 @@ export class CryptoWatcherProcessor extends WorkerHost {
   }
 
   private async checkSinglePayment(paymentId: number): Promise<void> {
-    const payment = await this.paymentRepo.findOne({
-      where: { id: paymentId, status: 'pending' },
-    });
+    // Atomic claim: only one active verifier can move this payment from pending
+    // to processing. A worker that lost the claim performs no external effects.
+    const claim = await this.paymentRepo.update(
+      { id: paymentId, status: 'pending' },
+      { status: 'processing' },
+    );
+    if (!claim.affected) return;
 
+    const payment = await this.paymentRepo.findOne({
+      where: { id: paymentId, status: 'processing' },
+    });
     if (!payment) return;
 
-    const confirmed = this.isMock
-      ? await this.mockCheck(payment)
-      : await this.checkTronGrid(payment);
+    try {
+      const confirmed = this.isMock
+        ? await this.mockCheck(payment)
+        : await this.checkTronGrid(payment);
 
-    if (confirmed) {
+      if (!confirmed) {
+        await this.paymentRepo.update(
+          { id: paymentId, status: 'processing' },
+          { status: 'pending' },
+        );
+        return;
+      }
+
       if (payment.currency !== 'USDT') {
         throw new Error(
           `Unsupported crypto wallet credit currency: ${payment.currency}`,
@@ -99,23 +121,38 @@ export class CryptoWatcherProcessor extends WorkerHost {
       const amountRials = WalletService.usdtCentsToRials(Number(payment.amount));
 
       if (payment.productCode === 'wallet_charge') {
-        await this.walletService.credit(
+        await this.walletService.creditOnce(
           payment.userId,
           amountRials,
           `payment:${payment.id}`,
+          `payment:${payment.id}:wallet-credit`,
         );
       } else {
         await this.entitlementService.grantFromPayment(payment, amountRials);
       }
 
-      await this.paymentRepo.update(
-        { id: paymentId },
+      const settled = await this.paymentRepo.update(
+        { id: paymentId, status: 'processing' },
         { status: 'paid', confirmedAt: new Date() },
       );
+      if (!settled.affected) {
+        const latest = await this.paymentRepo.findOne({ where: { id: paymentId } });
+        if (latest?.status !== 'paid') {
+          throw new Error(`Payment ${paymentId} lost its processing claim before settlement`);
+        }
+      }
 
       this.logger.log(
         `Crypto payment ${paymentId} confirmed for user ${payment.userId}; credited/granted value=${amountRials} IRT rials`,
       );
+    } catch (error: unknown) {
+      // Leave the payment retryable. Any completed credit/entitlement step is
+      // protected by its own stable idempotency receipt.
+      await this.paymentRepo.update(
+        { id: paymentId, status: 'processing' },
+        { status: 'pending' },
+      );
+      throw error;
     }
   }
 
@@ -172,7 +209,7 @@ export class CryptoWatcherProcessor extends WorkerHost {
         }
 
         await this.paymentRepo.update(
-          { id: payment.id, status: 'pending' },
+          { id: payment.id, status: 'processing' },
           { txHash: tx.transaction_id },
         );
         return true;
