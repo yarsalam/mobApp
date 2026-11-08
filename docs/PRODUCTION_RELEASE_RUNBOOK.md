@@ -125,7 +125,7 @@ If a schema change has been introduced, an application-image rollback is safe on
 
 ## 10. Current hard blockers
 
-- Backend dependency audit: the latest captured production audit reported 2 critical, 15 high, and 7 moderate findings. Non-forced remediation preview and test workflow is in progress; no forced upgrades are approved.
+- Backend dependency audit: the tested semver-safe/targeted remediation candidate now reports 0 critical, 0 high, and 3 moderate production findings. The remaining findings are TypeORM 0.3.31 and its glob/minimatch dependency chain; the suggested TypeORM 1.1.2 fix is a semver-major upgrade and needs compatibility review. The exact-head runtime image build/Trivy scan is still pending.
 - Payment correctness: crash injection at every side-effect boundary, duplicate/concurrent settlement, stale-claim recovery, and ledger/entitlement reconciliation remain unproven (Issue #18).
 - Revenue gender attribution: historical values still rely on current profile gender until immutable purchase-time snapshots are added (Issue #19).
 - Mobile production signing: owner-controlled keystore secrets are not present in the repository; the signed release workflow cannot run until they are configured privately.
