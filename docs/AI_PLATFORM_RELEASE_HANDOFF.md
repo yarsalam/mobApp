@@ -172,3 +172,22 @@ Start by reading this file and `docs/AI_PLATFORM_COMPLETION_PLAN.md`, then refre
 - `yarsalam/mobile` and `yarsalam/admin-panel` are accessible and being audited/fixed independently.
 - The separate public website frontend repository is still unavailable/unidentified. Do not claim the public website is ready or infer that mobile/admin are its source.
 - Continue backend, admin, and mobile work; record the exact public-web repository/branch as a dependency when it becomes available.
+
+
+## 2026-11-08 release re-check (latest)
+
+- Backend PR #17 remains OPEN + DRAFT at head `cee52c48363ab1d63ae8f9534cef1c6f69020200`; mergeable=true. Latest targeted workflows at this head both completed successfully:
+  - Backend Revenue Quality run #66 (`42461943269`): install, Revenue/moderation unit tests, NestJS compile all passed.
+  - Python Moderation Contract run #59 (`42461943287`): passed.
+- Mobile PR #8 is OPEN + DRAFT at head `cc8f0d93f78deab8d430cbf0efe1b83fd7f9cc23`; mergeable=true. It now contains persistent wallet idempotency key handling, authenticated user ID, focused checkout/copilot tests, and fail-closed moderation / real-chat reply copilot integration.
+- Mobile Android workflow run #65 (`42462281975`) at that exact PR head:
+  - blocking changed-file ESLint: passed.
+  - blocking wallet checkout + AI reply Jest tests: passed.
+  - repository-wide lint/Jest audit steps completed but are configured non-blocking due existing baseline debt.
+  - standalone Android APK build was still IN PROGRESS at last check; no APK artifact or build success can yet be claimed.
+- Mobile repository-wide baseline issues are documented in PR #8: 56 ESLint errors / 196 warnings and an existing Jest App test ESM transform failure. Full repository audits are non-blocking; this remains quality debt to triage.
+- Revenue by-gender remains based on current profile gender at query time, not immutable purchase-time gender. Historical numbers can change after profile edits. Do not claim historical gender-at-purchase accuracy until Issue #13/schema snapshot work is completed.
+- Recurring revenue / MRR / ARR remain unavailable without subscription plan price, billing term, renewal and source-payment linkage. Keep endpoints and report unavailable rather than inventing values.
+- Open backend release issues remain #13 (Revenue LTV provenance), #14 (Matching event integrity/attribution), #16 (npm vulnerability triage), and #18 (payment settlement/fulfillment idempotency).
+- The separate public website frontend repository has not been identified or made available in the linked GitHub repositories. Mobile and admin-panel repositories are not a substitute for it.
+- No production Revenue query, production payment test, production deployment, PR merge, or public launch was performed. Release is NOT certified.
