@@ -5,7 +5,8 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { LessThan, Repository } from 'typeorm';
+import { Cron } from '@nestjs/schedule';
 import { Payment } from 'src/payments/entities/payment.entity';
 import { WalletService } from '../wallet.service';
 import { UserEventService } from 'src/user-event/user-event.service';
@@ -104,6 +105,26 @@ export class ManualVerifierService {
         { status: 'pending' },
       );
       throw error;
+    }
+  }
+
+  /**
+   * A crashed manual confirmation must not leave a payment locked forever.
+   * The admin can safely confirm it again because wallet credit has a durable
+   * idempotency receipt.
+   */
+  @Cron('*/5 * * * *')
+  async recoverStaleManualClaims(): Promise<void> {
+    const result = await this.paymentRepo.update(
+      {
+        method: 'manual_card',
+        status: 'processing',
+        updatedAt: LessThan(new Date(Date.now() - 10 * 60 * 1000)),
+      },
+      { status: 'pending' },
+    );
+    if (result.affected) {
+      this.logger.warn(`Recovered ${result.affected} stale manual payment confirmation claim(s)`);
     }
   }
 
