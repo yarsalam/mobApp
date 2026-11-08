@@ -10,6 +10,9 @@ on:
       - "src/ai-assistant/**"
       - "src/revenue/**"
       - "src/moderation/**"
+      - "src/app.controller.ts"
+      - "src/app.controller.spec.ts"
+      - "src/redis/redis.service.ts"
       - "src/message/**"
       - "python-ai/services/ai_moderation/**"
       - "python-ai/tests/test_ai_moderation_fail_closed.py"
@@ -39,7 +42,7 @@ jobs:
         run: npm ci
 
       - name: Revenue and moderation unit tests
-        run: npm test -- --runInBand revenue-analytics.service.spec.ts personality.service.spec.ts
+        run: npm test -- --runInBand revenue-analytics.service.spec.ts personality.service.spec.ts app.controller.spec.ts
 
       - name: Compile backend
         run: npm run build
