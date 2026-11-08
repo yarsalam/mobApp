@@ -71,10 +71,13 @@ Do not run project-wide `down`, prune volumes, or rebuild source on the VPS.
 
 ## 6. Health and smoke checks
 
-The current Nest health route is `GET /health` and returns `{ status: "ok", timestamp }`. This is a **liveness check only**; it does not prove MySQL, Redis, payments, or queues are ready.
+The Nest health routes are:
+- `GET /health`: process liveness only; returns `{ status: "ok", timestamp }`.
+- `GET /health/ready`: readiness; runs `SELECT 1` against MySQL and `PING` against Redis, returns 200 only when both respond, otherwise 503 with sanitized per-dependency status. It does not prove payment-provider reachability, queue processing, Qdrant, or AI-service readiness.
 
 After an authorized cutover:
 - `curl -fsS http://127.0.0.1:5001/health`
+- `curl -fsS http://127.0.0.1:5001/health/ready` (must return 200 before traffic is shifted)
 - Check container restart count and logs.
 - Verify authenticated read-only API access and admin-to-backend proxy connectivity.
 - Verify MySQL and Redis connectivity from the backend without exposing credentials.
