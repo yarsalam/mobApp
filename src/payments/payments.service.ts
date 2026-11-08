@@ -11,6 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { VipService } from './vip/vip.service';
 import { UserVip } from './vip/entities/vip.entity';
 import { EventType } from 'src/user-event/type/event-type.enum';
+import { createHash } from 'crypto';
 
 @Injectable()
 export class PaymentsService {
@@ -35,7 +36,11 @@ export class PaymentsService {
   async grantBundle(
     userId: number,
     bundleCode: string,
-    purchaseContext?: { amountRials: number; source: 'wallet' | 'payment' },
+    purchaseContext?: {
+      amountRials: number;
+      source: 'wallet' | 'payment';
+      idempotencyKey?: string;
+    },
   ) {
     try {
       const bundle = await this.bundleRepo.findOne({
@@ -44,20 +49,33 @@ export class PaymentsService {
 
       if (!bundle) throw new Error('Bundle not found');
 
+      const idempotencyKey = purchaseContext?.idempotencyKey;
+      let itemIndex = 0;
       for (const item of bundle.items) {
+        const itemKey = idempotencyKey
+          ? `fulfill:${createHash('sha256').update(`${idempotencyKey}:item:${itemIndex}`).digest('hex').slice(0, 48)}`
+          : undefined;
+
         if (item.type === 'credits') {
-          await this.creditsService.grant(userId, item.amount);
+          if (itemKey) await this.creditsService.grantOnce(userId, item.amount, itemKey);
+          else await this.creditsService.grant(userId, item.amount);
         }
 
         if (item.type === 'boost') {
-          await this.boostService.grantInstant(userId, item.amount);
+          if (itemKey) await this.boostService.grantInstantOnce(userId, item.amount, itemKey, bundleCode);
+          else await this.boostService.grantInstant(userId, item.amount);
         }
 
         if (item.type === 'vip') {
-          await this.vipService.activateVip(userId, item.durationDays || 30);
+          if (itemKey) await this.vipService.activateVipOnce(userId, item.durationDays || 30, itemKey, bundleCode);
+          else await this.vipService.activateVip(userId, item.durationDays || 30);
         }
+        itemIndex += 1;
       }
 
+      const purchaseEventKey = idempotencyKey
+        ? `purchase:${createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 56)}`
+        : undefined;
       await this.userEventService.log({
         userId,
         type: EventType.PURCHASE,
@@ -72,6 +90,7 @@ export class PaymentsService {
               }
             : { source: 'admin_or_system_grant' }),
         },
+        idempotencyKey: purchaseEventKey,
       });
 
       try {
