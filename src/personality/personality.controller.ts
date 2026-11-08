@@ -23,6 +23,12 @@ export class PersonalityController {
     return this.personalityService.setTextAnalysisConsent(userId, body.enabled);
   }
 
+  @Get('ocean/text-estimate')
+  @UseGuards(JwtAuthGuard)
+  getTextPersonalityEstimate(@GetUser('id') userId: number) {
+    return this.personalityService.getTextPersonalityEstimate(userId);
+  }
+
   @Post('ocean/text-estimate')
   @UseGuards(JwtAuthGuard)
   analyzeTextPersonality(@GetUser('id') userId: number) {
