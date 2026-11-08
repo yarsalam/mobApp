@@ -213,3 +213,13 @@ Start by reading this file and `docs/AI_PLATFORM_COMPLETION_PLAN.md`, then refre
 - Admin PR #38: `e5e6708715f10a37b6c1972d461b6e7475f2d346` (Draft; validation workflow added but not yet run).
 - Mobile PR #8: `cc8f0d93f78deab8d430cbf0efe1b83fd7f9cc23` (Draft; focused checks passed, Android APK build pending).
 - Do not merge any PR or deploy without owner authorization and the listed acceptance evidence.
+
+
+## 2026-11-08 final handoff update before next validation refresh
+
+- Mobile PR #8 now includes the existing chat Copilot integration and fail-closed client moderation change in addition to wallet idempotency. Latest branch head: `cc8f0d93f78deab8d430cbf0efe1b83fd7f9cc23`.
+- Current Android workflow run #65 (`42462281975`) has completed changed-file ESLint and focused Jest steps successfully. Android standalone test APK build is still running; do not claim the mobile PR is fully green until the run and artifact preparation/upload complete.
+- Mobile [Issue #11](https://github.com/yarsalam/mobile/issues/11) tracks the missing user-facing OCEAN text-analysis consent/estimate UI. The mobile `main` tree contains no OCEAN/personality client path. The integration must reuse backend PR #17 endpoints and existing profile/personality UI, require opt-in, expose evidence/uncertainty, allow withdrawal, and never feed unvalidated text estimates into Matching.
+- The separate public website frontend is still not present in the accessible `yarsalam` repository list. The six capability pillars must not be declared complete based solely on backend or mobile work.
+- Admin PR #38 latest head remains `e5e6708715f10a37b6c1972d461b6e7475f2d346`; manual server/web validation has not been run. Do not call the admin revenue dashboard release-ready yet.
+- Actual production female/male revenue totals have not been retrieved. The endpoint and UI are being aligned, but a read-only production reporting authorization is still required to collect real values.
