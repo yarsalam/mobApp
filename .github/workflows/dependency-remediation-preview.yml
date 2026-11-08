@@ -38,6 +38,7 @@ jobs:
       - name: Run backend unit tests
         run: npm test -- --runInBand
       - name: Generate production audit after remediation
+        if: always()
         shell: bash
         run: |
           mkdir -p security-remediation
@@ -45,6 +46,7 @@ jobs:
           npm sbom --sbom-format cyclonedx > security-remediation/npm-sbom.cdx.json
           cp package-lock.json security-remediation/package-lock.json
       - name: Enforce no critical/high production findings
+        if: always()
         run: |
           node <<'NODE'
           const fs = require('node:fs');
