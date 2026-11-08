@@ -316,3 +316,47 @@ Owner decision: the public website is deferred and is not a release blocker. Cur
 6. Validate backend/mobile/admin contracts and create production deployment bundle/runbook including health, backup/restore and rollback. Production action remains separately authorized.
 
 This handoff reflects GitHub evidence only. A green targeted workflow or test APK is not equivalent to a signed production release or a successful live deployment.
+
+
+## 2026-11-08 immediate release execution — current evidence
+
+The owner confirmed that the public website is deferred. Current release scope is mobile app + backend + private admin panel. This is recorded in Issue #20; no production deploy/restart, merge, or customer-data access has been performed.
+
+### Admin consolidated candidate
+- Use PR #37 branch `fix/yarsalam-ai-platform-completion-2026-11-07` as the consolidated admin candidate, rather than PR #38's narrower duplicate branch.
+- Exact PR #37 head: `a92239c9f1ecded25a87cc6c52c2b06ff41e88ac`.
+- Added `RevenueController` and `UserApiClientModule` to `ExecutiveModule`; added the module path to the Revenue validation workflow.
+- Runtime image build and standalone `/login` smoke run `42463414826`: SUCCESS.
+- Revenue lint, web type-check gate, and Nest server build run `42463415048`: SUCCESS.
+- Image was not pushed and no VPS changes occurred.
+- PR #38 run `42463313921` failed full web type-check. Its exact errors include Revenue tooltip callback types, nullable chart data, PieLabelRenderProps custom fields, and additional admin modules. Do not promote PR #38 as the candidate.
+
+### Backend runtime and dependency evidence
+- Backend PR #17 head at the latest source refresh: `bf0d779260ef1bcce30814343cef292971c508d8` (Draft).
+- Revenue Quality run `42463927604`: SUCCESS.
+- Python Moderation Contract run `42463927333`: SUCCESS.
+- Compose configuration validation run `42463927359`: SUCCESS, including backend-only runtime Compose.
+- Added to PR #17 branch: hardened Node 22 runtime Dockerfile; immutable backend-only runtime Compose; Trivy image workflow; `docs/PRODUCTION_RELEASE_RUNBOOK.md`; full dependency audit + CycloneDX SBOM workflow; semver-compatible remediation preview workflow.
+- Backend runtime image run `42464078958` was IN_PROGRESS at the last refresh; no successful scan or GHCR publish is claimed.
+- Initial npm audit on unremediated tree: full dependency tree 54 (5 critical, 17 high, 24 moderate, 8 low); production only 24 (2 critical, 15 high, 7 moderate). Artifact `13610657861`, SHA-256 `bc955c58f1bbba2e60612fce55a02af2da2c68f8280bc00cb4af86d645a1144d`.
+- Non-forced semver-compatible remediation candidate: backend build passed and full unit suite passed after correcting Jest async mock typing. Production audit still reports 1 critical, 7 high, 4 moderate. Candidate lockfile + audit + CycloneDX SBOM artifact `13611365109`, SHA-256 `e2e7caa8741ea3df7d310fb06227887f343199c578602f2e59c293e541c9423e`.
+- Candidate lockfile was generated in CI and not yet accepted/committed as the final lockfile. Workflow now has a guarded commit step after successful build/tests; refresh branch and exact head before relying on it.
+- Do not use `npm audit fix --force`. Remaining findings need targeted direct/transitive remediation and tests.
+
+### Mobile
+- PR #8 branch `fix/mobile-wallet-checkout-idempotency-2026-11-08`; latest head must be refreshed after the last docs/lint-only commits.
+- Added `useTextPersonality.ts` and `TextPersonalityAnalysisCard.tsx`, wired into the existing AI Advice screen. Consent is off by default; the user must opt in; UI describes profile + up to 30 own sent messages, shows evidence/uncertainty, supports revocation, and states the unvalidated text estimate is not used by Matching.
+- Android test workflow now uses `assembleDebug` and explicit test-only filenames; production release no longer signs with the debug key. `android-signed-release.yml` requires private owner-controlled keystore secrets and verifies signatures and SHA-256 checksums.
+- Android run `42463796874` passed dependency install, changed-file lint, focused wallet tests and baseline audit steps; Android APK build was still IN_PROGRESS and artifact list empty at last refresh. This run predates the final OCEAN lint-list/docs-only commit; refresh latest PR head and CI.
+- Production signing secrets are not configured in this repository. See `docs/ANDROID_SIGNED_RELEASE.md`. Never generate a replacement key if an earlier production APK was distributed without checking upgrade compatibility.
+
+### Deployment runbook and hard blockers
+- `docs/PRODUCTION_RELEASE_RUNBOOK.md` covers read-only host preflight, MySQL/public-assets backup and restore proof, runtime-only backend replacement, health checks, private admin deployment, signed mobile, and rollback.
+- Current `GET /health` is liveness only, not DB/Redis/payment readiness.
+- No live VPS inspection, backup/restore test, GHCR publish, signed APK build, production database report, or production deployment has occurred.
+- Backend Issue #18 payment crash-injection and ledger/entitlement reconciliation remain open.
+- Backend Issue #19 purchase-time gender snapshot remains open; historical gender uses current profile attribution.
+- Mobile Issue #7 legacy Basket placeholders remain. Route is registered but not found in the current Products navigation. Before altering, owner must confirm whether `price` is rials or tomans and whether the intended action is direct payment or wallet funding.
+- Mobile Issue #11 now has a first UI implementation in the PR branch; it still requires exact-head lint/build and functional consent/revoke verification.
+
+No release-ready claim is justified until remaining critical/high production dependencies, payment crash proof, mobile APK and signing, and backup/rollback gates are resolved.
