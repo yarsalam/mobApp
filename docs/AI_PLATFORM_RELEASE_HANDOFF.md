@@ -117,3 +117,13 @@ Start by reading this file and `docs/AI_PLATFORM_COMPLETION_PLAN.md`, then refre
 - These are targeted backend checks, not a complete release certification; they do not cover production database data, payment crash-injection, mobile/admin builds, or live end-to-end integration.
 - Additional verified mobile finding: `src/pages/payment/Basket.tsx` renders `src/components/BasketScreen.tsx`, whose online/offline payment actions still point to placeholder `https://yoursite.com` URLs. Tracked in [mobile Issue #7](https://github.com/yarsalam/mobile/issues/7). The actual route reachability and replacement using existing payment screens must be tested; do not delete the screen or payment options.
 - Mobile and admin repositories are accessible, but the separate public website frontend repository remains unavailable/unidentified. Continue backend and accessible-client work without claiming the website is complete.
+
+
+## 2026-11-08 additional mobile contract audit
+
+- Confirmed a second payment integration defect in the accessible mobile repository:
+  - Backend PR #17 `PaymentsController.buyWithWallet` requires an `Idempotency-Key` header and returns a bad-request error when absent.
+  - Mobile `src/api/mutations/payment/useBuyWithWallet.ts` sends `POST /payments/buy/:bundleCode` without that header.
+  - Tracked together with the legacy placeholder BasketScreen checkout path in [yarsalam/mobile Issue #7](https://github.com/yarsalam/mobile/issues/7).
+- Remediation must create one stable key per user-initiated checkout and retain it across retries; do not generate a different key for every retry. Find and update every caller before changing the hook contract.
+- This establishes a real backend/mobile contract mismatch; mobile checkout is not release-ready even though the targeted backend CI workflows passed.
