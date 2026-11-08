@@ -1,4 +1,11 @@
-import { PartialType } from '@nestjs/mapped-types';
-import { CreateMessageDto } from './create-message.dto';
+import {IsBoolean, IsOptional, IsString, MinLength} from 'class-validator';
 
-export class UpdateMessageDto extends PartialType(CreateMessageDto) {}
+export class UpdateMessageDto {
+  @IsString()
+  @MinLength(1)
+  content: string;
+
+  @IsOptional()
+  @IsBoolean()
+  acceptModerationWarning?: boolean;
+}
