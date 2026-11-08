@@ -106,3 +106,14 @@ Base inspected: `main` at `e79910b34e7064351419252b4b4607d51e423e23`
 ## Handoff note for the next chat
 
 Start by reading this file and `docs/AI_PLATFORM_COMPLETION_PLAN.md`, then refresh GitHub state rather than trusting this snapshot. Continue on the existing PR #17 branch unless a newer owner-approved branch supersedes it. Update this handoff file after every meaningful change and before any final report. Do not ask the owner to repeat the decisions above.
+
+
+## 2026-11-08 follow-up verification
+
+- Handoff file was created and verified at `docs/AI_PLATFORM_RELEASE_HANDOFF.md`.
+- PR #17 source commit `92546b878dd8ffa76c402c37ebc9bab9b43fac15` was checked by GitHub Actions:
+  - Python Moderation Contract run #58 (`42460971667`): **success**.
+  - Backend Revenue Quality run #65 (`42460971727`): **success**; install, Revenue/moderation unit tests, and NestJS compile all completed.
+- These are targeted backend checks, not a complete release certification; they do not cover production database data, payment crash-injection, mobile/admin builds, or live end-to-end integration.
+- Additional verified mobile finding: `src/pages/payment/Basket.tsx` renders `src/components/BasketScreen.tsx`, whose online/offline payment actions still point to placeholder `https://yoursite.com` URLs. Tracked in [mobile Issue #7](https://github.com/yarsalam/mobile/issues/7). The actual route reachability and replacement using existing payment screens must be tested; do not delete the screen or payment options.
+- Mobile and admin repositories are accessible, but the separate public website frontend repository remains unavailable/unidentified. Continue backend and accessible-client work without claiming the website is complete.
