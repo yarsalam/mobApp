@@ -29,7 +29,17 @@ jobs:
         run: |
           set -euo pipefail
           npm install --save-exact bcrypt@6.0.0 sharp@0.35.5 --registry=https://registry.npmjs.org
-          npm pkg set 'overrides.multer=2.4.1' 'overrides.brace-expansion=1.1.21'
+          node <<'NODE'
+          const fs = require('node:fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          pkg.overrides = {
+            ...(pkg.overrides || {}),
+            multer: '2.5.0',
+            'ip-address': '10.7.4',
+            'brace-expansion@1': '1.1.21',
+          };
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\\n');
+          NODE
           npm install --package-lock-only --registry=https://registry.npmjs.org
           set +e
           npm audit fix --package-lock-only
