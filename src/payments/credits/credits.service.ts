@@ -77,7 +77,17 @@ export class CreditsService {
       const existing = await events.findOne({
         where: { userId, idempotencyKey },
       });
-      if (existing) return;
+      if (existing) {
+        const metadata = existing.metadata ?? {};
+        if (
+          existing.type !== EventType.CREDITS_GRANTED ||
+          Number(metadata.amount) !== amount ||
+          metadata.source !== 'bundle_fulfillment'
+        ) {
+          throw new Error('Idempotency key was already used for a different credit grant');
+        }
+        return;
+      }
 
       const credits = manager.getRepository(UserCredits);
       await credits
