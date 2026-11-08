@@ -73,6 +73,17 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
+          set -euo pipefail
+          CANDIDATE_LOCK="$RUNNER_TEMP/package-lock.json"
+          PACKAGE_JSON_SHA="$(git rev-parse HEAD:package.json)"
+          cp package-lock.json "$CANDIDATE_LOCK"
+          git fetch origin "$HEAD_REF"
+          git checkout -B "$HEAD_REF" "origin/$HEAD_REF"
+          if [ "$(git rev-parse HEAD:package.json)" != "$PACKAGE_JSON_SHA" ]; then
+            echo "::error::package.json changed since the candidate was tested; regenerate the lockfile candidate."
+            exit 1
+          fi
+          cp "$CANDIDATE_LOCK" package-lock.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package-lock.json
@@ -81,7 +92,7 @@ jobs:
             exit 0
           fi
           git commit -m "fix(deps): apply tested semver-compatible security updates"
-          git push origin "HEAD:${HEAD_REF}"
+          git push origin "HEAD:$HEAD_REF"
       - name: Upload remediation candidate
         if: always()
         uses: actions/upload-artifact@v4
