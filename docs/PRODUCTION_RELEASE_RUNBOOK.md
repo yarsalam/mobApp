@@ -58,7 +58,7 @@ Preconditions:
 - The image is published to GHCR under an immutable `sha-<full-commit>` tag.
 - Runtime Compose configuration is validated and its required environment variables are set in the private host env file.
 
-The current runtime-only Compose design uses the existing external `yarsalam_network`, existing MySQL/Redis services, loopback-only API binding at `127.0.0.1:5001`, and the existing public-assets mount. It must not recreate MySQL, Redis, Qdrant, or AI services.
+The current runtime-only Compose design uses the existing external `yarsalam_network`, existing MySQL/Redis services, loopback-only API binding at `127.0.0.1:5001`, and the existing public-assets mount. It must not recreate MySQL, Redis, Qdrant, or AI services. The hardened final runtime image also removes the unused global npm/npx CLI; only Node.js and pruned production application dependencies remain.
 
 Only after owner authorization, the preflight and backup gates, and image publication:
 
