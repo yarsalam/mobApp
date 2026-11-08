@@ -38,7 +38,7 @@ jobs:
             'ip-address': '10.7.4',
             'brace-expansion@1': '1.1.21',
           };
-          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\\n');
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + String.fromCharCode(10));
           NODE
           npm install --package-lock-only --registry=https://registry.npmjs.org
           set +e
