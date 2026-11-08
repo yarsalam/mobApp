@@ -23,7 +23,14 @@ jobs:
           node-version: "22"
           cache: npm
       - name: Apply semver-compatible security updates only
-        run: npm audit fix --package-lock-only
+        shell: bash
+        run: |
+          set +e
+          npm audit fix --package-lock-only
+          status=$?
+          set -e
+          echo "npm audit fix exit code: ${status}"
+          echo "Non-forced compatible updates are retained in package-lock.json; remaining findings are reported by the later production audit."
       - name: Install updated lockfile
         run: npm ci
       - name: Build backend
