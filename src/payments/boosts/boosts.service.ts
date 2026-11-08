@@ -128,7 +128,18 @@ export class BoostService {
       const existing = await events.findOne({
         where: { userId, idempotencyKey },
       });
-      if (existing) return;
+      if (existing) {
+        const metadata = existing.metadata ?? {};
+        if (
+          existing.type !== EventType.PURCHASE ||
+          metadata.entitlement !== 'boost' ||
+          Number(metadata.amount) !== count ||
+          metadata.bundleCode !== bundleCode
+        ) {
+          throw new Error('Idempotency key was already used for a different boost grant');
+        }
+        return;
+      }
 
       const boosts = manager.getRepository(UserBoost);
       await boosts
