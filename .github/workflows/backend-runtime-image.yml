@@ -1,0 +1,85 @@
+name: Backend runtime image
+
+on:
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "package.json"
+      - "package-lock.json"
+      - "src/**"
+      - "tsconfig*.json"
+      - "nest-cli.json"
+      - ".github/workflows/backend-runtime-image.yml"
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "package.json"
+      - "package-lock.json"
+      - "src/**"
+      - "tsconfig*.json"
+      - "nest-cli.json"
+      - ".github/workflows/backend-runtime-image.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build runtime image (no source checkout on production host)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          push: false
+          tags: yarsalam-backend:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan runtime image for known vulnerabilities
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${RUNNER_TEMP}/trivy-cache:/root/.cache/" \
+            aquasec/trivy:0.59.1 image \
+            --exit-code 1 \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            "yarsalam-backend:ci-${GITHUB_SHA}"
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag and publish immutable commit image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          IMAGE: ghcr.io/yarsalam/yarsalam-backend
+          SHA_TAG: sha-${{ github.sha }}
+        run: |
+          docker tag "yarsalam-backend:ci-${GITHUB_SHA}" "${IMAGE}:${SHA_TAG}"
+          docker push "${IMAGE}:${SHA_TAG}"
+
+      - name: Publish moving latest tag for convenience only
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          docker tag "yarsalam-backend:ci-${GITHUB_SHA}" ghcr.io/yarsalam/yarsalam-backend:latest
+          docker push ghcr.io/yarsalam/yarsalam-backend:latest
