@@ -17,6 +17,7 @@ import {
 } from '@nestjs/common';
 import { MessageService } from './message.service';
 import { CreateMessageDto } from './dto/create-message.dto';
+import { UpdateMessageDto } from './dto/update-message.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { GetUser } from 'src/auth/decorator/get-user/get-user.decorator';
 import { PaywallException } from 'src/payments/paywall/paywall.exception';
@@ -115,9 +116,14 @@ export class MessageController {
   async editMessage(
     @GetUser('id') userId: number,
     @Param('id', ParseIntPipe) id: number,
-    @Body('content') content: string,
+    @Body() dto: UpdateMessageDto,
   ) {
-    return this.messageService.editMessage(id, userId, content);
+    return this.messageService.editMessage(
+      id,
+      userId,
+      dto.content ?? '',
+      dto.acceptModerationWarning === true,
+    );
   }
 
   @Post(':id/report')
