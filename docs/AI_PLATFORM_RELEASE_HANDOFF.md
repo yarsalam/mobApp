@@ -254,3 +254,28 @@ Start by reading this file and `docs/AI_PLATFORM_COMPLETION_PLAN.md`, then refre
 - Mobile Issue #7: legacy Basket route still contains placeholder URLs; route is registered but no direct current navigation call was found. Preserve it until reachability, price units, and intended direct-vs-wallet payment semantics are confirmed.
 - Mobile Issue #11: OCEAN text-analysis consent and estimate UI is absent from the current mobile tree; reuse backend endpoints and existing profile UI after PR #17 is available.
 - Public website frontend repository and authorized read-only production revenue access remain unavailable.
+
+
+## 2026-11-08 OCEAN mobile integration checkpoint
+
+### Backend PR #17
+- Added `GET /personality/ocean/text-estimate`, which returns the stored estimate only while explicit text-analysis consent is enabled. Revoked consent returns `assessment: null`; the existing revoke path removes the stored estimate.
+- PersonalityService unit tests now cover consent-gated estimate retrieval.
+- Latest source head: `10a0f071b8063dc459d235454c9bbff7a1d3db70`.
+- Backend Revenue Quality run #80 and Python Moderation Contract run #73: PASS.
+
+### Mobile PR #12 — OCEAN consent UI
+- Branch: `feat/mobile-ocean-consent-ui-2026-11-08`; latest head `0b4472ae31e8207a2c531cbf01994c761a7189b3`; Draft.
+- Reuses the existing AI Advice screen and backend consent/estimate endpoints; no second personality model or questionnaire was created.
+- The user must explicitly opt in before analysis. The UI explains profile/about text, hobbies, values, up to 30 self-authored sent messages, and backend redaction of contact details/links.
+- Shows all five axes, raw scores, uncalibrated confidence, exact evidence quotes, insufficient-data states and limitations. It states estimates are not validated psychometrics and are excluded from Matching.
+- Revoking consent deletes the stored text estimate while preserving the existing questionnaire and unrelated profile metadata.
+- Android workflow run #80 (`42463238514`) was **IN_PROGRESS** at this checkpoint; focused lint/API tests and Android APK build must be refreshed before calling the PR validated.
+- Tracked in [mobile Issue #11](https://github.com/yarsalam/mobile/issues/11).
+
+### Mobile PR #8 — payment, Copilot and moderation
+- Latest head: `3efd824a0e0d4e1e566a66edc024d4e7058f311a`; Draft.
+- Android run #75 (`42463163921`): changed-file ESLint **PASS**; focused Jest wallet/chat/moderation tests **PASS**; Android standalone test APK build **IN_PROGRESS**. Refresh artifact/checksum upload before reporting.
+- An earlier focused test run failed only because a Jest test used dynamic import without VM modules; changed to static import and the latest focused test suite passed.
+- Full-repository lint/Jest baseline debt remains in Issues #9 and #10; focused changed-file gates are blocking.
+
