@@ -127,3 +127,48 @@ Start by reading this file and `docs/AI_PLATFORM_COMPLETION_PLAN.md`, then refre
   - Tracked together with the legacy placeholder BasketScreen checkout path in [yarsalam/mobile Issue #7](https://github.com/yarsalam/mobile/issues/7).
 - Remediation must create one stable key per user-initiated checkout and retain it across retries; do not generate a different key for every retry. Find and update every caller before changing the hook contract.
 - This establishes a real backend/mobile contract mismatch; mobile checkout is not release-ready even though the targeted backend CI workflows passed.
+
+
+## 2026-11-08 cross-repository execution log (continued)
+
+### Backend PR #17
+- Current source head: `2e24c7c2fbaa39a7e8841b6095f1154309e996bf` (Draft; not merged).
+- Added an explicit `payments.productCode = 'wallet_charge'` filter to the three wallet-deposit aggregates in Revenue analytics (`by-gender`, `arppu`, `mrr`). This prevents unrelated paid products from being counted as wallet top-ups.
+- Backend Revenue Quality run #70 (`42461850165`) passed: dependency install, Revenue/moderation unit tests, and backend compile.
+- Python Moderation Contract run #63 (`42461850260`) passed: source compile and fail-closed tests.
+- This does not constitute payment crash-injection or production-data reconciliation. Issue #18 remains open.
+
+### Admin panel PR #38
+- Repository: `yarsalam/admin-panel`; branch `fix/revenue-dashboard-contract-2026-11-08`; current head `c9161d17b4f25c91bb0b08285b87b5e1c5347f99`; Draft.
+- Registered the existing `RevenueController` and `UserApiClientModule` in `ExecutiveModule`; without this, the existing `/exec/revenue/*` routes were not registered.
+- Updated Revenue hook response types and normalizers for `by-product.rows`, `cohort.cohorts`, and `funnel.steps`.
+- The gender table now uses `fulfilledRevenue` and displays purchase count, unique buyers, wallet debits, and wallet top-ups separately for female/male/unknown.
+- The product table/chart uses fulfilled purchases rather than wallet debits.
+- IRT rial amounts are converted to toman for display; unknown CAC/LTV, MRR/ARR, churn, and forecast accuracy remain visibly unavailable rather than becoming zero.
+- Paid-payment trend charts are labelled as paid payments, not wallet top-ups. Wallet top-up metrics are filtered separately by `productCode=wallet_charge` in backend PR #17.
+- Added a validation workflow to the existing manual runtime validation workflow. No validation run has yet been executed for this PR; keep it Draft. It depends on backend PR #17 being merged/deployed before the UI can receive the new response fields.
+- No production revenue data was queried. The actual female/male totals must be retrieved through an authorized read-only reporting path after the backend is deployed.
+
+### Mobile PR #8
+- Repository: `yarsalam/mobile`; branch `fix/mobile-wallet-checkout-idempotency-2026-11-08`; current head `cce8655eb2a65aa8c160dd653aebcf36af99da49`; Draft.
+- Existing `useBuyWithWallet` now sends a persisted per-user/per-bundle `Idempotency-Key`; retries after network/5xx errors reuse the key. Existing `ProductCard` passes the authenticated user ID.
+- Added three focused tests: header and success cleanup; same key reused after a network failure; terminal 4xx clears the pending key.
+- Android run #59 (`42461742985`) verified changed-file ESLint passed and all three new checkout tests passed. Full-repository lint found 56 errors / 196 warnings; tracked in mobile Issue #9. The existing `__tests__/App.test.tsx` failed with `SyntaxError: Unexpected token 'export'`; tracked in Issue #10. The Android APK build was skipped after the Jest baseline failure.
+- Workflow was updated again to make checkout-specific lint/tests blocking, keep baseline lint/Jest audits visible but non-blocking while tracked, and continue to Android build. New run #60 is pending/queued at the time of this note; refresh it before reporting.
+- Mobile Issue #7 tracks the legacy `BasketScreen` placeholder `yoursite.com` payment/cart URLs and the wallet checkout header mismatch.
+- Do not merge or release until run #60's focused tests and Android APK build pass, then resolve the tracked baseline issues before full mobile release certification.
+
+### Existing AI capability map — reuse, do not duplicate
+
+- AI Self-Presentation: existing profile/auth-profile and personality-related services are candidates; user-facing end-to-end flow and evidence-based text improvements still need audit.
+- AI Matching Intelligence: existing `python-ai/services/ml_service/routes/matching.py`, `src/suggestion` retrieval/scoring/diversity services, and matching event/attribution work in Issue #14. Do not create another matcher.
+- AI Conversation Copilot: existing `src/ai-assistant` suggest-reply, icebreaker, intent, and guidance functionality. Verify composer insertion and explicit user send.
+- AI Communication Safety: existing Nest moderation service/processor and Python `ai_moderation`; targeted fail-closed contract run #63 passed.
+- AI Audience Intelligence: existing executive intelligence segment and female-metrics analyzers plus growth/admin reporting. Verify lineage, consent, cohort definitions, and actionable UI before claiming complete.
+- AI Growth Intelligence: existing growth monetization, campaigns, SEO/social controllers, and Revenue dashboard. Complete and integrate existing paths; no duplicate growth service.
+- OCEAN text inference remains in backend PR #17. Explicit consent, evidence quotes, uncertainty, and exclusion from Matching are required. Mobile UI integration and Persian benchmark/validation are still unverified.
+
+### Public website frontend boundary
+- `yarsalam/mobile` and `yarsalam/admin-panel` are accessible and being audited/fixed independently.
+- The separate public website frontend repository is still unavailable/unidentified. Do not claim the public website is ready or infer that mobile/admin are its source.
+- Continue backend, admin, and mobile work; record the exact public-web repository/branch as a dependency when it becomes available.
