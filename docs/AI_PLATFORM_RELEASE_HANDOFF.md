@@ -417,3 +417,11 @@ No release-ready claim is justified until remaining critical/high production dep
 - The first full Jest rerun after adding the DeviceInfo mock exposed another missing native module, `react-native-background-fetch`. A test-only mock is now added to `jest.setup.js`; current Android workflow run `42465041567` includes the updated setup and is pending at Node setup.
 - Current mobile run `42465041567` has not yet reached full Jest or APK build; no current APK artifact exists.
 - Backend runtime image build after removing global npm/npx from the final image: run `42464972290` is still in the image-build step; Trivy has not yet run. No image publish.
+
+
+## 2026-11-08 final snapshot at 08:58Z
+
+- Backend PR #17 latest branch head: `0409893b79fb13f35303ec38142a8a42955e6e31`. It includes the tested backend source, the runtime Dockerfile removal of unused npm/npx, and a workflow step to export a scanned PR image as a 14-day artifact. The prior exact source SHA `d578868011bc899d07e5be63777875f0c9facb7e` completed runtime image build + Trivy CRITICAL/HIGH scan successfully. New export-enabled run `42465122119` is building; no image artifact is available yet.
+- Mobile PR #8 latest head: `19c5c299dd907d3362a70d72550e72601b07b04d`. Android run `42465041567` passed Android SDK setup, JS install, API URL validation, blocking changed-file lint (including OCEAN), repository lint audit (non-blocking), and focused wallet Jest tests. Full Jest is now running after adding DeviceInfo, Notifee and BackgroundFetch test mocks. APK build/artifact steps have not started.
+- Admin PR #37 latest head remains `a92239c9f1ecded25a87cc6c52c2b06ff41e88ac`; Revenue validation and admin runtime image + `/login` smoke runs remain green.
+- All three PRs remain Draft. No GHCR publish, APK distribution, merge, server change, or production deployment occurred.
