@@ -405,3 +405,9 @@ No release-ready claim is justified until remaining critical/high production dep
 - Artifact `13611067777`, SHA-256 `b6999d796ad3db44b1dba26b94ff52cdd2cce4a411cab5cb320a65aa6b622213`.
 - Current exact-head runtime image build `42464774684` and full dependency remediation/build/test run `42464774685` are still IN_PROGRESS.
 - Mobile current PR #8 head `240d7bd80ee3a6d8e2df3cc31fc5a884be8ef53f`; Android test workflow run `42464723027` is still IN_PROGRESS at SDK/JS dependency setup. The only change after run #101's checkout was the signed-release artifact action version; no APK artifact exists yet.
+
+
+### Runtime image scan follow-up
+- Runtime image build succeeded on the updated backend dependencies, but Trivy found 10 HIGH / 0 CRITICAL in the Node base image's global npm CLI packages (not OS packages and not the app's audited production dependency tree): npm-bundled `brace-expansion`, `ip-address`, `pacote`, `picomatch`, and `sigstore`.
+- The runtime container only executes `node dist/main.js`; it does not need npm/npx. The final Docker stage now removes `/usr/local/lib/node_modules/npm`, `/usr/local/bin/npm`, and `/usr/local/bin/npx`. Builder stage keeps npm for build/install.
+- New exact-head build + Trivy run `42464972290` is IN_PROGRESS; do not publish until it passes. If scan still finds application packages, inspect the exact package path and patch the relevant runtime dependency rather than suppressing the finding.
