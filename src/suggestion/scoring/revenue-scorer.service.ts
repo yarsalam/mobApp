@@ -304,6 +304,12 @@ export class RevenueScorerService {
   private vectorAgreement(a: number[], b: number[]): number {
     if (!a.length || !b.length) return 0.5;
 
+    // All-zero personality segment means no validated questionnaire evidence.
+    // Treat the missing comparison neutrally instead of rewarding two unknowns.
+    const hasUsableValues = (vector: number[]) =>
+      vector.some((value) => Number.isFinite(value) && value !== 0);
+    if (!hasUsableValues(a) || !hasUsableValues(b)) return 0.5;
+
     const length = Math.min(a.length, b.length);
 
     if (length === 0) return 0.5;
@@ -361,7 +367,14 @@ export class RevenueScorerService {
     const checks = [
       [user.profileVector, candidate.profileVector],
       [user.preferenceVector, candidate.preferenceVector],
-      [user.personalityVector, candidate.personalityVector],
+      [
+        user.personalityVector?.some((value) => Number.isFinite(value) && value !== 0)
+          ? user.personalityVector
+          : undefined,
+        candidate.personalityVector?.some((value) => Number.isFinite(value) && value !== 0)
+          ? candidate.personalityVector
+          : undefined,
+      ],
       [user.behaviorVector, candidate.behaviorVector],
       [user.geoVector, candidate.geoVector],
     ];
