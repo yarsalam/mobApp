@@ -293,6 +293,9 @@ export class RevenueAnalyticsService {
       fulfilledRevenue: Math.round(finite(fulfilledRow?.fulfilledRevenue)),
       fulfilledPurchaseCount: finite(fulfilledRow?.fulfilledCount),
       fulfilledPayingUsers: finite(fulfilledRow?.fulfilledUsers),
+      fulfilledArppu: finite(fulfilledRow?.fulfilledUsers) > 0
+        ? Math.round(finite(fulfilledRow?.fulfilledRevenue) / finite(fulfilledRow?.fulfilledUsers))
+        : null,
       activeUsers,
       payingRate: activeUsers > 0 ? Math.round((payingUsers / activeUsers) * 10000) / 100 : 0,
       depositRevenue: Math.round(finite(depositRow?.depositRevenue)),
