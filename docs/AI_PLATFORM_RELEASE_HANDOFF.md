@@ -411,3 +411,9 @@ No release-ready claim is justified until remaining critical/high production dep
 - Runtime image build succeeded on the updated backend dependencies, but Trivy found 10 HIGH / 0 CRITICAL in the Node base image's global npm CLI packages (not OS packages and not the app's audited production dependency tree): npm-bundled `brace-expansion`, `ip-address`, `pacote`, `picomatch`, and `sigstore`.
 - The runtime container only executes `node dist/main.js`; it does not need npm/npx. The final Docker stage now removes `/usr/local/lib/node_modules/npm`, `/usr/local/bin/npm`, and `/usr/local/bin/npx`. Builder stage keeps npm for build/install.
 - New exact-head build + Trivy run `42464972290` is IN_PROGRESS; do not publish until it passes. If scan still finds application packages, inspect the exact package path and patch the relevant runtime dependency rather than suppressing the finding.
+
+
+### Latest mobile native-test and runtime-image follow-up
+- The first full Jest rerun after adding the DeviceInfo mock exposed another missing native module, `react-native-background-fetch`. A test-only mock is now added to `jest.setup.js`; current Android workflow run `42465041567` includes the updated setup and is pending at Node setup.
+- Current mobile run `42465041567` has not yet reached full Jest or APK build; no current APK artifact exists.
+- Backend runtime image build after removing global npm/npx from the final image: run `42464972290` is still in the image-build step; Trivy has not yet run. No image publish.
