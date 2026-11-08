@@ -66,7 +66,7 @@ jobs:
         run: |
           docker save "yarsalam-backend:ci-${GITHUB_SHA}" | gzip -1 > backend-runtime-image.tar.gz
           sha256sum backend-runtime-image.tar.gz > backend-runtime-image.tar.gz.sha256
-          printf '%s\\n' "${GITHUB_SHA}" > backend-runtime-image.source-commit.txt
+          echo "${GITHUB_SHA}" > backend-runtime-image.source-commit.txt
 
       - name: Upload scanned runtime image candidate
         if: github.event_name == 'pull_request' && success()
