@@ -1,0 +1,64 @@
+name: Backend dependency remediation preview
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/dependency-remediation-preview.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  safe-remediation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Apply semver-compatible security updates only
+        run: npm audit fix --package-lock-only
+      - name: Install updated lockfile
+        run: npm ci
+      - name: Build backend
+        run: npm run build
+      - name: Run backend unit tests
+        run: npm test -- --runInBand
+      - name: Generate production audit after remediation
+        shell: bash
+        run: |
+          mkdir -p security-remediation
+          npm audit --omit=dev --json > security-remediation/npm-audit-production.json || true
+          npm sbom --sbom-format cyclonedx > security-remediation/npm-sbom.cdx.json
+          cp package-lock.json security-remediation/package-lock.json
+      - name: Enforce no critical/high production findings
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync('security-remediation/npm-audit-production.json', 'utf8'));
+          const counts = report.metadata?.vulnerabilities ?? {};
+          const summary = [
+            '## Production dependency audit after semver-compatible remediation',
+            '',
+            '| Severity | Count |',
+            '|---|---:|',
+            ...['critical','high','moderate','low','info'].map(k => `| ${k} | ${counts[k] ?? 0} |`),
+            '',
+            `Total: ${counts.total ?? 0}`
+          ].join('\n');
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
+          if ((counts.critical ?? 0) > 0 || (counts.high ?? 0) > 0) process.exit(1);
+          NODE
+      - name: Upload remediation candidate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-dependency-remediation-candidate
+          path: security-remediation/
+          retention-days: 30
