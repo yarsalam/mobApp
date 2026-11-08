@@ -39,7 +39,7 @@ jobs:
         run: npm ci
 
       - name: Revenue and moderation unit tests
-        run: npm test -- --runInBand revenue-analytics.service.spec.ts
+        run: npm test -- --runInBand revenue-analytics.service.spec.ts personality.service.spec.ts
 
       - name: Compile backend
         run: npm run build
