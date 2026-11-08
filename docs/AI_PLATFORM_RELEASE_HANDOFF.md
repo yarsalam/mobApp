@@ -191,3 +191,25 @@ Start by reading this file and `docs/AI_PLATFORM_COMPLETION_PLAN.md`, then refre
 - Open backend release issues remain #13 (Revenue LTV provenance), #14 (Matching event integrity/attribution), #16 (npm vulnerability triage), and #18 (payment settlement/fulfillment idempotency).
 - The separate public website frontend repository has not been identified or made available in the linked GitHub repositories. Mobile and admin-panel repositories are not a substitute for it.
 - No production Revenue query, production payment test, production deployment, PR merge, or public launch was performed. Release is NOT certified.
+
+
+## 2026-11-08 latest continuation checkpoint
+
+### Mobile PR #8 expanded existing integrations
+- Latest inspected head: `cc8f0d93f78deab8d430cbf0efe1b83fd7f9cc23`; Draft.
+- Reused the existing `AiAssistantService.suggestReply` real-chat path (`targetUserId` + latest incoming message); mobile's existing hook had only exposed the assistant `convId` path and was not connected to `ChatScreen`.
+- Added a composer action that inserts a suggested reply into the draft only. User review and explicit Send remain required; the existing moderation pipeline is retained.
+- Updated the existing moderation fallback: if moderation is unavailable, the client no longer offers a "send anyway" action. This aligns with the backend fail-closed contract.
+- Added two API contract tests for real-chat and legacy assistant-conversation reply requests.
+- Android workflow run #65 (`42462281975`) at the latest inspected head: changed-file ESLint **PASS**; focused Jest tests (wallet + chat suggestion) **PASS**; full-repository lint/Jest audits completed as non-blocking baseline audits; standalone Android test APK build was still **IN_PROGRESS**. Refresh this run before reporting final mobile readiness.
+- Previous run #64 failed on one pre-existing unused `isRead` argument in `ChatScreen`; fixed by renaming it `_isRead` in the latest head. Do not treat run #64 as the current result.
+
+### Gender attribution limitation
+- Added backend [Issue #19](https://github.com/yarsalam/mobApp/issues/19): new purchase events should store a minimized normalized `genderAtPurchase` snapshot in event metadata; historical events without snapshots must expose their current-profile fallback coverage. This prevents future profile edits from rewriting historical female/male purchase reports.
+- Until Issue #19 is implemented, the Revenue dashboard explicitly labels the current-profile attribution basis. Do not describe the historical gender totals as immutable.
+
+### Current draft PR heads
+- Backend PR #17: `cee52c48363ab1d63ae8f9534cef1c6f69020200` (Draft; targeted Revenue and moderation checks passed on source commit before the docs-only handoff update).
+- Admin PR #38: `e5e6708715f10a37b6c1972d461b6e7475f2d346` (Draft; validation workflow added but not yet run).
+- Mobile PR #8: `cc8f0d93f78deab8d430cbf0efe1b83fd7f9cc23` (Draft; focused checks passed, Android APK build pending).
+- Do not merge any PR or deploy without owner authorization and the listed acceptance evidence.
