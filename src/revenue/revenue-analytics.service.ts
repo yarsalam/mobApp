@@ -308,14 +308,13 @@ export class RevenueAnalyticsService {
   async cohort(_depositCurrency: PaymentCurrency = 'IRT', months = 12) {
     const since = new Date();
     since.setMonth(since.getMonth() - months);
-    const reasonExpr = "JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.reason'))";
     const amountExpr = "CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.amountRials')), '0') AS DECIMAL(20,0))";
     const rows = await this.users.createQueryBuilder('u')
       .leftJoin(
         'u.userEvents',
         'e',
-        `e.type = :eventType AND ${reasonExpr} LIKE :reason AND e.createdAt >= u.createdAt`,
-        { eventType: EventType.CREDITS_SPENT, reason: 'buy:%' },
+        `e.type = :eventType AND JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.isCommercialPurchase')) = 'true' AND JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.currency')) = 'IRT' AND e.createdAt >= u.createdAt`,
+        { eventType: EventType.PURCHASE },
       )
       .select("DATE_FORMAT(u.createdAt, '%Y-%m')", 'cohort')
       .addSelect('COUNT(DISTINCT u.id)', 'users')
@@ -332,7 +331,7 @@ export class RevenueAnalyticsService {
     return {
       currency: 'IRT',
       unit: 'rial',
-      source: 'user_events wallet bundle purchase spend; cohort revenue is cumulative from signup',
+      source: 'successfully fulfilled commercial purchase events in IRT; cohort revenue is cumulative from signup and includes wallet, card and crypto bundle purchases',
       cohorts: rows.map(row => {
         const cohortDate = new Date(`${row.cohort}-01T00:00:00`);
         const cohortEnd = new Date(cohortDate);
@@ -357,22 +356,43 @@ export class RevenueAnalyticsService {
     const since = sinceDays(days);
     const reasonExpr = "JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.reason'))";
     const amountExpr = "CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.amountRials')), '0') AS DECIMAL(20,0))";
-    const [registered, completed, purchaseRow] = await Promise.all([
-      this.users.createQueryBuilder('u').where('u.createdAt >= :since', { since }).getCount(),
-      this.users.createQueryBuilder('u').where('u.createdAt >= :since', { since })
-        .andWhere('u.isCompleted = :completed', { completed: true }).getCount(),
-      this.events.createQueryBuilder('e').innerJoin('e.user', 'u')
+    const [registered, completed, checkoutRow, purchaseRow] = await Promise.all([
+      this.users.createQueryBuilder('u')
+        .where('u.createdAt >= :since', { since })
+        .getCount(),
+      this.users.createQueryBuilder('u')
+        .where('u.createdAt >= :since', { since })
+        .andWhere('u.isCompleted = :completed', { completed: true })
+        .getCount(),
+      this.events.createQueryBuilder('e')
+        .innerJoin('e.user', 'u')
         .select('COUNT(DISTINCT e.userId)', 'buyers')
         .addSelect(`COALESCE(SUM(${amountExpr}), 0)`, 'revenue')
+        .addSelect('COUNT(*)', 'transactions')
         .where('e.type = :type', { type: EventType.CREDITS_SPENT })
         .andWhere(`${reasonExpr} LIKE :reason`, { reason: 'buy:%' })
         .andWhere('e.createdAt >= :since', { since })
         .andWhere('u.createdAt >= :since', { since })
         .getRawOne(),
+      this.events.createQueryBuilder('e')
+        .innerJoin('e.user', 'u')
+        .select('COUNT(DISTINCT e.userId)', 'buyers')
+        .addSelect(`COALESCE(SUM(${amountExpr}), 0)`, 'revenue')
+        .addSelect('COUNT(*)', 'transactions')
+        .where('e.type = :type', { type: EventType.PURCHASE })
+        .andWhere("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.isCommercialPurchase')) = 'true'")
+        .andWhere("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.currency')) = 'IRT'")
+        .andWhere('e.createdAt >= :since', { since })
+        .andWhere('u.createdAt >= :since', { since })
+        .getRawOne(),
     ]);
-    const buyers = finite(purchaseRow?.buyers);
-    const revenue = Math.round(finite(purchaseRow?.revenue));
-    const rate = (value: number) => registered > 0 ? Math.round((value / registered) * 10000) / 100 : 0;
+
+    const checkoutBuyers = finite(checkoutRow?.buyers);
+    const completedBuyers = finite(purchaseRow?.buyers);
+    const completedRevenue = Math.round(finite(purchaseRow?.revenue));
+    const rate = (value: number) =>
+      registered > 0 ? Math.round((value / registered) * 10000) / 100 : 0;
+
     return {
       currency: 'IRT',
       unit: 'rial',
@@ -380,20 +400,33 @@ export class RevenueAnalyticsService {
       steps: [
         { step: 'registered', users: registered, revenue: 0, conversionRate: 100 },
         { step: 'profile_completed', users: completed, revenue: 0, conversionRate: rate(completed) },
-        { step: 'paid_user', users: buyers, revenue, conversionRate: rate(buyers) },
+        {
+          step: 'wallet_checkout_debited',
+          users: checkoutBuyers,
+          revenue: Math.round(finite(checkoutRow?.revenue)),
+          conversionRate: rate(checkoutBuyers),
+          transactions: finite(checkoutRow?.transactions),
+        },
+        {
+          step: 'purchase_fulfilled',
+          users: completedBuyers,
+          revenue: completedRevenue,
+          conversionRate: rate(completedBuyers),
+          transactions: finite(purchaseRow?.transactions),
+        },
       ],
-      note: 'paid_user counts distinct users with a wallet-funded bundle purchase. Wallet top-ups are not counted as product purchases.',
+      note: 'purchase_fulfilled includes successfully granted commercial bundles paid by wallet, card or crypto. wallet_checkout_debited is a separate wallet-only step and may exceed fulfilled purchases when fulfillment failed.',
     };
   }
 
   async concentration(_depositCurrency: PaymentCurrency = 'IRT', days = 365) {
-    const reasonExpr = "JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.reason'))";
     const amountExpr = "CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.amountRials')), '0') AS DECIMAL(20,0))";
     const rows = await this.events.createQueryBuilder('e')
       .select('e.userId', 'userId')
       .addSelect(`SUM(${amountExpr})`, 'revenue')
-      .where('e.type = :type', { type: EventType.CREDITS_SPENT })
-      .andWhere(`${reasonExpr} LIKE :reason`, { reason: 'buy:%' })
+      .where('e.type = :type', { type: EventType.PURCHASE })
+      .andWhere("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.isCommercialPurchase')) = 'true'")
+      .andWhere("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.currency')) = 'IRT'")
       .andWhere('e.createdAt >= :since', { since: sinceDays(days) })
       .groupBy('e.userId')
       .orderBy(`SUM(${amountExpr})`, 'DESC')
@@ -413,7 +446,7 @@ export class RevenueAnalyticsService {
       currency: 'IRT',
       unit: 'rial',
       periodDays: days,
-      source: 'user_events wallet bundle purchase spend',
+      source: 'successfully fulfilled commercial bundle purchase events; includes wallet, card and crypto checkout',
       payingUsers: n,
       totalRevenue: Math.round(total),
       top1pct: top(0.01),
