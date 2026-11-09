@@ -17,9 +17,9 @@ describe('UsersController account actions', () => {
   });
 
   it('rejects profile updates targeting another account', async () => {
-    await expect(
+    expect(() =>
       controller.update(99, {} as never, { user: { sub: '42' } }),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    ).toThrow(ForbiddenException);
 
     expect(usersService.update).not.toHaveBeenCalled();
   });
