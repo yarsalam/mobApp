@@ -1,3 +1,5 @@
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+
 describe('database configuration safety', () => {
   const keys = ['NODE_ENV', 'DB_SYNC', 'DB_USER', 'DB_PASS', 'DB_NAME', 'DB_HOST', 'DB_PORT'];
   const original = Object.fromEntries(keys.map(key => [key, process.env[key]]));
