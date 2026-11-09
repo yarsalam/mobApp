@@ -116,7 +116,7 @@ export class CardTransferProvider {
         metadata: {
           ...(payment.metadata ?? {}),
           proofSubmittedAt: new Date().toISOString(),
-        },
+        } as any,
       },
     );
     if (!result.affected) {
