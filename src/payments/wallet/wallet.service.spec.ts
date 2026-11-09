@@ -112,6 +112,48 @@ describe('WalletService idempotent mutations', () => {
     expect(h.walletTxRepo.createQueryBuilder).not.toHaveBeenCalled();
   });
 
+  it('reconciles a concurrent MySQL duplicate credit receipt without applying another credit', async () => {
+    const h = createHarness();
+    const receipt = {
+      id: 8,
+      userId: 7,
+      type: EventType.CREDITS_GRANTED,
+      idempotencyKey: 'payment:44:wallet-credit',
+      metadata: { amountRials: 500, source: 'payment:44' },
+    };
+    h.userEventService.logWithManager.mockRejectedValueOnce({ code: 'ER_DUP_ENTRY', errno: 1062 });
+    h.dataSource.getRepository = jest.fn(() => ({
+      findOne: jest.fn<() => Promise<any>>().mockResolvedValue(receipt),
+    }));
+
+    await h.service.creditOnce(7, 500, 'payment:44', 'payment:44:wallet-credit');
+
+    expect(h.dataSource.transaction).toHaveBeenCalledTimes(1);
+    expect(h.dataSource.getRepository).toHaveBeenCalledWith(PartitionedEvent);
+    expect(h.rootRepo.findOne).toHaveBeenCalled();
+  });
+
+  it('reconciles a concurrent MySQL duplicate debit receipt without debiting again', async () => {
+    const h = createHarness();
+    const receipt = {
+      id: 9,
+      userId: 7,
+      type: EventType.CREDITS_SPENT,
+      idempotencyKey: 'wallet-checkout:abc:debit',
+      metadata: { amountRials: 100, reason: 'buy:bundle-monthly' },
+    };
+    h.userEventService.logWithManager.mockRejectedValueOnce({ code: 'ER_DUP_ENTRY', errno: 1062 });
+    h.dataSource.getRepository = jest.fn(() => ({
+      findOne: jest.fn<() => Promise<any>>().mockResolvedValue(receipt),
+    }));
+
+    await h.service.debitOnce(7, 100, 'buy:bundle-monthly', 'wallet-checkout:abc:debit');
+
+    expect(h.dataSource.transaction).toHaveBeenCalledTimes(1);
+    expect(h.dataSource.getRepository).toHaveBeenCalledWith(PartitionedEvent);
+    expect(h.rootRepo.findOne).toHaveBeenCalled();
+  });
+
   it('does not record a spend event when the atomic debit finds insufficient balance', async () => {
     const h = createHarness(null, 0);
 
