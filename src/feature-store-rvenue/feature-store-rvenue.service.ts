@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RedisService } from '../redis/redis.service';
@@ -9,27 +9,38 @@ import { ExternalSEOToolsService } from 'src/seo/services/external-seo-tools.ser
 import { PartitionedEvent } from 'src/user-event/entities/partitioned-event.entity';
 import { EventType } from 'src/user-event/type/event-type.enum';
 
+export interface RevenueFeatureProvenance {
+  status: 'observed' | 'derived' | 'missing';
+  source: string | null;
+  asOf: string | null;
+  window: string | null;
+  units: string | null;
+  transformation: string | null;
+  revision: 'revenue-features-v1';
+}
+
 export interface UserRevenueFeatures {
   userId: number;
-  channelType: number;
-  keywordDifficulty: number;
-  contentLength: number;
-  timeToConversion: number;
-  cityWeight: number;
-  intentScore: number;
-  engagementDepth: number;
-  retentionImpact: number;
-  campaignCost: number;
-  competitorPressure: number;
-  seasonalityFactor: number;
-  segmentSize: number;
-  ltv: number;
-  cac: number;
-  paybackPeriod: number;
+  channelType: number | null;
+  keywordDifficulty: number | null;
+  contentLength: number | null;
+  timeToConversion: number | null;
+  cityWeight: number | null;
+  intentScore: number | null;
+  engagementDepth: number | null;
+  retentionImpact: number | null;
+  campaignCost: number | null;
+  competitorPressure: number | null;
+  seasonalityFactor: number | null;
+  segmentSize: number | null;
+  ltv: number | null;
+  cac: number | null;
+  paybackPeriod: number | null;
+  featureProvenance: Record<string, RevenueFeatureProvenance>;
 }
 
 // کلید اختصاصی برای revenue features — جدا از feature_snapshot
-const CACHE_KEY_PREFIX = 'revenue_features';
+const CACHE_KEY_PREFIX = 'revenue_features:v2';
 
 @Injectable()
 export class FeatureStoreRevenueService {
@@ -88,74 +99,72 @@ export class FeatureStoreRevenueService {
     ]);
 
     if (!user) {
-      return {
-        userId,
-        channelType: 0.5,
-        keywordDifficulty: 0.5,
-        contentLength: 0.5,
-        timeToConversion: 999,
-        cityWeight: 0.5,
-        intentScore: 0.5,
-        engagementDepth: 0,
-        retentionImpact: 0.5,
-        campaignCost: 0,
-        competitorPressure: 0.3,
-        seasonalityFactor: 1.0,
-        segmentSize: 0.5,
-        ltv: 0,
-        cac: 0,
-        paybackPeriod: 0,
-      };
+      throw new NotFoundException('Revenue feature source user not found');
     }
 
     const firstPayment = payments[0];
-
-    const ltv = payments.reduce((sum, payment) => {
-      const amount = Number(payment.amount);
-      return Number.isFinite(amount) && amount > 0 ? sum + amount : sum;
-    }, 0);
-
-    const channelType = this.encodeChannel(
-      user.acquisitionSource || user.metadata?.acquisitionSource || 'organic',
-    );
-
+    const acquisitionSource =
+      user.acquisitionSource || user.metadata?.acquisitionSource || '';
+    const channelType = this.encodeChannel(acquisitionSource);
     const timeToConversion = firstPayment
-      ? Math.ceil(
+      ? Math.max(0, Math.ceil(
           (firstPayment.createdAt.getTime() - user.createdAt.getTime()) /
             (1000 * 60 * 60 * 24),
-        )
-      : 999;
-
-    const [cityWeight, competitorPressure] = await Promise.all([
-      this.calculateCityWeight(user?.city),
-      this.getCompetitorPressure(user?.city),
-    ]);
-
+        ))
+      : null;
+    const cityWeight = await this.calculateCityWeight(user.city);
     const intentScore = this.calculateIntentScore(events);
     const engagementDepth = events.length;
-    const seasonalityFactor = this.getSeasonalityFactor();
+    const asOf = new Date().toISOString();
+
+    const featureProvenance: Record<string, RevenueFeatureProvenance> = {
+      channelType: this.provenance(channelType === null ? 'missing' : 'derived',
+        channelType === null ? null : 'users.acquisitionSource',
+        'signup', 'encoded_category', 'source_category_mapping_v1', asOf),
+      keywordDifficulty: this.provenance('missing', null, null, null, null, null),
+      contentLength: this.provenance('missing', null, null, null, null, null),
+      timeToConversion: this.provenance(timeToConversion === null ? 'missing' : 'derived',
+        timeToConversion === null ? null : 'users.createdAt+payments.createdAt',
+        'signup_to_first_paid_payment', 'days', 'first_paid_payment_delta_days_v1', asOf),
+      cityWeight: this.provenance(cityWeight === null ? 'missing' : 'derived',
+        cityWeight === null ? null : 'users.city_aggregate',
+        'current_user_population', 'ratio', 'city_population_share_v1', asOf),
+      intentScore: this.provenance(intentScore === null ? 'missing' : 'derived',
+        intentScore === null ? null : 'PartitionedEvent.type',
+        'latest_1000_events', 'normalized_score', 'event_type_weight_sum_v1', asOf),
+      engagementDepth: this.provenance('observed', 'PartitionedEvent',
+        'latest_1000_events', 'event_count', 'count_events_v1', asOf),
+      retentionImpact: this.provenance('missing', null, null, null, null, null),
+      campaignCost: this.provenance('missing', null, null, null, null, null),
+      competitorPressure: this.provenance('missing', null, null, null, null, null),
+      seasonalityFactor: this.provenance('missing', null, null, null, null, null),
+      segmentSize: this.provenance('missing', null, null, null, null, null),
+    };
 
     return {
       userId,
       channelType,
-      keywordDifficulty: 0.5,
-      contentLength: 0.5,
+      keywordDifficulty: null,
+      contentLength: null,
       timeToConversion,
       cityWeight,
       intentScore,
       engagementDepth,
-      retentionImpact: 0.5,
-      campaignCost: 0,
-      competitorPressure,
-      seasonalityFactor,
-      segmentSize: 0.5,
-      ltv,
-      cac: 0,
-      paybackPeriod: 0,
+      retentionImpact: null,
+      campaignCost: null,
+      competitorPressure: null,
+      seasonalityFactor: null,
+      segmentSize: null,
+      // The legacy paid-IRT sum excludes refund/chargeback semantics; do not
+      // expose it as realized LTV until that contract is implemented.
+      ltv: null,
+      cac: null,
+      paybackPeriod: null,
+      featureProvenance,
     };
   }
 
-  private encodeChannel(channel: string): number {
+  private encodeChannel(channel: string): number | null {
     const mapping: Record<string, number> = {
       google: 0.1,
       instagram: 0.2,
@@ -167,20 +176,21 @@ export class FeatureStoreRevenueService {
       direct: 0.8,
       referral: 0.9,
     };
-    return mapping[channel] ?? 0.5;
+    return mapping[channel] ?? null;
   }
 
-  private async calculateCityWeight(city?: string): Promise<number> {
-    if (!city) return 0.5;
+  private async calculateCityWeight(city?: string): Promise<number | null> {
+    if (!city) return null;
     const [userCount, totalUsers] = await Promise.all([
       this.userRepo.count({ where: { city } }),
       this.userRepo.count(),
     ]);
+    if (totalUsers <= 0) return null;
     return Math.min(1, userCount / (totalUsers / 10));
   }
 
-  private calculateIntentScore(events: PartitionedEvent[]): number {
-    if (events.length === 0) return 0.5;
+  private calculateIntentScore(events: PartitionedEvent[]): number | null {
+    if (events.length === 0) return null;
 
     const weights: Partial<Record<EventType, number>> = {
       [EventType.LIKE]: 2,
@@ -196,15 +206,23 @@ export class FeatureStoreRevenueService {
     return Math.min(1, total / 100);
   }
 
-  private async getCompetitorPressure(city?: string): Promise<number> {
-    return 0.3;
-  }
-
-  private getSeasonalityFactor(): number {
-    const month = new Date().getMonth() + 1;
-    if ([3, 4, 5, 9, 10].includes(month)) return 1.3;
-    if ([6, 7, 8].includes(month)) return 1.5;
-    return 0.8;
+  private provenance(
+    status: RevenueFeatureProvenance['status'],
+    source: string | null,
+    window: string | null,
+    units: string | null,
+    transformation: string | null,
+    asOf: string | null,
+  ): RevenueFeatureProvenance {
+    return {
+      status,
+      source,
+      asOf,
+      window,
+      units,
+      transformation,
+      revision: 'revenue-features-v1',
+    };
   }
 
   async batchGetFeatures(userIds: number[]): Promise<UserRevenueFeatures[]> {
@@ -216,21 +234,24 @@ export class FeatureStoreRevenueService {
     await this.getUserFeatures(userId);
   }
 
-  async getKeywordDifficulty(keyword: string): Promise<number> {
+  async getKeywordDifficulty(keyword: string): Promise<number | null> {
     const cached = await this.redis.get(`keyword:${keyword}`);
-    if (cached) return parseFloat(cached);
+    if (cached) {
+      const parsed = Number.parseFloat(cached);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
 
     try {
       const difficulty =
         await this.externalSEOTools.getKeywordDifficulty(keyword);
-      if (difficulty === null || difficulty === undefined) {
-        return 0; // یا مقدار پیش‌فرض
+      if (difficulty === null || difficulty === undefined || !Number.isFinite(difficulty)) {
+        return null;
       }
 
       await this.redis.set(`keyword:${keyword}`, difficulty.toString(), 86400);
       return difficulty;
     } catch {
-      return 50;
+      return null;
     }
   }
 
