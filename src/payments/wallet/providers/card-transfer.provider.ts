@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Payment } from 'src/payments/entities/payment.entity';
 import { EventType } from 'src/user-event/type/event-type.enum';
@@ -79,18 +79,48 @@ export class CardTransferProvider {
   /**
    * کاربر رسید آپلود کرد — منتظر تأیید ادمین.
    */
-  async submitProof(paymentId: number, proofUrl: string): Promise<void> {
+  async submitProof(
+    paymentId: number,
+    userId: number,
+    proofUrl: string,
+  ): Promise<void> {
+    const normalizedProofUrl = typeof proofUrl === 'string' ? proofUrl.trim() : '';
+    if (!normalizedProofUrl || normalizedProofUrl.length > 2048) {
+      throw new Error('A valid proof reference is required');
+    }
+
+    // Scope both the read and the write to the authenticated owner. The
+    // conditional update also prevents a late proof upload from overwriting a
+    // payment that an admin/worker has already moved out of pending state.
     const payment = await this.paymentRepo.findOne({
-      where: { id: paymentId, status: 'pending' },
+      where: {
+        id: paymentId,
+        userId,
+        status: 'pending',
+        method: 'manual_card',
+      },
     });
-    if (!payment) return;
+    if (!payment) {
+      throw new NotFoundException('Pending payment not found');
+    }
 
-    payment.proofUrl = proofUrl;
-    payment.metadata = {
-      ...(payment.metadata ?? {}),
-      proofSubmittedAt: new Date().toISOString(),
-    };
-
-    await this.paymentRepo.save(payment);
+    const result = await this.paymentRepo.update(
+      {
+        id: paymentId,
+        userId,
+        status: 'pending',
+        method: 'manual_card',
+      },
+      {
+        proofUrl: normalizedProofUrl,
+        metadata: {
+          ...(payment.metadata ?? {}),
+          proofSubmittedAt: new Date().toISOString(),
+        },
+      },
+    );
+    if (!result.affected) {
+      throw new NotFoundException('Pending payment not found');
+    }
   }
 }
