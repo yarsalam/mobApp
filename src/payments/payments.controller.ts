@@ -130,10 +130,11 @@ export class PaymentsController {
   @Post(':paymentId/proof')
   @UseGuards(JwtAuthGuard)
   async submitProof(
+    @CurrentUser('sub') userId: number,
     @Param('paymentId', ParseIntPipe) paymentId: number,
     @Body() body: { proofUrl: string },
   ) {
-    await this.cardTransferProvider.submitProof(paymentId, body.proofUrl);
+    await this.cardTransferProvider.submitProof(paymentId, userId, body.proofUrl);
     return {
       success: true,
       message: 'رسید دریافت شد، منتظر تأیید ادمین باشید',
