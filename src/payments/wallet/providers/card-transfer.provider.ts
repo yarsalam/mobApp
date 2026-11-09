@@ -43,8 +43,8 @@ export class CardTransferProvider {
     if (!Number.isSafeInteger(amountRials) || amountRials <= 0) {
       throw new BadRequestException('amountRials must be a positive safe integer');
     }
-    const normalizedCard = this.DESTINATION_CARD.replace(/[\\s-]/g, '');
-    if (!/^\\d{16}$/.test(normalizedCard)) {
+    const normalizedCard = this.DESTINATION_CARD.replace(/[\s-]/g, '');
+    if (!/^\d{16}$/.test(normalizedCard)) {
       throw new ServiceUnavailableException(
         'Card transfer is not configured. Contact support or use another payment method.',
       );
@@ -60,7 +60,7 @@ export class CardTransferProvider {
       method: 'manual_card',
       status: 'pending',
       expiresAt,
-      metadata: { cardNumber: this.DESTINATION_CARD },
+      metadata: { cardNumber: normalizedCard },
     });
 
     await this.paymentRepo.save(payment);
