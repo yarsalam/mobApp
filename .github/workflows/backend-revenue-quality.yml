@@ -9,6 +9,7 @@ on:
       - "src/suggestion/scoring/**"
       - "src/ai-assistant/**"
       - "src/revenue/**"
+      - "src/feature-store-rvenue/**"
       - "src/moderation/**"
       - "src/app.controller.ts"
       - "src/app.controller.spec.ts"
@@ -55,9 +56,24 @@ jobs:
           wallet.service.spec.ts
           card-transfer.provider.spec.ts
           manual-verifier.service.spec.ts
+          feature-store-rvenue.service.spec.ts
 
       - name: Compile backend
         run: npm run build
+
+  ai-revenue-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install isolated revenue test dependencies
+        run: python -m pip install --disable-pip-version-check pytest numpy scipy scikit-learn joblib fastapi pydantic httpx
+      - name: Run LTV provenance and model integrity contracts
+        working-directory: python-ai
+        run: python -m pytest -q tests/test_ai_revenue_predictor.py tests/test_revenue_feature_contract.py
 
   matching-python:
     runs-on: ubuntu-latest
