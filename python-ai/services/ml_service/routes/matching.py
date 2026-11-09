@@ -64,7 +64,13 @@ async def recommend(payload: RecommendIn):
 @router.post("/predict")
 async def predict_match(payload: PredictIn):
     score = await rec_service.predict_match_score(payload.user_a, payload.user_b)
+    if score is None:
+        raise HTTPException(
+            503,
+            "Match score unavailable: valid embeddings are required for both entities",
+        )
     return {
+        "status": "ok",
         "score": round(score, 4),
         "user_a": payload.user_a,
         "user_b": payload.user_b,
@@ -73,5 +79,12 @@ async def predict_match(payload: PredictIn):
 
 @router.post("/internal/track-events")
 async def track_events(payload: dict):
-    await rec_service.track_events(payload)
+    try:
+        await rec_service.track_events(payload)
+    except Exception as exc:
+        logger.error("Recommendation event persistence unavailable: %s", exc)
+        raise HTTPException(
+            503,
+            "Recommendation event persistence unavailable; retry the event later",
+        ) from exc
     return {"status": "accepted"}
