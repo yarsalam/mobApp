@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { NotFoundException } from '@nestjs/common';
+import { NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { CardTransferProvider } from './card-transfer.provider';
 
 describe('CardTransferProvider.submitProof', () => {
@@ -50,5 +50,45 @@ describe('CardTransferProvider.submitProof', () => {
 
     await expect(h.provider.submitProof(44, 7, 'uploads/proof-44.jpg'))
       .rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+
+describe('CardTransferProvider.initiate configuration', () => {
+  it('fails before creating a payment when the destination card is missing', async () => {
+    const original = process.env.CARD_TRANSFER_NUMBER;
+    delete process.env.CARD_TRANSFER_NUMBER;
+    try {
+      const repo: any = {
+        create: jest.fn((value: unknown) => value),
+        save: jest.fn<() => Promise<any>>(),
+      };
+      const events: any = { log: jest.fn<() => Promise<any>>() };
+      const provider = new CardTransferProvider(repo, events);
+
+      await expect(provider.initiate(7, 'wallet_charge', 100_000))
+        .rejects.toBeInstanceOf(ServiceUnavailableException);
+      expect(repo.create).not.toHaveBeenCalled();
+      expect(repo.save).not.toHaveBeenCalled();
+    } finally {
+      if (original === undefined) delete process.env.CARD_TRANSFER_NUMBER;
+      else process.env.CARD_TRANSFER_NUMBER = original;
+    }
+  });
+
+  it('rejects non-positive or fractional deposit amounts', async () => {
+    const original = process.env.CARD_TRANSFER_NUMBER;
+    process.env.CARD_TRANSFER_NUMBER = '1234567812345678';
+    try {
+      const repo: any = { create: jest.fn(), save: jest.fn() };
+      const provider = new CardTransferProvider(repo, {} as any);
+
+      await expect(provider.initiate(7, 'wallet_charge', 0))
+        .rejects.toThrow(/positive safe integer/);
+      expect(repo.create).not.toHaveBeenCalled();
+    } finally {
+      if (original === undefined) delete process.env.CARD_TRANSFER_NUMBER;
+      else process.env.CARD_TRANSFER_NUMBER = original;
+    }
   });
 });
