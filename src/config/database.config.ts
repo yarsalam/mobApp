@@ -63,10 +63,14 @@ function resolveLogging(): TypeOrmModuleOptions['logging'] {
 function resolveSynchronize(): boolean {
   const sync = process.env.DB_SYNC === 'true';
   if (sync && process.env.NODE_ENV === 'production') {
-    logger.warn(
-      '⚠️  DB_SYNC=true while NODE_ENV=production. TypeORM will attempt to ' +
-        'auto-alter the database schema on every restart. Disable this and ' +
-        'use migrations once the schema is stable.',
+    // Never let a production application boot with TypeORM schema
+    // synchronization enabled. A restart could otherwise mutate or drop
+    // MySQL columns/tables based on entity metadata.
+    logger.error(
+      'DB_SYNC=true is forbidden in production. Set DB_SYNC=false and apply reviewed migrations explicitly.',
+    );
+    throw new Error(
+      'Unsafe production database configuration: DB_SYNC must be false',
     );
   }
   return sync;
