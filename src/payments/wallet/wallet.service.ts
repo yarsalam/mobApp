@@ -83,65 +83,63 @@ export class WalletService {
     }
 
     try {
-    try {
-    await this.dataSource.transaction(async (manager) => {
-      const eventRepo = manager.getRepository(PartitionedEvent);
-      const existing = await eventRepo.findOne({
-        where: { userId, idempotencyKey },
-      });
-      if (existing) {
-        const metadata = existing.metadata ?? {};
-        if (
-          existing.type !== EventType.CREDITS_GRANTED ||
-          Number(metadata.amountRials) !== amountRials ||
-          metadata.source !== source
-        ) {
-          throw new BadRequestException('Idempotency key was already used for a different wallet credit');
+      await this.dataSource.transaction(async (manager) => {
+        const eventRepo = manager.getRepository(PartitionedEvent);
+        const existing = await eventRepo.findOne({
+          where: { userId, idempotencyKey },
+        });
+        if (existing) {
+          const metadata = existing.metadata ?? {};
+          if (
+            existing.type !== EventType.CREDITS_GRANTED ||
+            Number(metadata.amountRials) !== amountRials ||
+            metadata.source !== source
+          ) {
+            throw new BadRequestException('Idempotency key was already used for a different wallet credit');
+          }
+          return;
         }
-        return;
-      }
 
-      const walletRepo = manager.getRepository(UserWallet);
-      await walletRepo
-        .createQueryBuilder()
-        .insert()
-        .values({ userId, balance: 0, currency: 'IRT' })
-        .orIgnore()
-        .execute();
+        const walletRepo = manager.getRepository(UserWallet);
+        await walletRepo
+          .createQueryBuilder()
+          .insert()
+          .values({ userId, balance: 0, currency: 'IRT' })
+          .orIgnore()
+          .execute();
 
-      const update = await walletRepo
-        .createQueryBuilder()
-        .update(UserWallet)
-        .set({ balance: () => `balance + ${amountRials}` })
-        .where('userId = :userId', { userId })
-        .execute();
-      if (!update.affected) throw new Error(`Wallet credit affected no rows for user ${userId}`);
+        const update = await walletRepo
+          .createQueryBuilder()
+          .update(UserWallet)
+          .set({ balance: () => `balance + ${amountRials}` })
+          .where('userId = :userId', { userId })
+          .execute();
+        if (!update.affected) throw new Error(`Wallet credit affected no rows for user ${userId}`);
 
-      const wallet = await walletRepo.findOne({ where: { userId } });
-      if (!wallet) throw new Error(`Wallet not found for user ${userId}`);
+        const wallet = await walletRepo.findOne({ where: { userId } });
+        if (!wallet) throw new Error(`Wallet not found for user ${userId}`);
 
-      await this.userEventService.logWithManager(manager, {
-        userId,
-        type: EventType.CREDITS_GRANTED,
-        metadata: {
-          amountRials,
-          source,
-          newBalance: Number(wallet.balance),
-          idempotent: true,
-        },
-        idempotencyKey,
+        await this.userEventService.logWithManager(manager, {
+          userId,
+          type: EventType.CREDITS_GRANTED,
+          metadata: {
+            amountRials,
+            source,
+            newBalance: Number(wallet.balance),
+            idempotent: true,
+          },
+          idempotencyKey,
+        });
       });
-    });
     } catch (error: unknown) {
       const duplicate = error as { code?: string; errno?: number };
       if (duplicate.code !== 'ER_DUP_ENTRY' && duplicate.errno !== 1062) {
         throw error;
       }
 
-      // A concurrent request may win the unique (userId, idempotencyKey)
-      // race after both transactions observed no receipt. The losing
-      // transaction is rolled back by MySQL; accept only the exact same
-      // durable receipt after the winning transaction commits.
+      // In a concurrent retry, the unique receipt insert can make this
+      // transaction roll back after its initial read saw no receipt. Accept
+      // only after the winning transaction has committed an identical event.
       const receipt = await this.dataSource
         .getRepository(PartitionedEvent)
         .findOne({ where: { userId, idempotencyKey } });
@@ -153,7 +151,7 @@ export class WalletService {
         Number(metadata.amountRials) !== amountRials ||
         metadata.source !== source
       ) {
-        throw new BadRequestException('Idempotency key was already used for a different wallet mutation');
+        throw new BadRequestException('Idempotency key was already used for a different wallet credit');
       }
     }
 
@@ -177,74 +175,71 @@ export class WalletService {
       throw new BadRequestException('A stable idempotency key is required');
     }
 
-    await this.dataSource.transaction(async (manager) => {
-      const eventRepo = manager.getRepository(PartitionedEvent);
-      const existing = await eventRepo.findOne({
-        where: { userId, idempotencyKey },
-      });
-      if (existing) {
-        const metadata = existing.metadata ?? {};
-        if (
-          existing.type !== EventType.CREDITS_SPENT ||
-          Number(metadata.amountRials) !== amountRials ||
-          metadata.reason !== reason
-        ) {
-          throw new BadRequestException('Idempotency key was already used for a different wallet debit');
-        }
-        return;
-      }
-
-      const walletRepo = manager.getRepository(UserWallet);
-      await walletRepo
-        .createQueryBuilder()
-        .insert()
-        .values({ userId, balance: 0, currency: 'IRT' })
-        .orIgnore()
-        .execute();
-
-      const debit = await walletRepo
-        .createQueryBuilder()
-        .update(UserWallet)
-        .set({ balance: () => `balance - ${amountRials}` })
-        .where('userId = :userId AND balance >= :amount', {
-          userId,
-          amount: amountRials,
-        })
-        .execute();
-      if (!debit.affected) {
-        const latest = await walletRepo.findOne({ where: { userId } });
-        throw new BadRequestException({
-          code: 'INSUFFICIENT_BALANCE',
-          required: amountRials,
-          current: Number(latest?.balance ?? 0),
+    try {
+      await this.dataSource.transaction(async (manager) => {
+        const eventRepo = manager.getRepository(PartitionedEvent);
+        const existing = await eventRepo.findOne({
+          where: { userId, idempotencyKey },
         });
-      }
+        if (existing) {
+          const metadata = existing.metadata ?? {};
+          if (
+            existing.type !== EventType.CREDITS_SPENT ||
+            Number(metadata.amountRials) !== amountRials ||
+            metadata.reason !== reason
+          ) {
+            throw new BadRequestException('Idempotency key was already used for a different wallet debit');
+          }
+          return;
+        }
 
-      const wallet = await walletRepo.findOne({ where: { userId } });
-      if (!wallet) throw new Error(`Wallet not found for user ${userId}`);
+        const walletRepo = manager.getRepository(UserWallet);
+        await walletRepo
+          .createQueryBuilder()
+          .insert()
+          .values({ userId, balance: 0, currency: 'IRT' })
+          .orIgnore()
+          .execute();
 
-      await this.userEventService.logWithManager(manager, {
-        userId,
-        type: EventType.CREDITS_SPENT,
-        metadata: {
-          amountRials,
-          reason,
-          newBalance: Number(wallet.balance),
-          idempotent: true,
-        },
-        idempotencyKey,
+        const debit = await walletRepo
+          .createQueryBuilder()
+          .update(UserWallet)
+          .set({ balance: () => `balance - ${amountRials}` })
+          .where('userId = :userId AND balance >= :amount', {
+            userId,
+            amount: amountRials,
+          })
+          .execute();
+        if (!debit.affected) {
+          const latest = await walletRepo.findOne({ where: { userId } });
+          throw new BadRequestException({
+            code: 'INSUFFICIENT_BALANCE',
+            required: amountRials,
+            current: Number(latest?.balance ?? 0),
+          });
+        }
+
+        const wallet = await walletRepo.findOne({ where: { userId } });
+        if (!wallet) throw new Error(`Wallet not found for user ${userId}`);
+
+        await this.userEventService.logWithManager(manager, {
+          userId,
+          type: EventType.CREDITS_SPENT,
+          metadata: {
+            amountRials,
+            reason,
+            newBalance: Number(wallet.balance),
+            idempotent: true,
+          },
+          idempotencyKey,
+        });
       });
-    });
     } catch (error: unknown) {
       const duplicate = error as { code?: string; errno?: number };
       if (duplicate.code !== 'ER_DUP_ENTRY' && duplicate.errno !== 1062) {
         throw error;
       }
 
-      // A concurrent request may win the unique (userId, idempotencyKey)
-      // race after both transactions observed no receipt. The losing
-      // transaction is rolled back by MySQL; accept only the exact same
-      // durable receipt after the winning transaction commits.
       const receipt = await this.dataSource
         .getRepository(PartitionedEvent)
         .findOne({ where: { userId, idempotencyKey } });
@@ -256,69 +251,11 @@ export class WalletService {
         Number(metadata.amountRials) !== amountRials ||
         metadata.reason !== reason
       ) {
-        throw new BadRequestException('Idempotency key was already used for a different wallet mutation');
+        throw new BadRequestException('Idempotency key was already used for a different wallet debit');
       }
     }
 
     return this.get(userId);
-  }
-
-  /**
-   * برداشت از کیف پول — برای خرید محصول
-   * اتمیک: اگر موجودی کافی نباشد BadRequestException می‌دهد
-   */
-  async debit(
-    userId: number,
-    amountRials: number,
-    reason: string,
-  ): Promise<UserWallet> {
-    if (!Number.isSafeInteger(amountRials) || amountRials <= 0) {
-      throw new BadRequestException('amountRials must be a positive safe integer');
-    }
-
-    const wallet = await this.get(userId);
-
-    if (Number(wallet.balance) < amountRials) {
-      throw new BadRequestException({
-        code: 'INSUFFICIENT_BALANCE',
-        required: amountRials,
-        current: Number(wallet.balance),
-      });
-    }
-
-    const debitResult = await this.repo
-      .createQueryBuilder()
-      .update(UserWallet)
-      .set({ balance: () => `balance - ${amountRials}` })
-      .where('userId = :userId AND balance >= :amount', {
-        userId,
-        amount: amountRials,
-      })
-      .execute();
-
-    // A concurrent debit may consume the balance after the pre-check.
-    // Never log or grant a purchase unless the atomic debit actually affected one row.
-    if (!debitResult.affected) {
-      const latestWallet = await this.get(userId);
-      throw new BadRequestException({
-        code: 'INSUFFICIENT_BALANCE',
-        required: amountRials,
-        current: Number(latestWallet.balance),
-      });
-    }
-
-    const updatedWallet = await this.get(userId);
-
-    await this.userEventService.log({
-      userId,
-      type: EventType.CREDITS_SPENT,
-      metadata: { amountRials, reason, newBalance: updatedWallet.balance },
-    });
-
-    this.logger.log(
-      `Wallet debited: user=${userId} -${amountRials}ریال reason=${reason}`,
-    );
-    return updatedWallet;
   }
 
   async getBalance(userId: number): Promise<number> {
