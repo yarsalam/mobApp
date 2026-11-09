@@ -130,14 +130,21 @@ export class ManualVerifierService {
 
   async reject(paymentId: number, reason: string): Promise<void> {
     const payment = await this.paymentRepo.findOne({
-      where: { id: paymentId, status: 'pending' },
+      where: { id: paymentId, status: 'pending', method: 'manual_card' },
     });
 
-    if (!payment)
-      throw new NotFoundException(`Pending payment ${paymentId} not found`);
+    if (!payment) {
+      const latest = await this.paymentRepo.findOne({ where: { id: paymentId } });
+      if (!latest) throw new NotFoundException(`Payment ${paymentId} not found`);
+      throw new BadRequestException(
+        `Payment ${paymentId} cannot be rejected from status ${latest.status}`,
+      );
+    }
 
-    await this.paymentRepo.update(
-      { id: paymentId },
+    // Compare-and-set: do not let a stale pending read overwrite a concurrent
+    // confirmation/claim and turn an already-settled payment into failed.
+    const rejected = await this.paymentRepo.update(
+      { id: paymentId, status: 'pending', method: 'manual_card' },
       {
         status: 'failed',
         metadata: {
@@ -146,6 +153,12 @@ export class ManualVerifierService {
         } as any,
       },
     );
+    if (!rejected.affected) {
+      const latest = await this.paymentRepo.findOne({ where: { id: paymentId } });
+      throw new BadRequestException(
+        `Payment ${paymentId} changed before rejection (current status: ${latest?.status ?? 'unknown'})`,
+      );
+    }
 
     this.logger.log(`Payment ${paymentId} rejected: ${reason}`);
   }
