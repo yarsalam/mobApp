@@ -12,6 +12,7 @@ import { VipService } from './vip/vip.service';
 import { UserVip } from './vip/entities/vip.entity';
 import { EventType } from 'src/user-event/type/event-type.enum';
 import { createHash } from 'crypto';
+import { User } from 'src/users/entities/user.entity';
 
 @Injectable()
 export class PaymentsService {
@@ -23,6 +24,9 @@ export class PaymentsService {
 
     @InjectRepository(UserVip)
     private readonly vipRepo: Repository<UserVip>,
+
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
 
     private readonly creditsService: CreditsService,
     private readonly boostService: BoostService,
@@ -48,6 +52,21 @@ export class PaymentsService {
       });
 
       if (!bundle) throw new Error('Bundle not found');
+
+      // Capture a minimized, normalized gender snapshot at the purchase
+      // boundary. Reports must not reclassify a historical purchase when a
+      // user later edits their profile.
+      const buyer = await this.userRepo.findOne({
+        where: { id: userId },
+        select: ['id', 'gender'],
+      });
+      const rawGender = String(buyer?.gender ?? '').trim().toLocaleLowerCase();
+      const genderAtPurchase: 'male' | 'female' | 'unknown' =
+        ['male', 'man', 'm', 'مرد', 'آقا', 'اقا'].includes(rawGender)
+          ? 'male'
+          : ['female', 'woman', 'f', 'زن', 'خانم'].includes(rawGender)
+            ? 'female'
+            : 'unknown';
 
       const idempotencyKey = purchaseContext?.idempotencyKey;
       let itemIndex = 0;
@@ -81,6 +100,7 @@ export class PaymentsService {
         type: EventType.PURCHASE,
         metadata: {
           bundleCode,
+          genderAtPurchase,
           isCommercialPurchase: Boolean(purchaseContext),
           ...(purchaseContext
             ? {
