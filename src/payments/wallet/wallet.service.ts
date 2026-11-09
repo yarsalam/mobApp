@@ -82,6 +82,8 @@ export class WalletService {
       throw new BadRequestException('A stable idempotency key is required');
     }
 
+    try {
+    try {
     await this.dataSource.transaction(async (manager) => {
       const eventRepo = manager.getRepository(PartitionedEvent);
       const existing = await eventRepo.findOne({
@@ -130,6 +132,30 @@ export class WalletService {
         idempotencyKey,
       });
     });
+    } catch (error: unknown) {
+      const duplicate = error as { code?: string; errno?: number };
+      if (duplicate.code !== 'ER_DUP_ENTRY' && duplicate.errno !== 1062) {
+        throw error;
+      }
+
+      // A concurrent request may win the unique (userId, idempotencyKey)
+      // race after both transactions observed no receipt. The losing
+      // transaction is rolled back by MySQL; accept only the exact same
+      // durable receipt after the winning transaction commits.
+      const receipt = await this.dataSource
+        .getRepository(PartitionedEvent)
+        .findOne({ where: { userId, idempotencyKey } });
+      if (!receipt) throw error;
+
+      const metadata = receipt.metadata ?? {};
+      if (
+        receipt.type !== EventType.CREDITS_GRANTED ||
+        Number(metadata.amountRials) !== amountRials ||
+        metadata.source !== source
+      ) {
+        throw new BadRequestException('Idempotency key was already used for a different wallet mutation');
+      }
+    }
 
     return this.get(userId);
   }
@@ -209,6 +235,30 @@ export class WalletService {
         idempotencyKey,
       });
     });
+    } catch (error: unknown) {
+      const duplicate = error as { code?: string; errno?: number };
+      if (duplicate.code !== 'ER_DUP_ENTRY' && duplicate.errno !== 1062) {
+        throw error;
+      }
+
+      // A concurrent request may win the unique (userId, idempotencyKey)
+      // race after both transactions observed no receipt. The losing
+      // transaction is rolled back by MySQL; accept only the exact same
+      // durable receipt after the winning transaction commits.
+      const receipt = await this.dataSource
+        .getRepository(PartitionedEvent)
+        .findOne({ where: { userId, idempotencyKey } });
+      if (!receipt) throw error;
+
+      const metadata = receipt.metadata ?? {};
+      if (
+        receipt.type !== EventType.CREDITS_SPENT ||
+        Number(metadata.amountRials) !== amountRials ||
+        metadata.reason !== reason
+      ) {
+        throw new BadRequestException('Idempotency key was already used for a different wallet mutation');
+      }
+    }
 
     return this.get(userId);
   }
