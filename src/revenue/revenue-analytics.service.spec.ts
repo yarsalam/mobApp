@@ -170,3 +170,60 @@ describe('RevenueAnalyticsService by-product reporting', () => {
     });
   });
 });
+
+
+describe('RevenueAnalyticsService historical gender attribution', () => {
+  const makeBuilder = (rows: any[]) => {
+    const builder: any = {};
+    for (const method of ['innerJoin', 'select', 'addSelect', 'where', 'andWhere', 'groupBy']) {
+      builder[method] = jest.fn(() => builder);
+    }
+    builder.getRawMany = jest.fn(async () => rows);
+    return builder;
+  };
+
+  it('uses purchase-time snapshots and exposes legacy fallback coverage', async () => {
+    const debitBuilder = makeBuilder([]);
+    const fulfilledBuilder = makeBuilder([
+      {
+        gender: 'female',
+        fulfilledRevenue: '300000',
+        fulfilledCount: '2',
+        fulfilledUsers: '1',
+        legacyGenderFallbackCount: '1',
+      },
+    ]);
+    const depositBuilder = makeBuilder([]);
+    let eventQuery = 0;
+    const events: any = {
+      createQueryBuilder: jest.fn(() =>
+        eventQuery++ === 0 ? debitBuilder : fulfilledBuilder,
+      ),
+    };
+    const payments: any = {
+      createQueryBuilder: jest.fn(() => depositBuilder),
+    };
+    const service = new RevenueAnalyticsService(
+      payments,
+      {} as any,
+      {} as any,
+      events,
+    );
+
+    const result = await service.byGender('IRT', 90);
+
+    expect(fulfilledBuilder.select).toHaveBeenCalledWith(
+      expect.stringContaining('genderAtPurchase'),
+      'gender',
+    );
+    expect(fulfilledBuilder.addSelect).toHaveBeenCalledWith(
+      expect.stringContaining("= ''"),
+      'legacyGenderFallbackCount',
+    );
+    expect(result.female.fulfilledRevenue).toBe(300000);
+    expect(result.female.fulfilledPurchaseCount).toBe(2);
+    expect(result.fulfilledPurchaseLegacyGenderFallbackCount).toBe(1);
+    expect(result.fulfilledPurchaseSnapshotCoveragePercent).toBe(50);
+    expect(result.walletDebitGenderBasis).toContain('current user profile');
+  });
+});
