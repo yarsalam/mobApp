@@ -69,7 +69,7 @@ export class RevenueAnalyticsService {
         .addSelect('COUNT(*)', 'fulfilledCount')
         .addSelect('COUNT(DISTINCT e.userId)', 'fulfilledUsers')
         .addSelect(
-          "SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.genderAtPurchase')) IS NULL THEN 1 ELSE 0 END)",
+          "SUM(CASE WHEN JSON_EXTRACT(e.metadata, '$.genderAtPurchase') IS NULL OR JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.genderAtPurchase')) = '' THEN 1 ELSE 0 END)",
           'legacyGenderFallbackCount',
         )
         .where('e.type = :type', { type: EventType.PURCHASE })
