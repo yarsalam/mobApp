@@ -61,15 +61,22 @@ export class RevenueAnalyticsService {
         .getRawMany(),
       this.events.createQueryBuilder('e')
         .innerJoin('e.user', 'u')
-        .select('u.gender', 'gender')
+        .select(
+          "COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.genderAtPurchase')), ''), u.gender)",
+          'gender',
+        )
         .addSelect(`SUM(${purchaseAmountExpr})`, 'fulfilledRevenue')
         .addSelect('COUNT(*)', 'fulfilledCount')
         .addSelect('COUNT(DISTINCT e.userId)', 'fulfilledUsers')
+        .addSelect(
+          "SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.genderAtPurchase')) IS NULL THEN 1 ELSE 0 END)",
+          'legacyGenderFallbackCount',
+        )
         .where('e.type = :type', { type: EventType.PURCHASE })
         .andWhere("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.isCommercialPurchase')) = 'true'")
         .andWhere("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.currency')) = 'IRT'")
         .andWhere('e.createdAt >= :since', { since })
-        .groupBy('u.gender')
+        .groupBy("COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.genderAtPurchase')), ''), u.gender)")
         .getRawMany(),
       this.payments.createQueryBuilder('p')
         .innerJoin('p.user', 'u')
@@ -97,11 +104,13 @@ export class RevenueAnalyticsService {
       result[key].payingUsers += finite(row.debitUsers);
       result[key].paymentCount += finite(row.debitCount);
     }
+    let legacyGenderFallbackCount = 0;
     for (const row of fulfilledRows) {
       const key = classifyGender(row.gender);
       result[key].fulfilledRevenue += finite(row.fulfilledRevenue);
       result[key].fulfilledPurchaseCount += finite(row.fulfilledCount);
       result[key].fulfilledPayingUsers += finite(row.fulfilledUsers);
+      legacyGenderFallbackCount += finite(row.legacyGenderFallbackCount);
     }
     for (const row of depositRows) {
       const key = classifyGender(row.gender);
@@ -126,7 +135,14 @@ export class RevenueAnalyticsService {
       purchaseSource: 'wallet debit events with reason buy:<bundleCode>; checkout spend, not a fulfilment guarantee',
       fulfilledPurchaseSource: 'purchase events with isCommercialPurchase=true and stored IRT amount; event is written after bundle grants succeed',
       depositSource: 'payments.status=paid AND productCode=wallet_charge; confirmedAt with createdAt fallback',
-      genderBasis: 'current_user_profile_gender_at_query_time',
+      genderBasis: 'purchase_event_snapshot_with_legacy_current_profile_fallback',
+      fulfilledPurchaseGenderBasis: 'genderAtPurchase snapshot on purchase event; legacy events without the field fall back to current profile gender',
+      fulfilledPurchaseLegacyGenderFallbackCount: legacyGenderFallbackCount,
+      fulfilledPurchaseSnapshotCoveragePercent: (result.male.fulfilledPurchaseCount + result.female.fulfilledPurchaseCount + result.unknown.fulfilledPurchaseCount) > 0
+        ? Math.round(((result.male.fulfilledPurchaseCount + result.female.fulfilledPurchaseCount + result.unknown.fulfilledPurchaseCount - legacyGenderFallbackCount) / (result.male.fulfilledPurchaseCount + result.female.fulfilledPurchaseCount + result.unknown.fulfilledPurchaseCount)) * 10000) / 100
+        : null,
+      walletDebitGenderBasis: 'current user profile gender at query time; debit events do not yet carry a purchase-time snapshot',
+      walletDepositGenderBasis: 'current user profile gender at query time; deposit payments do not yet carry a deposit-time snapshot',
       ...result,
       total: {
         revenue: result.male.revenue + result.female.revenue + result.unknown.revenue,
