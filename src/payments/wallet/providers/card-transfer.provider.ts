@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Payment } from 'src/payments/entities/payment.entity';
 import { EventType } from 'src/user-event/type/event-type.enum';
@@ -86,7 +86,7 @@ export class CardTransferProvider {
   ): Promise<void> {
     const normalizedProofUrl = typeof proofUrl === 'string' ? proofUrl.trim() : '';
     if (!normalizedProofUrl || normalizedProofUrl.length > 2048) {
-      throw new Error('A valid proof reference is required');
+      throw new BadRequestException('A valid proof reference is required');
     }
 
     // Scope both the read and the write to the authenticated owner. The
