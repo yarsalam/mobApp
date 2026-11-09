@@ -13,6 +13,7 @@ on:
       - "src/moderation/**"
       - "src/app.controller.ts"
       - "src/app.controller.spec.ts"
+      - "src/config/**"
       - "src/redis/redis.service.ts"
       - "src/message/**"
       - "src/payments/**"
@@ -57,6 +58,7 @@ jobs:
           card-transfer.provider.spec.ts
           manual-verifier.service.spec.ts
           feature-store-rvenue.service.spec.ts
+          database.config.spec.ts
 
       - name: Compile backend
         run: npm run build
