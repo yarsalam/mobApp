@@ -56,6 +56,7 @@ jobs:
           payments.service.spec.ts
           wallet.service.spec.ts
           card-transfer.provider.spec.ts
+          crypto.provider.spec.ts
           manual-verifier.service.spec.ts
           feature-store-rvenue.service.spec.ts
           database.config.spec.ts
