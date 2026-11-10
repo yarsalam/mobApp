@@ -123,7 +123,7 @@ def test_missing_revenue_and_engagement_are_not_replaced_with_constants():
     assert "engagement" not in recommendation["score_components"]
 
 
-def test_only_observed_revenue_signal_contributes_to_weighted_score():
+def test_revenue_signal_is_reported_separately_and_never_changes_compatibility_score():
     redis_values = {
         "emb:user:1": json.dumps([1.0, 0.0]),
         "emb:user:2": json.dumps([0.0, 1.0]),
@@ -133,9 +133,26 @@ def test_only_observed_revenue_signal_contributes_to_weighted_score():
     result = asyncio.run(service.get_recommendations(1, [2], limit=5))
 
     recommendation = result["recommendations"][0]
-    assert recommendation["score_type"] == "weighted_observed_features"
-    assert recommendation["score_components"] == {"embedding": 0.0, "revenue": 0.8}
-    assert recommendation["score"] == pytest.approx(0.2222, abs=0.0001)
+    assert recommendation["score_type"] == "compatibility_similarity"
+    assert recommendation["score_components"] == {"embedding": 0.0}
+    assert recommendation["business_signals"] == {"revenue_potential": 0.8}
+    assert recommendation["revenue_potential"] == 0.8
+    assert recommendation["score"] == recommendation["similarity"] == 0.0
+
+
+def test_revenue_signal_cannot_reorder_compatibility_recommendations():
+    redis_values = {
+        "emb:user:1": json.dumps([1.0, 0.0]),
+        "emb:user:2": json.dumps([0.9, (1.0 - 0.9**2) ** 0.5]),
+        "emb:user:3": json.dumps([0.5, (1.0 - 0.5**2) ** 0.5]),
+        "revenue:potential:2": "0.0",
+        "revenue:potential:3": "1.0",
+    }
+    service = _service(redis_values)
+    result = asyncio.run(service.get_recommendations(1, [2, 3], limit=5))
+
+    assert [item["user_id"] for item in result["recommendations"]] == [2, 3]
+    assert result["recommendations"][0]["score"] > result["recommendations"][1]["score"]
 
 
 def test_zero_or_missing_embeddings_do_not_produce_a_match_score():
