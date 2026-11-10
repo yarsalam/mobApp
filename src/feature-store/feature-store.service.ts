@@ -602,26 +602,21 @@ export class FeatureStoreService implements OnModuleInit {
             }`,
           );
 
-          return {
-            totalEvents: 0,
-            activeDays: 0,
-            likes: 0,
-            matches: 0,
-            messagesSent: 0,
-            messagesReceived: 0,
-            replies: 0,
-            purchases: 0,
-            totalPaidTransactions: 0,
-            retentionDays: 0,
-            purchaseRate: 0,
-            responseRate: 0,
-            matchRate: 0,
-            revenueScore: 0,
-          };
+          return null;
         }),
 
       this.featureRepo.findOne({ where: { userId } }),
     ]);
+
+    // A failed metrics read is not an observed all-zero user. Preserve the
+    // previous snapshot and vector state rather than overwriting them with
+    // fabricated inactivity or conversion data.
+    if (!metrics) {
+      this.logger.warn(
+        `Feature refresh skipped for user ${userId}: canonical intelligence metrics are unavailable`,
+      );
+      return;
+    }
 
     const profileVector = await this.encodeProfile(user);
     const behaviorVector = await this.encodeBehavior(metrics);
