@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, MoreThan, Repository } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
@@ -486,7 +486,7 @@ export class ModerationService {
       },
     });
     if (!user) {
-      throw new Error(`User ${userId} was not found`);
+      throw new NotFoundException(`User ${userId} was not found`);
     }
 
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
@@ -628,7 +628,7 @@ export class ModerationService {
     const severityOrder = ['low', 'medium', 'high', 'critical'];
     const thresholdIndex = severityOrder.indexOf(minSeverity);
     if (thresholdIndex < 0) {
-      throw new Error('minSeverity must be one of low, medium, high, critical');
+      throw new BadRequestException('minSeverity must be one of low, medium, high, critical');
     }
     const allowedSeverities = severityOrder.slice(thresholdIndex);
     const parsedLimit = Number(limit);
@@ -703,15 +703,21 @@ export class ModerationService {
     if (!user) {
       throw new Error(`User ${userId} was not found`);
     }
-    if (user.status === 'admin_blocked' || user.status === 'suspended') {
+    if (
+      user.status === 'admin_blocked' ||
+      user.status === 'suspended' ||
+      user.blockedAt ||
+      user.blockReason
+    ) {
       return {
         userId,
         unblocked: false,
         reason: 'account_status_requires_separate_admin_review',
-        status: user.status,
+        status: user.status ?? null,
       };
     }
 
+    const previousCanSendMessage = user.canSendMessage;
     user.canSendMessage = true;
     user.restrictedUntil = null;
     await this.userRepo.save(user);
@@ -720,7 +726,7 @@ export class ModerationService {
       type: EventType.USER_UNBLOCKED,
       metadata: {
         source: 'moderation_admin_action',
-        previousCanSendMessage: false,
+        previousCanSendMessage,
       },
     });
 
@@ -740,7 +746,7 @@ export class ModerationService {
       !Number.isFinite(endDate.getTime()) ||
       startDate > endDate
     ) {
-      throw new Error('A valid start and end date range is required');
+      throw new BadRequestException('A valid start and end date range is required');
     }
 
     const rows = await this.logRepo
