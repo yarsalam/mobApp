@@ -61,7 +61,41 @@ describe('PaymentsService purchase attribution', () => {
         }),
       }),
     );
+
+    // A later profile edit must not mutate the event's immutable attribution.
+    h.userRepo.findOne.mockResolvedValue({ id: 7, gender: 'male' });
+    const currentProfile = await h.userRepo.findOne({ where: { id: 7 } });
+    const purchaseEvent = h.eventService.log.mock.calls[0][0] as any;
+    expect(currentProfile.gender).toBe('male');
+    expect(purchaseEvent.metadata.genderAtPurchase).toBe('female');
   });
+
+
+  it.each(['male', 'man', 'm', 'مرد', 'آقا', 'اقا'])(
+    'normalizes male profile value %s to the male snapshot',
+    async (gender) => {
+      const h = makeService(gender);
+      await h.service.grantBundle(7, 'bundle-monthly', {
+        amountRials: 250_000,
+        source: 'payment',
+      });
+      const purchaseEvent = h.eventService.log.mock.calls[0][0] as any;
+      expect(purchaseEvent.metadata.genderAtPurchase).toBe('male');
+    },
+  );
+
+  it.each(['female', 'woman', 'f', 'زن', 'خانم'])(
+    'normalizes female profile value %s to the female snapshot',
+    async (gender) => {
+      const h = makeService(gender);
+      await h.service.grantBundle(7, 'bundle-monthly', {
+        amountRials: 250_000,
+        source: 'payment',
+      });
+      const purchaseEvent = h.eventService.log.mock.calls[0][0] as any;
+      expect(purchaseEvent.metadata.genderAtPurchase).toBe('female');
+    },
+  );
 
   it('stores unknown instead of inventing a gender when the profile value is absent', async () => {
     const h = makeService(null);
