@@ -182,7 +182,8 @@ mysqlDescribe('WalletService MySQL transaction integration', () => {
     await dataSource.getRepository(UserCredits).clear();
     await dataSource.getRepository(UserBoost).clear();
     await dataSource.getRepository(UserVip).clear();
-    await dataSource.getRepository(User).clear();
+    // Keep the referenced user row: MySQL rejects TRUNCATE on a parent table
+    // while child tables have foreign-key constraints, even when they are empty.
   });
 
   it('applies only one credit when two concurrent workers use the same receipt key', async () => {
