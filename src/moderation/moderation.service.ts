@@ -432,13 +432,17 @@ export class ModerationService {
             ? 'high'
             : 'medium';
 
-    const parsedConfidence = Number(raw.confidence);
-    const confidence =
-      Number.isFinite(parsedConfidence) && parsedConfidence >= 0 && parsedConfidence <= 1
-        ? parsedConfidence
-        : rawAllowed
-          ? 1
-          : 0;
+    // Confidence is evidence supplied by the moderation model.
+    // Never manufacture certainty from a boolean allow/deny flag.
+    if (
+      typeof raw.confidence !== 'number' ||
+      !Number.isFinite(raw.confidence) ||
+      raw.confidence < 0 ||
+      raw.confidence > 1
+    ) {
+      throw new Error('Invalid moderation confidence');
+    }
+    const confidence = raw.confidence;
 
     const flags = Array.isArray(raw.flags)
       ? raw.flags.filter(
