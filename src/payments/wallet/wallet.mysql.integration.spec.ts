@@ -16,6 +16,7 @@ import { PaymentsService } from 'src/payments/payments.service';
 import { CreditsService } from 'src/payments/credits/credits.service';
 import { BoostService } from 'src/payments/boosts/boosts.service';
 import { VipService } from 'src/payments/vip/vip.service';
+import { ManualVerifierService } from './verification/manual-verifier.service';
 
 const mysqlUrl = process.env.MYSQL_INTEGRATION_URL;
 const mysqlDescribe = mysqlUrl ? describe : describe.skip;
@@ -227,6 +228,95 @@ mysqlDescribe('WalletService MySQL transaction integration', () => {
         where: { userId: 7002, type: EventType.CREDITS_GRANTED },
       }),
     ).toBe(1);
+  });
+
+  it('recovers manual-card confirmation after wallet credit and retries without double-credit', async () => {
+    const userId = 7301;
+    const paymentRepo = dataSource.getRepository(Payment);
+    const payment = await paymentRepo.save(paymentRepo.create({
+      userId,
+      productCode: 'wallet_charge',
+      amount: 750,
+      currency: 'IRT',
+      method: 'manual_card',
+      status: 'pending',
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 30 * 60_000),
+    }));
+
+    let failConfirmationEventOnce = true;
+    const eventService: any = {
+      logWithManager: async (manager: any, event: any) => {
+        const repository = manager.getRepository(PartitionedEvent);
+        await repository.insert({
+          userId: event.userId,
+          type: event.type,
+          metadata: event.metadata,
+          idempotencyKey: event.idempotencyKey ?? null,
+        });
+        return true;
+      },
+      log: async (event: any) => {
+        if (failConfirmationEventOnce) {
+          failConfirmationEventOnce = false;
+          throw new Error('injected failure after durable wallet credit');
+        }
+        await dataSource.transaction(async (manager) => {
+          await manager.getRepository(PartitionedEvent).insert({
+            userId: event.userId,
+            type: event.type,
+            metadata: event.metadata,
+            idempotencyKey: event.idempotencyKey ?? null,
+          });
+        });
+      },
+    };
+    const verifier = new ManualVerifierService(
+      paymentRepo,
+      makeWalletService(),
+      eventService,
+    );
+
+    await expect(verifier.confirm(payment.id, 'integration retry'))
+      .rejects.toThrow('injected failure after durable wallet credit');
+
+    const pendingAfterFailure = await paymentRepo.findOneByOrFail({ id: payment.id });
+    const balanceAfterFailure = await dataSource.getRepository(UserWallet)
+      .findOneByOrFail({ userId });
+    const receiptsAfterFailure = await dataSource.getRepository(PartitionedEvent).count({
+      where: {
+        userId,
+        idempotencyKey: `payment:${payment.id}:wallet-credit`,
+      },
+    });
+    expect(pendingAfterFailure.status).toBe('pending');
+    expect(Number(balanceAfterFailure.balance)).toBe(750);
+    expect(receiptsAfterFailure).toBe(1);
+
+    await verifier.confirm(payment.id, 'integration retry');
+
+    const confirmed = await paymentRepo.findOneByOrFail({ id: payment.id });
+    const balanceAfterRetry = await dataSource.getRepository(UserWallet)
+      .findOneByOrFail({ userId });
+    const receiptsAfterRetry = await dataSource.getRepository(PartitionedEvent).count({
+      where: {
+        userId,
+        idempotencyKey: `payment:${payment.id}:wallet-credit`,
+      },
+    });
+    const confirmedEvents = await dataSource.getRepository(PartitionedEvent).count({
+      where: {
+        userId,
+        type: EventType.PAYMENT_CONFIRMED,
+        idempotencyKey: `payment:${payment.id}:confirmed`,
+      },
+    });
+
+    expect(confirmed.status).toBe('paid');
+    expect(confirmed.confirmedAt).toBeInstanceOf(Date);
+    expect(Number(balanceAfterRetry.balance)).toBe(750);
+    expect(receiptsAfterRetry).toBe(1);
+    expect(confirmedEvents).toBe(1);
   });
 
   it('atomically settles a TRC20 payment once when two real MySQL workers race', async () => {
