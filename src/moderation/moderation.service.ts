@@ -719,7 +719,7 @@ export class ModerationService {
 
     const previousCanSendMessage = user.canSendMessage;
     user.canSendMessage = true;
-    user.restrictedUntil = null;
+    user.restrictedUntil = undefined;
     await this.userRepo.save(user);
     await this.userEventService.log({
       userId,
