@@ -213,7 +213,7 @@ describe('RevenueAnalyticsService historical gender attribution', () => {
     const result = await service.byGender('IRT', 90);
 
     expect(fulfilledBuilder.select).toHaveBeenCalledWith(
-      expect.stringContaining('genderAtPurchase'),
+      "COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.genderAtPurchase')), ''), u.gender)",
       'gender',
     );
     expect(fulfilledBuilder.addSelect).toHaveBeenCalledWith(
