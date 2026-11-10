@@ -72,7 +72,7 @@ const boostSchema = new EntitySchema<any>({
   relations: {
     user: {
       type: 'one-to-one',
-      target: User,
+      target: 'User',
       joinColumn: { name: 'userId', referencedColumnName: 'id' },
     },
   },
