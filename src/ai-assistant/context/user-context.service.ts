@@ -1,5 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { FeatureStoreService } from 'src/feature-store/feature-store.service';
+import { Injectable } from '@nestjs/common';
 import { PersonalityService } from 'src/personality/personality.service';
 import { PhaseService } from 'src/phase/phase.service';
 import { TrustScoreService } from 'src/trust/trust-score.service';
@@ -20,10 +19,15 @@ export interface UserContext {
     boostUsed7d: number | null;
     retentionDays: number | null;
   };
-  probabilities: {
+  observedRates: {
     response: number | null;
     match: number | null;
     purchase: number | null;
+  };
+  rateSamples: {
+    responseMessagesSent: number | null;
+    matchLikes: number | null;
+    purchaseAttempts: number | null;
   };
   personality: {
     openness: number | null;
@@ -43,38 +47,57 @@ export interface UserContext {
 
 @Injectable()
 export class UserContextService {
-  private readonly logger = new Logger(UserContextService.name);
-
   constructor(
     private readonly phaseService: PhaseService,
-    private readonly featureStore: FeatureStoreService,
     private readonly trustScoreService: TrustScoreService,
     private readonly metricsService: UserMetricsService,
     private readonly personalityService: PersonalityService,
   ) {}
 
   async build(userId: number): Promise<UserContext> {
-    const [phaseMetrics, trustCtx, metrics7d, features, personality] =
+    const [phaseMetrics, trustCtx, metrics7d, intelligenceMetrics, personality] =
       await Promise.allSettled([
         this.phaseService.getPhaseMetrics(userId),
         this.trustScoreService.getTrustContext(userId),
         this.metricsService.get7dMetrics(userId),
-        this.featureStore.getUserFeatures(userId).catch(() => null),
+        this.metricsService.getUserIntelligenceMetrics(userId),
         this.personalityService.analyzePersonality(userId).catch(() => null),
       ]);
 
     const phase = this.settled(phaseMetrics);
     const trust = this.settled(trustCtx);
     const metrics = this.settled(metrics7d);
-    const feat = this.settled(features);
+    const intelligence = this.settled(intelligenceMetrics);
     const pers = this.settled(personality);
+
+    const knownNumber = (value: unknown): number | null =>
+      typeof value === 'number' && Number.isFinite(value) ? value : null;
+    const sampleCount = (value: unknown): number | null => {
+      const count = knownNumber(value);
+      return count !== null && Number.isSafeInteger(count) && count >= 0
+        ? count
+        : null;
+    };
+    const measuredRate = (rate: unknown, denominator: number | null): number | null => {
+      const value = knownNumber(rate);
+      return denominator !== null &&
+        denominator > 0 &&
+        value !== null &&
+        value >= 0 &&
+        value <= 1
+        ? value
+        : null;
+    };
 
     const knownPhase =
       phase?.phase === 'cold' || phase?.phase === 'warm' || phase?.phase === 'hot'
         ? phase.phase
         : null;
-    const knownNumber = (value: unknown): number | null =>
-      typeof value === 'number' && Number.isFinite(value) ? value : null;
+
+    const responseMessagesSent = sampleCount(intelligence?.messagesSent);
+    const matchLikes = sampleCount(intelligence?.likes);
+    const purchaseAttempts = sampleCount(intelligence?.paymentAttempts);
+
     const personalitySource = pers?.oceanSource;
     const hasPermittedPersonalitySource =
       personalitySource === 'validated_questionnaire' ||
@@ -100,10 +123,17 @@ export class UserContextService {
         retentionDays: metrics ? knownNumber(metrics.retentionDays) : null,
       },
 
-      probabilities: {
-        response: knownNumber(feat?.responseProbability),
-        match: knownNumber(feat?.matchProbability),
-        purchase: knownNumber(feat?.purchaseProbability),
+      // These are historical ratios, not forward-looking model probabilities.
+      // A zero denominator means "no evidence", not a measured 0% rate.
+      observedRates: {
+        response: measuredRate(intelligence?.responseRate, responseMessagesSent),
+        match: measuredRate(intelligence?.matchRate, matchLikes),
+        purchase: measuredRate(intelligence?.purchaseRate, purchaseAttempts),
+      },
+      rateSamples: {
+        responseMessagesSent,
+        matchLikes,
+        purchaseAttempts,
       },
 
       personality: ocean
@@ -133,7 +163,7 @@ export class UserContextService {
     };
   }
 
-  /** خلاصه context برای Prompt؛ فقط داده مشاهده‌شده یا خروجی مجاز را وارد می‌کند. */
+  /** Only verified observations and eligible estimates may enter the prompt. */
   toPromptString(ctx: UserContext): string {
     const lines: string[] = [];
     if (ctx.phase) lines.push(`فاز کاربر: ${ctx.phase}`);
@@ -159,14 +189,29 @@ export class UserContextService {
       lines.push(`۷ روز اخیر: ${knownMetrics.join('، ')}`);
     }
 
-    if (ctx.probabilities.response !== null) {
-      lines.push(`احتمال پاسخ ثبت‌شده: ${(ctx.probabilities.response * 100).toFixed(0)}%`);
+    if (
+      ctx.observedRates.response !== null &&
+      ctx.rateSamples.responseMessagesSent !== null
+    ) {
+      lines.push(
+        `نرخ پاسخ تاریخی: ${(ctx.observedRates.response * 100).toFixed(0)}% از ${ctx.rateSamples.responseMessagesSent} پیام ارسالی؛ این نسبت گذشته است، نه پیش‌بینی پاسخ آینده.`,
+      );
     }
-    if (ctx.probabilities.match !== null) {
-      lines.push(`احتمال مچ ثبت‌شده: ${(ctx.probabilities.match * 100).toFixed(0)}%`);
+    if (
+      ctx.observedRates.match !== null &&
+      ctx.rateSamples.matchLikes !== null
+    ) {
+      lines.push(
+        `نرخ تبدیل Like به Match تاریخی: ${(ctx.observedRates.match * 100).toFixed(0)}% از ${ctx.rateSamples.matchLikes} لایک ثبت‌شده.`,
+      );
     }
-    if (ctx.probabilities.purchase !== null) {
-      lines.push(`احتمال خرید ثبت‌شده: ${(ctx.probabilities.purchase * 100).toFixed(0)}%`);
+    if (
+      ctx.observedRates.purchase !== null &&
+      ctx.rateSamples.purchaseAttempts !== null
+    ) {
+      lines.push(
+        `نرخ موفقیت خرید تاریخی: ${(ctx.observedRates.purchase * 100).toFixed(0)}% از ${ctx.rateSamples.purchaseAttempts} تلاش پرداخت.`,
+      );
     }
 
     if (ctx.personality) {
