@@ -182,7 +182,7 @@ export class CryptoWatcherProcessor extends WorkerHost {
         if (
           typeof tx.transaction_id !== 'string' ||
           typeof tx.value !== 'string' ||
-          !tx.value.match(/^\\d+$/)
+          !/^[0-9]+$/.test(tx.value)
         ) {
           continue;
         }
