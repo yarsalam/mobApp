@@ -7,6 +7,15 @@ import { EventType } from 'src/user-event/type/event-type.enum';
 import { Payment } from 'src/payments/entities/payment.entity';
 import { CryptoWatcherProcessor } from './verification/crypto-watcher.processor';
 import { of } from 'rxjs';
+import { createHash } from 'crypto';
+import { User } from 'src/users/entities/user.entity';
+import { UserCredits } from 'src/payments/credits/entities/user-credits.entity';
+import { UserBoost } from 'src/payments/boosts/entities/user-boost.entity';
+import { UserVip } from 'src/payments/vip/entities/vip.entity';
+import { PaymentsService } from 'src/payments/payments.service';
+import { CreditsService } from 'src/payments/credits/credits.service';
+import { BoostService } from 'src/payments/boosts/boosts.service';
+import { VipService } from 'src/payments/vip/vip.service';
 
 const mysqlUrl = process.env.MYSQL_INTEGRATION_URL;
 const mysqlDescribe = mysqlUrl ? describe : describe.skip;
@@ -21,6 +30,65 @@ const walletSchema = new EntitySchema({
     balance: { type: 'bigint', default: 0 },
     currency: { type: 'varchar', length: 5, default: 'IRT' },
   },
+});
+
+const userSchema = new EntitySchema({
+  name: 'User',
+  target: User,
+  tableName: 'users',
+  columns: {
+    id: { type: Number, primary: true, generated: true },
+    gender: { type: 'varchar', length: 30, nullable: true },
+  },
+});
+
+const creditsSchema = new EntitySchema({
+  name: 'UserCredits',
+  target: UserCredits,
+  tableName: 'user_credits',
+  columns: {
+    id: { type: Number, primary: true, generated: true },
+    userId: { type: Number, unique: true },
+    balance: { type: 'int', default: 0 },
+    updatedAt: { type: 'timestamp', updateDate: true },
+  },
+});
+
+const boostSchema = new EntitySchema({
+  name: 'UserBoost',
+  target: UserBoost,
+  tableName: 'user_boosts',
+  columns: {
+    id: { type: Number, primary: true, generated: true },
+    instantCount: { type: 'int', default: 0 },
+    monthlyUntil: { type: 'timestamp', nullable: true },
+    activeUntil: { type: 'timestamp', nullable: true },
+    strength: { type: 'int', default: 1 },
+    freeGranted: { type: 'boolean', default: false },
+    expiresAt: { type: 'timestamp', nullable: true },
+    createdAt: { type: 'timestamp', createDate: true },
+    updatedAt: { type: 'timestamp', updateDate: true },
+  },
+  relations: {
+    user: {
+      type: 'one-to-one',
+      target: User,
+      joinColumn: { name: 'userId', referencedColumnName: 'id' },
+    },
+  },
+});
+
+const vipSchema = new EntitySchema({
+  name: 'UserVip',
+  target: UserVip,
+  tableName: 'user_vips',
+  columns: {
+    id: { type: Number, primary: true, generated: true },
+    userId: { type: Number },
+    active: { type: 'boolean', default: true },
+    expiresAt: { type: 'timestamp' },
+  },
+  indices: [{ columns: ['userId', 'active'] }],
 });
 
 const paymentSchema = new EntitySchema({
@@ -95,7 +163,7 @@ mysqlDescribe('WalletService MySQL transaction integration', () => {
     dataSource = new DataSource({
       type: 'mysql',
       url: mysqlUrl,
-      entities: [walletSchema, eventSchema, paymentSchema],
+      entities: [walletSchema, eventSchema, paymentSchema, userSchema, creditsSchema, boostSchema, vipSchema],
       synchronize: true,
       dropSchema: true,
       logging: false,
@@ -111,6 +179,10 @@ mysqlDescribe('WalletService MySQL transaction integration', () => {
     await dataSource.getRepository(Payment).clear();
     await dataSource.getRepository(PartitionedEvent).clear();
     await dataSource.getRepository(UserWallet).clear();
+    await dataSource.getRepository(UserCredits).clear();
+    await dataSource.getRepository(UserBoost).clear();
+    await dataSource.getRepository(UserVip).clear();
+    await dataSource.getRepository(User).clear();
   });
 
   it('applies only one credit when two concurrent workers use the same receipt key', async () => {
@@ -360,6 +432,175 @@ mysqlDescribe('WalletService MySQL transaction integration', () => {
       if (previousMockSetting === undefined) delete process.env.CRYPTO_WATCHER_MOCK;
       else process.env.CRYPTO_WATCHER_MOCK = previousMockSetting;
     }
+  });
+
+  it('resumes a partially fulfilled wallet bundle without duplicate debit or entitlements', async () => {
+    const userId = 7201;
+    const checkoutKey = `checkout:${userId}:bundle-retry-1`;
+    const bundleCode = 'bundle-retryable';
+    const eventService = {
+      logWithManager: async (manager: any, event: any) => {
+        const repository = manager.getRepository(PartitionedEvent);
+        await repository.insert({
+          userId: event.userId,
+          type: event.type,
+          metadata: event.metadata,
+          idempotencyKey: event.idempotencyKey ?? null,
+        });
+        return true;
+      },
+      log: async (event: any) => {
+        await dataSource.transaction(async (manager) => {
+          const repository = manager.getRepository(PartitionedEvent);
+          await repository.insert({
+            userId: event.userId,
+            type: event.type,
+            metadata: event.metadata,
+            idempotencyKey: event.idempotencyKey ?? null,
+          });
+        });
+      },
+    };
+    const queue: any = {
+      enqueueHighCredit: async () => undefined,
+      enqueueVip: async () => undefined,
+    };
+    const phaseService: any = {
+      markEverPaid: async () => undefined,
+      learnFromFeedback: async () => undefined,
+    };
+
+    await dataSource.getRepository(User).save(
+      dataSource.getRepository(User).create({ id: userId, gender: 'female' }),
+    );
+
+    const walletService = new WalletService(
+      dataSource.getRepository(UserWallet),
+      eventService as any,
+      dataSource,
+    );
+    await walletService.creditOnce(userId, 500, 'test-seed', `seed:${userId}`);
+
+    const creditsService = new CreditsService(
+      dataSource.getRepository(UserCredits),
+      eventService as any,
+      queue,
+      dataSource,
+    );
+    const actualBoostService = new BoostService(
+      dataSource.getRepository(UserBoost),
+      phaseService,
+      eventService as any,
+      queue,
+      dataSource,
+    );
+    const vipService = new VipService(
+      dataSource.getRepository(UserVip),
+      eventService as any,
+      queue,
+      dataSource,
+    );
+
+    const bundle = {
+      code: bundleCode,
+      active: true,
+      price: 100,
+      items: [
+        { type: 'credits' as const, amount: 50 },
+        { type: 'boost' as const, amount: 2 },
+        { type: 'vip' as const, amount: 30, durationDays: 30 },
+      ],
+    };
+    const bundleRepo: any = { findOne: async () => bundle };
+    const userRepo: any = { findOne: async () => ({ id: userId, gender: 'female' }) };
+
+    let injectBoostFailureOnce = true;
+    const boostService: any = {
+      grantInstantOnce: async (...args: [number, number, string, string]) => {
+        const result = await actualBoostService.grantInstantOnce(...args);
+        if (injectBoostFailureOnce) {
+          injectBoostFailureOnce = false;
+          throw new Error('injected failure after durable boost grant');
+        }
+        return result;
+      },
+    };
+
+    const paymentsService = new PaymentsService(
+      bundleRepo,
+      dataSource.getRepository(UserVip),
+      userRepo,
+      creditsService,
+      boostService,
+      phaseService,
+      eventService as any,
+      {} as any,
+      {} as any,
+      vipService,
+    );
+
+    await walletService.debitOnce(
+      userId,
+      100,
+      `buy:${bundleCode}`,
+      checkoutKey,
+    );
+
+    const purchaseContext = {
+      amountRials: 100,
+      source: 'wallet' as const,
+      idempotencyKey: checkoutKey,
+    };
+    await expect(
+      paymentsService.grantBundle(userId, bundleCode, purchaseContext),
+    ).rejects.toThrow('injected failure after durable boost grant');
+
+    const afterFailureCredits = await dataSource.getRepository(UserCredits)
+      .findOneByOrFail({ userId });
+    const afterFailureBoost = await dataSource.getRepository(UserBoost)
+      .findOne({ where: { user: { id: userId } }, relations: ['user'] });
+    const earlyCommercialPurchases = await dataSource.getRepository(PartitionedEvent).count({
+      where: { userId, type: EventType.PURCHASE },
+    });
+    expect(afterFailureCredits.balance).toBe(50);
+    expect(afterFailureBoost?.instantCount).toBe(2);
+    expect(await dataSource.getRepository(UserVip).count({ where: { userId } })).toBe(0);
+    expect(earlyCommercialPurchases).toBe(1); // the boost entitlement receipt only
+
+    // Simulate a caller retry with the same checkout key after a timeout.
+    await walletService.debitOnce(
+      userId,
+      100,
+      `buy:${bundleCode}`,
+      checkoutKey,
+    );
+    await paymentsService.grantBundle(userId, bundleCode, purchaseContext);
+
+    const wallet = await dataSource.getRepository(UserWallet).findOneByOrFail({ userId });
+    const credits = await dataSource.getRepository(UserCredits).findOneByOrFail({ userId });
+    const boost = await dataSource.getRepository(UserBoost)
+      .findOne({ where: { user: { id: userId } }, relations: ['user'] });
+    const vip = await dataSource.getRepository(UserVip).findOne({
+      where: { userId, active: true },
+      order: { expiresAt: 'DESC' },
+    });
+    const events = await dataSource.getRepository(PartitionedEvent).find({ where: { userId } });
+
+    expect(Number(wallet.balance)).toBe(400);
+    expect(credits.balance).toBe(50);
+    expect(boost?.instantCount).toBe(2);
+    expect(vip).toBeTruthy();
+    expect(vip!.expiresAt.getTime()).toBeGreaterThan(Date.now() + 29 * 24 * 60 * 60 * 1000);
+    expect(events.filter(event => event.type === EventType.CREDITS_SPENT)).toHaveLength(1);
+    expect(events.filter(event => event.type === EventType.CREDITS_GRANTED)).toHaveLength(1);
+    expect(events.filter(event => event.metadata?.entitlement === 'boost')).toHaveLength(1);
+    expect(events.filter(event => event.type === EventType.VIP_ACTIVATED)).toHaveLength(1);
+    expect(events.filter(
+      event => event.type === EventType.PURCHASE && event.metadata?.isCommercialPurchase === true,
+    )).toHaveLength(1);
+
+    const expectedPurchaseKey = `purchase:${createHash('sha256').update(checkoutKey).digest('hex').slice(0, 56)}`;
+    expect(events.filter(event => event.idempotencyKey === expectedPurchaseKey)).toHaveLength(1);
   });
 
   it('does not allow two concurrent debits to overdraw one wallet', async () => {
