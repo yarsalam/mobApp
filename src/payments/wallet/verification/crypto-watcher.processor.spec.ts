@@ -29,14 +29,16 @@ function createHarness(value: unknown) {
   };
 
   const paymentRepo: any = {
-    update: jest.fn().mockResolvedValue({ affected: 1 }),
-    findOne: jest.fn().mockResolvedValueOnce(payment).mockResolvedValueOnce(null),
+    update: jest.fn<() => Promise<any>>().mockResolvedValue({ affected: 1 }),
+    findOne: jest.fn<() => Promise<any>>()
+      .mockResolvedValueOnce(payment)
+      .mockResolvedValueOnce(null),
   };
   const walletService: any = {
-    creditOnce: jest.fn().mockResolvedValue(undefined),
+    creditOnce: jest.fn<() => Promise<any>>().mockResolvedValue(undefined),
   };
   const entitlementService: any = {
-    grantFromPayment: jest.fn().mockResolvedValue(undefined),
+    grantFromPayment: jest.fn<() => Promise<any>>().mockResolvedValue(undefined),
   };
   const httpService: any = {
     get: jest.fn().mockReturnValue(of({ data: { data: [tx] } })),
