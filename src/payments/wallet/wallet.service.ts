@@ -101,15 +101,13 @@ export class WalletService {
         }
 
         const walletRepo = manager.getRepository(UserWallet);
-        await walletRepo
-          .createQueryBuilder()
-          .insert()
-          .values({ userId, balance: 0, currency: 'IRT' })
-          .orIgnore()
-          // The insert is an idempotent "ensure row exists" operation; no
-          // generated entity needs to be hydrated from INSERT IGNORE results.
-          .updateEntity(false)
-          .execute();
+        // Keep the ensure-row insert inside this transaction, but use the
+        // driver query API: INSERT IGNORE can return no generated id for a
+        // duplicate row, which TypeORM's entity hydrator cannot safely handle.
+        await manager.query(
+          'INSERT IGNORE INTO `user_wallets` (`userId`, `balance`, `currency`) VALUES (?, ?, ?)',
+          [userId, 0, 'IRT'],
+        );
 
         const update = await walletRepo
           .createQueryBuilder()
@@ -197,15 +195,13 @@ export class WalletService {
         }
 
         const walletRepo = manager.getRepository(UserWallet);
-        await walletRepo
-          .createQueryBuilder()
-          .insert()
-          .values({ userId, balance: 0, currency: 'IRT' })
-          .orIgnore()
-          // The insert is an idempotent "ensure row exists" operation; no
-          // generated entity needs to be hydrated from INSERT IGNORE results.
-          .updateEntity(false)
-          .execute();
+        // Keep the ensure-row insert inside this transaction, but use the
+        // driver query API: INSERT IGNORE can return no generated id for a
+        // duplicate row, which TypeORM's entity hydrator cannot safely handle.
+        await manager.query(
+          'INSERT IGNORE INTO `user_wallets` (`userId`, `balance`, `currency`) VALUES (?, ?, ?)',
+          [userId, 0, 'IRT'],
+        );
 
         const debit = await walletRepo
           .createQueryBuilder()
