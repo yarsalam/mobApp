@@ -1,0 +1,5 @@
+FROM python-ai-tf:latest
+USER root
+RUN pip install --no-cache-dir pillow deepface tf-keras
+USER appuser
+CMD ["bash"]

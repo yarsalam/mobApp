@@ -1,0 +1,5 @@
+FROM python-ai-tf:latest
+USER root
+RUN pip install --no-cache-dir pandas scikit-learn
+USER appuser
+CMD ["bash"]

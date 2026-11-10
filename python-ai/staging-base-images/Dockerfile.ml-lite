@@ -1,0 +1,5 @@
+FROM python-ai-core:latest
+USER root
+RUN pip install --no-cache-dir numpy pandas scikit-learn xgboost joblib apscheduler psutil
+USER appuser
+CMD ["bash"]

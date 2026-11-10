@@ -1,0 +1,5 @@
+FROM python-ai-ml-lite:latest
+USER root
+RUN pip install --no-cache-dir httpx
+USER appuser
+CMD ["bash"]

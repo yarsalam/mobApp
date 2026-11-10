@@ -1,0 +1,6 @@
+FROM python-ai-core:latest
+USER root
+RUN pip install --no-cache-dir torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir transformers tokenizers safetensors accelerate httpx pandas
+USER appuser
+CMD ["bash"]

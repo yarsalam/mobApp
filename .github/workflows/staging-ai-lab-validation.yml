@@ -1,0 +1,95 @@
+name: Staging AI Lab validation
+
+on:
+  pull_request:
+    paths:
+      - "docker-compose.yml"
+      - "docker-compose.production.yml"
+      - "docker-compose.staging.yml"
+      - ".env.staging.example"
+      - "scripts/staging/**"
+      - "scripts/ai-eval/**"
+      - "python-ai/staging-base-images/**"
+      - "python-ai/downloaded_wheels/.gitkeep"
+      - ".github/workflows/staging-ai-lab-validation.yml"
+      - "docs/STAGING_AI_LAB.md"
+  push:
+    branches: [main]
+    paths:
+      - "docker-compose.staging.yml"
+      - "scripts/staging/**"
+      - "scripts/ai-eval/**"
+      - "python-ai/staging-base-images/**"
+      - ".github/workflows/staging-ai-lab-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  staging-config-and-fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create isolated throwaway environment
+        run: |
+          cp .env.staging.example .env.staging
+          chmod 600 .env.staging
+
+      - name: Validate staging Compose without starting services
+        run: |
+          docker compose version
+          docker compose --env-file .env.staging \
+            -p yarsalam-staging-validation \
+            -f docker-compose.yml \
+            -f docker-compose.production.yml \
+            -f docker-compose.staging.yml config --quiet
+
+      - name: Verify critical AI profiles resolve
+        run: |
+          set -euo pipefail
+          check_profile() {
+            profile="$1"
+            expected="$2"
+            services="$(docker compose --env-file .env.staging \
+              -p yarsalam-staging-validation \
+              -f docker-compose.yml \
+              -f docker-compose.production.yml \
+              -f docker-compose.staging.yml \
+              --profile "$profile" config --services)"
+            printf '%s\n' "$services" | grep -Fx "$expected" >/dev/null
+          }
+          check_profile ai-assistant ai_assistant
+          check_profile ai-moderation ai_moderation
+          check_profile ai-moderation embedded_ai
+          check_profile ai-matching ml_service
+          check_profile ai-personality personality
+          check_profile ai-support ai_support
+          check_profile ai-image ai_image
+          check_profile ai-verification ai_verification
+
+      - name: Generate deterministic synthetic fixtures
+        run: |
+          python scripts/ai-eval/generate_fixtures.py \
+            --seed 20261110 \
+            --output "$RUNNER_TEMP/yarsalam-ai-eval"
+
+      - name: Validate synthetic fixture contracts
+        working-directory: scripts/ai-eval
+        run: python -m unittest -v test_fixtures.py
+
+      - name: Upload synthetic AI evaluation fixtures
+        uses: actions/upload-artifact@v4
+        with:
+          name: yarsalam-ai-eval-synthetic-fixtures
+          path: \${{ runner.temp }}/yarsalam-ai-eval/
+          retention-days: 14
+          if-no-files-found: error

@@ -1,0 +1,190 @@
+# Isolated staging overlay. Requires Docker Compose v2.24.4+ for !override.
+# Data stores remain private; every optional AI service is independently profile-gated.
+# Backend port is for a PRIVATE Codespaces forwarded port, not a public VPS.
+services:
+  redis:
+    ports: !override []
+    deploy:
+      resources:
+        limits: {cpus: "0.50", memory: 384M}
+  user-mysql:
+    ports: !override []
+    environment:
+      MYSQL_ROOT_PASSWORD: \${MYSQL_ROOT_PASSWORD:?Run scripts/staging/bootstrap.sh first}
+      MYSQL_DATABASE: \${MYSQL_DATABASE:-yarsalam_staging}
+      MYSQL_USER: \${MYSQL_USER:-appuser}
+      MYSQL_PASSWORD: \${MYSQL_PASSWORD:?Run scripts/staging/bootstrap.sh first}
+      MYSQL_ROOT_HOST: localhost
+    deploy:
+      resources:
+        limits: {cpus: "1.00", memory: 1280M}
+  backend:
+    ports: !override
+      - "0.0.0.0:5001:5000"
+    env_file: !override
+      - .env.staging
+    environment:
+      NODE_ENV: production
+      DB_SYNC: "false"
+      DB_POOL_SIZE: 10
+      DB_HOST: user-mysql
+      DB_PORT: 3306
+      DB_USER: \${MYSQL_USER:-appuser}
+      DB_PASS: \${MYSQL_PASSWORD:?Run scripts/staging/bootstrap.sh first}
+      DB_NAME: \${MYSQL_DATABASE:-yarsalam_staging}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    deploy:
+      resources:
+        limits: {cpus: "1.50", memory: 1792M}
+  qdrant:
+    ports: !override []
+    deploy:
+      resources:
+        limits: {cpus: "1.00", memory: 768M}
+  phpmyadmin:
+    profiles: !override ["staging-tools"]
+    ports: !override []
+  whatsapp_listener:
+    profiles: !override ["staging-whatsapp"]
+  ai_ops:
+    profiles: ["ai-ops"]
+    restart: "no"
+    ports: !override ["127.0.0.1:18025:8025"]
+    deploy:
+      resources:
+        limits: {cpus: "1.00", memory: 768M}
+  ai_feedback:
+    profiles: ["ai-feedback"]
+    restart: "no"
+    ports: !override ["127.0.0.1:18005:8004"]
+    deploy:
+      resources:
+        limits: {cpus: "1.00", memory: 768M}
+  ai_seo:
+    profiles: ["ai-seo"]
+    restart: "no"
+    ports: !override ["127.0.0.1:18021:8021"]
+    deploy:
+      resources:
+        limits: {cpus: "1.00", memory: 1280M}
+  ai_monetization:
+    profiles: ["ai-monetization"]
+    restart: "no"
+    ports: !override ["127.0.0.1:18015:8015"]
+    deploy:
+      resources:
+        limits: {cpus: "1.00", memory: 768M}
+  ai_revenue:
+    profiles: ["ai-revenue"]
+    restart: "no"
+    ports: !override ["127.0.0.1:18006:8000"]
+    deploy:
+      resources:
+        limits: {cpus: "1.00", memory: 1792M}
+  ai_assistant:
+    profiles: ["ai-assistant"]
+    restart: "no"
+    ports: !override ["127.0.0.1:18022:8022"]
+    deploy:
+      resources:
+        limits: {cpus: "1.50", memory: 2560M}
+  ai_moderation:
+    profiles: ["ai-moderation"]
+    restart: "no"
+    env_file:
+      - .env.staging
+    environment:
+      EMBEDDING_SERVICE_URL: http://embedded_ai:8100
+    depends_on:
+      redis:
+        condition: service_healthy
+      embedded_ai:
+        condition: service_started
+    ports: !override ["127.0.0.1:18018:8018"]
+    deploy:
+      resources:
+        limits: {cpus: "1.00", memory: 1536M}
+  ai_verification:
+    profiles: ["ai-verification"]
+    restart: "no"
+    ports: !override ["127.0.0.1:18017:8017"]
+    deploy:
+      resources:
+        limits: {cpus: "1.50", memory: 2560M}
+  embedded_ai:
+    profiles: ["ai-embedding", "ai-matching", "ai-moderation"]
+    restart: "no"
+    ports: !override ["127.0.0.1:18104:8100"]
+    deploy:
+      resources:
+        limits: {cpus: "1.50", memory: 2560M}
+  ml_service:
+    profiles: ["ai-matching"]
+    restart: "no"
+    ports: !override ["127.0.0.1:18007:8000"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      embedded_ai:
+        condition: service_started
+    deploy:
+      resources:
+        limits: {cpus: "1.50", memory: 1792M}
+  ai_uplift:
+    profiles: ["ai-uplift"]
+    restart: "no"
+    env_file: !override
+      - .env.staging
+    ports: !override ["127.0.0.1:18031:8031"]
+    deploy:
+      resources:
+        limits: {cpus: "1.00", memory: 768M}
+  ai_backlink_quality:
+    profiles: ["ai-backlink-quality"]
+    restart: "no"
+    env_file: !override
+      - .env.staging
+    ports: !override ["127.0.0.1:18032:8032"]
+    deploy:
+      resources:
+        limits: {cpus: "1.00", memory: 768M}
+  ai_seo_recommender:
+    profiles: ["ai-seo-recommender"]
+    restart: "no"
+    env_file: !override
+      - .env.staging
+    ports: !override ["127.0.0.1:18033:8033"]
+    deploy:
+      resources:
+        limits: {cpus: "1.00", memory: 768M}
+  personality:
+    profiles: ["ai-personality"]
+    restart: "no"
+    ports: !override ["127.0.0.1:18101:8100"]
+    deploy:
+      resources:
+        limits: {cpus: "1.50", memory: 2560M}
+  ai_image:
+    profiles: ["ai-image"]
+    restart: "no"
+    ports: !override ["127.0.0.1:18102:8100"]
+    deploy:
+      resources:
+        limits: {cpus: "2.00", memory: 3072M}
+  ai_support:
+    profiles: ["ai-support"]
+    restart: "no"
+    ports: !override ["127.0.0.1:18016:8016"]
+    deploy:
+      resources:
+        limits: {cpus: "1.00", memory: 1280M}
+  aeo_tracker:
+    profiles: ["ai-aeo"]
+    restart: "no"
+    env_file: !override
+      - .env.staging
+    ports: !override ["127.0.0.1:18030:8030"]
+    deploy:
+      resources:
+        limits: {cpus: "1.00", memory: 768M}
