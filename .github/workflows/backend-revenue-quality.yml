@@ -34,6 +34,19 @@ jobs:
   revenue-backend:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: test-root
+          MYSQL_DATABASE: yarsalam_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -ptest-root"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -60,6 +73,11 @@ jobs:
           manual-verifier.service.spec.ts
           feature-store-rvenue.service.spec.ts
           database.config.spec.ts
+
+      - name: MySQL wallet concurrency and rollback integration tests
+        env:
+          MYSQL_INTEGRATION_URL: mysql://root:test-root@127.0.0.1:3306/yarsalam_test
+        run: npm test -- --runInBand wallet.mysql.integration.spec.ts
 
       - name: Compile backend
         run: npm run build
