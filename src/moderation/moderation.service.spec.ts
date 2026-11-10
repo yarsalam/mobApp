@@ -162,4 +162,34 @@ describe('ModerationService operational safety contracts', () => {
     expect(result.database).toBe('ok');
     expect(result.aiModerationProbe).toBe('not_performed');
   });
+
+  it('rejects moderation responses that omit model confidence instead of inventing certainty', () => {
+    const h = makeService();
+    expect(() =>
+      (h.service as any).normalizeModerationResult({ allowed: true, severity: 'low' }),
+    ).toThrow('Invalid moderation confidence');
+  });
+
+  it('rejects non-finite or out-of-range moderation confidence', () => {
+    const h = makeService();
+    for (const confidence of [Number.NaN, Number.POSITIVE_INFINITY, -0.1, 1.1]) {
+      expect(() =>
+        (h.service as any).normalizeModerationResult({
+          allowed: true,
+          severity: 'low',
+          confidence,
+        }),
+      ).toThrow('Invalid moderation confidence');
+    }
+  });
+
+  it('preserves the exact finite confidence supplied by the moderation model', () => {
+    const h = makeService();
+    const result = (h.service as any).normalizeModerationResult({
+      allowed: true,
+      severity: 'low',
+      confidence: 0.42,
+    });
+    expect(result.confidence).toBe(0.42);
+  });
 });
