@@ -141,7 +141,7 @@ describe('ModerationService operational safety contracts', () => {
 
     expect(result.unblocked).toBe(true);
     expect(user.canSendMessage).toBe(true);
-    expect(user.restrictedUntil).toBeNull();
+    expect(user.restrictedUntil).toBeUndefined();
     expect(h.userRepo.save).toHaveBeenCalledWith(user);
     expect(h.userEventService.log).toHaveBeenCalledWith({
       userId: 42,
