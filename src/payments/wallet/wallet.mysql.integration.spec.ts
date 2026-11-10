@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from '@jest/globals';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from '@jest/globals';
 import { DataSource, EntitySchema } from 'typeorm';
 import { WalletService } from './wallet.service';
 import { UserWallet } from './entities/user-wallet.entity';
