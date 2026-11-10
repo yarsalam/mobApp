@@ -54,7 +54,7 @@ const creditsSchema = new EntitySchema({
   },
 });
 
-const boostSchema = new EntitySchema({
+const boostSchema = new EntitySchema<any>({
   name: 'UserBoost',
   target: UserBoost,
   tableName: 'user_boosts',
@@ -592,7 +592,11 @@ mysqlDescribe('WalletService MySQL transaction integration', () => {
     expect(vip).toBeTruthy();
     expect(vip!.expiresAt.getTime()).toBeGreaterThan(Date.now() + 29 * 24 * 60 * 60 * 1000);
     expect(events.filter(event => event.type === EventType.CREDITS_SPENT)).toHaveLength(1);
-    expect(events.filter(event => event.type === EventType.CREDITS_GRANTED)).toHaveLength(1);
+    expect(events.filter(
+      event =>
+        event.type === EventType.CREDITS_GRANTED &&
+        event.metadata?.source === 'bundle_fulfillment',
+    )).toHaveLength(1);
     expect(events.filter(event => event.metadata?.entitlement === 'boost')).toHaveLength(1);
     expect(events.filter(event => event.type === EventType.VIP_ACTIVATED)).toHaveLength(1);
     expect(events.filter(
