@@ -10,10 +10,10 @@ services:
   user-mysql:
     ports: !override []
     environment:
-      MYSQL_ROOT_PASSWORD: \${MYSQL_ROOT_PASSWORD:?Run scripts/staging/bootstrap.sh first}
-      MYSQL_DATABASE: \${MYSQL_DATABASE:-yarsalam_staging}
-      MYSQL_USER: \${MYSQL_USER:-appuser}
-      MYSQL_PASSWORD: \${MYSQL_PASSWORD:?Run scripts/staging/bootstrap.sh first}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Run scripts/staging/bootstrap.sh first}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-yarsalam_staging}
+      MYSQL_USER: ${MYSQL_USER:-appuser}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Run scripts/staging/bootstrap.sh first}
       MYSQL_ROOT_HOST: localhost
     deploy:
       resources:
@@ -30,9 +30,9 @@ services:
       DB_POOL_SIZE: 10
       DB_HOST: user-mysql
       DB_PORT: 3306
-      DB_USER: \${MYSQL_USER:-appuser}
-      DB_PASS: \${MYSQL_PASSWORD:?Run scripts/staging/bootstrap.sh first}
-      DB_NAME: \${MYSQL_DATABASE:-yarsalam_staging}
+      DB_USER: ${MYSQL_USER:-appuser}
+      DB_PASS: ${MYSQL_PASSWORD:?Run scripts/staging/bootstrap.sh first}
+      DB_NAME: ${MYSQL_DATABASE:-yarsalam_staging}
       REDIS_HOST: redis
       REDIS_PORT: 6379
     deploy:
