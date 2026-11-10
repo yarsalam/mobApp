@@ -129,7 +129,6 @@ class RecommendationService:
         similarities = self._compute_similarities_vectorized(user_emb, candidate_embs)
 
         results = []
-        weights = settings.RECOMMENDATION_WEIGHTS
         for candidate_id, similarity in zip(actual_ids, similarities):
             if similarity is None:
                 continue
