@@ -90,6 +90,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: yarsalam-ai-eval-synthetic-fixtures
-          path: \${{ runner.temp }}/yarsalam-ai-eval/
+          path: ${{ runner.temp }}/yarsalam-ai-eval/
           retention-days: 14
           if-no-files-found: error
