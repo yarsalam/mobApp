@@ -134,37 +134,26 @@ class RecommendationService:
             if similarity is None:
                 continue
 
-            components = {"embedding": similarity}
+            # Match compatibility is computed only from compatibility evidence.
+            # Commercial propensity is retained as a separate business signal and
+            # must never raise or lower a person's position in another user's matches.
             revenue = revenue_signals.get(candidate_id)
-            if revenue is not None:
-                components["revenue"] = revenue
-
-            active_weights = {
-                name: float(weights.get(name, 0.0))
-                for name in components
-                if math.isfinite(float(weights.get(name, 0.0))) and float(weights.get(name, 0.0)) > 0
-            }
-            weight_total = sum(active_weights.values())
-            if weight_total > 0:
-                final_score = sum(
-                    components[name] * active_weights[name] for name in active_weights
-                ) / weight_total
-            else:
-                final_score = similarity
+            compatibility_score = float(similarity)
 
             result = {
                 "user_id": candidate_id,
-                "score": round(float(final_score), 4),
-                "similarity": round(float(similarity), 4),
+                "score": round(compatibility_score, 4),
+                "similarity": round(compatibility_score, 4),
                 "revenue_potential": round(float(revenue), 4) if revenue is not None else None,
-                "score_type": "weighted_observed_features" if len(components) > 1 else "similarity_only",
+                "score_type": "compatibility_similarity",
                 "score_components": {
-                    name: round(float(value), 4) for name, value in components.items()
+                    "embedding": round(compatibility_score, 4),
                 },
-                "explanation": [
-                    "embedding_similarity",
-                    *(["observed_revenue_signal"] if revenue is not None else []),
-                ],
+                "business_signals": (
+                    {"revenue_potential": round(float(revenue), 4)}
+                    if revenue is not None else {}
+                ),
+                "explanation": ["embedding_similarity"],
             }
             results.append(result)
 
