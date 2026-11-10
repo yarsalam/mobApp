@@ -106,6 +106,9 @@ export class WalletService {
           .insert()
           .values({ userId, balance: 0, currency: 'IRT' })
           .orIgnore()
+          // The insert is an idempotent "ensure row exists" operation; no
+          // generated entity needs to be hydrated from INSERT IGNORE results.
+          .updateEntity(false)
           .execute();
 
         const update = await walletRepo
@@ -199,6 +202,9 @@ export class WalletService {
           .insert()
           .values({ userId, balance: 0, currency: 'IRT' })
           .orIgnore()
+          // The insert is an idempotent "ensure row exists" operation; no
+          // generated entity needs to be hydrated from INSERT IGNORE results.
+          .updateEntity(false)
           .execute();
 
         const debit = await walletRepo
