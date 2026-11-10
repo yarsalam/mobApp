@@ -12,13 +12,6 @@ function harness(overrides: Record<string, any> = {}) {
       suggestedActions: [],
     })),
   };
-  const featureStore = {
-    getUserFeatures: jest.fn(async () => ({
-      responseProbability: 0.4,
-      matchProbability: 0.3,
-      purchaseProbability: null,
-    })),
-  };
   const trustScoreService = {
     getTrustContext: jest.fn(async () => ({ trustScore: 75, deviceRisk: 5 })),
   };
@@ -30,6 +23,17 @@ function harness(overrides: Record<string, any> = {}) {
       messages7d: 4,
       boostUsed7d: 0,
       retentionDays: 2,
+    })),
+    getUserIntelligenceMetrics: jest.fn(async () => ({
+      messagesSent: 10,
+      replies: 4,
+      likes: 5,
+      matches: 1,
+      purchases: 1,
+      paymentAttempts: 2,
+      responseRate: 0.4,
+      matchRate: 0.2,
+      purchaseRate: 0.5,
     })),
   };
   const personalityService = {
@@ -49,20 +53,17 @@ function harness(overrides: Record<string, any> = {}) {
     })),
   };
   Object.assign(phaseService, overrides.phaseService ?? {});
-  Object.assign(featureStore, overrides.featureStore ?? {});
   Object.assign(trustScoreService, overrides.trustScoreService ?? {});
   Object.assign(metricsService, overrides.metricsService ?? {});
   Object.assign(personalityService, overrides.personalityService ?? {});
   return {
     service: new UserContextService(
       phaseService as any,
-      featureStore as any,
       trustScoreService as any,
       metricsService as any,
       personalityService as any,
     ),
     phaseService,
-    featureStore,
     trustScoreService,
     metricsService,
     personalityService,
@@ -70,12 +71,14 @@ function harness(overrides: Record<string, any> = {}) {
 }
 
 describe('UserContextService AI grounding', () => {
-  it('keeps failed or unavailable sources unknown instead of inventing defaults', async () => {
+  it('keeps failed sources unknown instead of inventing defaults', async () => {
     const h = harness({
       phaseService: { getPhaseMetrics: jest.fn(async () => { throw new Error('phase offline'); }) },
-      featureStore: { getUserFeatures: jest.fn(async () => { throw new Error('feature store offline'); }) },
       trustScoreService: { getTrustContext: jest.fn(async () => { throw new Error('trust offline'); }) },
-      metricsService: { get7dMetrics: jest.fn(async () => { throw new Error('metrics offline'); }) },
+      metricsService: {
+        get7dMetrics: jest.fn(async () => { throw new Error('metrics offline'); }),
+        getUserIntelligenceMetrics: jest.fn(async () => { throw new Error('intelligence metrics offline'); }),
+      },
       personalityService: { analyzePersonality: jest.fn(async () => { throw new Error('personality offline'); }) },
     });
 
@@ -83,14 +86,16 @@ describe('UserContextService AI grounding', () => {
     expect(context.phase).toBeNull();
     expect(context.trustScore).toBeNull();
     expect(context.metrics.views7d).toBeNull();
-    expect(context.probabilities.response).toBeNull();
-    expect(context.probabilities.match).toBeNull();
-    expect(context.probabilities.purchase).toBeNull();
+    expect(context.observedRates.response).toBeNull();
+    expect(context.observedRates.match).toBeNull();
+    expect(context.observedRates.purchase).toBeNull();
+    expect(context.rateSamples.responseMessagesSent).toBeNull();
     expect(context.personality).toBeNull();
 
     const prompt = h.service.toPromptString(context);
     expect(prompt).toContain('اطلاعات تأییدشده کافی');
     expect(prompt).not.toContain('احتمال پاسخ');
+    expect(prompt).not.toContain('نرخ پاسخ تاریخی');
     expect(prompt).not.toContain('0.2');
     expect(prompt).not.toContain('0.5');
   });
@@ -128,13 +133,47 @@ describe('UserContextService AI grounding', () => {
     expect(prompt).not.toContain('برون‌گرایی=0.50');
   });
 
-  it('passes through observed feature probabilities without replacing missing values', async () => {
+  it('labels historical ratios as observed rates and includes their actual denominators', async () => {
     const h = harness();
     const context = await h.service.build(7);
 
-    expect(context.probabilities.response).toBe(0.4);
-    expect(context.probabilities.match).toBe(0.3);
-    expect(context.probabilities.purchase).toBeNull();
-    expect(h.service.toPromptString(context)).not.toContain('احتمال خرید');
+    expect(context.observedRates.response).toBe(0.4);
+    expect(context.rateSamples.responseMessagesSent).toBe(10);
+    expect(context.observedRates.match).toBe(0.2);
+    expect(context.rateSamples.matchLikes).toBe(5);
+    expect(context.observedRates.purchase).toBe(0.5);
+    expect(context.rateSamples.purchaseAttempts).toBe(2);
+
+    const prompt = h.service.toPromptString(context);
+    expect(prompt).toContain('نرخ پاسخ تاریخی: 40% از 10 پیام ارسالی');
+    expect(prompt).toContain('این نسبت گذشته است، نه پیش‌بینی پاسخ آینده');
+    expect(prompt).toContain('نرخ تبدیل Like به Match تاریخی: 20% از 5 لایک');
+    expect(prompt).toContain('نرخ موفقیت خرید تاریخی: 50% از 2 تلاش پرداخت');
+    expect(prompt).not.toContain('احتمال پاسخ');
+  });
+
+  it('does not convert empty denominators into observed zero-percent rates', async () => {
+    const h = harness({
+      metricsService: {
+        getUserIntelligenceMetrics: jest.fn(async () => ({
+          messagesSent: 0,
+          replies: 0,
+          likes: 0,
+          matches: 0,
+          purchases: 0,
+          paymentAttempts: 0,
+          responseRate: 0,
+          matchRate: 0,
+          purchaseRate: 0,
+        })),
+      },
+    });
+    const context = await h.service.build(7);
+
+    expect(context.observedRates.response).toBeNull();
+    expect(context.observedRates.match).toBeNull();
+    expect(context.observedRates.purchase).toBeNull();
+    expect(h.service.toPromptString(context)).not.toContain('نرخ پاسخ تاریخی');
+    expect(h.service.toPromptString(context)).not.toContain('نرخ موفقیت خرید');
   });
 });
