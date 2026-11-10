@@ -22,6 +22,7 @@ function createHarness(existingEvent: any = null, updateAffected = 1) {
     findOne: jest.fn<() => Promise<any>>().mockResolvedValue({ userId: 7, balance: 900 }),
   };
   const manager: any = {
+    query: jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue([]),
     getRepository: jest.fn((entity: unknown) =>
       entity === PartitionedEvent ? eventRepo : walletTxRepo,
     ),
@@ -64,7 +65,11 @@ describe('WalletService idempotent mutations', () => {
     await h.service.creditOnce(7, 500, 'payment:44', 'payment:44:wallet-credit');
 
     expect(h.dataSource.transaction).toHaveBeenCalledTimes(1);
-    expect(h.builder.insert).toHaveBeenCalledTimes(1);
+    expect(h.manager.query).toHaveBeenCalledWith(
+      'INSERT IGNORE INTO `user_wallets` (`userId`, `balance`, `currency`) VALUES (?, ?, ?)',
+      [7, 0, 'IRT'],
+    );
+    expect(h.builder.insert).not.toHaveBeenCalled();
     expect(h.builder.update).toHaveBeenCalledTimes(1);
     expect(h.userEventService.logWithManager).toHaveBeenCalledWith(
       h.manager,
