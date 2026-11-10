@@ -306,31 +306,47 @@ export class IntentDetectorService {
   // ─── Response Builders ────────────────────────────────────────────────────
 
   private buildGreetingResponse(ctx: UserContext): string {
-    const phaseLabel = { cold: 'سرد', warm: 'گرم', hot: 'داغ' }[ctx.phase];
+    const phaseNames = { cold: 'سرد', warm: 'گرم', hot: 'داغ' } as const;
+    const details: string[] = [];
+    if (ctx.phase) details.push(`فاز فعلی: ${phaseNames[ctx.phase]}`);
+    if (ctx.trustScore !== null) details.push(`امتیاز اعتماد ثبت‌شده: ${ctx.trustScore}/100`);
     return [
-      `سلام! 👋 من دستیار یارسلام هستم.`,
-      `وضعیت فعلی شما: فاز ${phaseLabel} | اعتماد ${ctx.trustScore}/100`,
-      ``,
-      `می‌تونم درباره آمار پروفایل، راه‌های بهبود، یا هر سوال دیگه‌ای کمکت کنم.`,
+      'سلام! 👋 من دستیار یارسلام هستم.',
+      details.length ? details.join(' | ') : 'هنوز اطلاعات تأییدشده کافی برای نمایش وضعیت شخصی شما در دسترس نیست.',
+      '',
+      'می‌تونم درباره آمار پروفایل، راه‌های بهبود، یا هر سوال دیگه‌ای کمکت کنم.',
     ].join('\n');
   }
 
   private buildStatsResponse(ctx: UserContext): string {
-    const { metrics } = ctx;
-    const lines = [
-      `📊 آمار ۷ روز اخیر شما:`,
-      `👁 بازدید: ${metrics.views7d}`,
-      `❤️ لایک: ${metrics.likes7d}`,
-      `🤝 مچ: ${metrics.matches7d}`,
-      `💬 پیام: ${metrics.messages7d}`,
+    const metrics = ctx.metrics;
+    const lines = ['📊 آمار ۷ روز اخیر شما:'];
+    const metricRows: Array<[string, number | null]> = [
+      ['👁 بازدید', metrics.views7d],
+      ['❤️ لایک', metrics.likes7d],
+      ['🤝 مچ', metrics.matches7d],
+      ['💬 پیام', metrics.messages7d],
     ];
-    if (metrics.boostUsed7d > 0)
+    for (const [label, value] of metricRows) {
+      lines.push(`${label}: ${value === null ? 'داده در دسترس نیست' : value}`);
+    }
+    if (metrics.boostUsed7d !== null && metrics.boostUsed7d > 0) {
       lines.push(`🚀 بوست: ${metrics.boostUsed7d} بار`);
-    lines.push(
-      ``,
-      `احتمال پاسخ گرفتن: ${(ctx.probabilities.response * 100).toFixed(0)}%`,
-      `احتمال مچ شدن: ${(ctx.probabilities.match * 100).toFixed(0)}%`,
-    );
+    } else if (metrics.boostUsed7d === null) {
+      lines.push('🚀 بوست: داده در دسترس نیست');
+    }
+    if (ctx.probabilities.response !== null) {
+      lines.push(`احتمال پاسخ گرفتن ثبت‌شده: ${(ctx.probabilities.response * 100).toFixed(0)}%`);
+    }
+    if (ctx.probabilities.match !== null) {
+      lines.push(`احتمال مچ شدن ثبت‌شده: ${(ctx.probabilities.match * 100).toFixed(0)}%`);
+    }
+    if (
+      ctx.probabilities.response === null &&
+      ctx.probabilities.match === null
+    ) {
+      lines.push('احتمال پاسخ و مچ: مدل/داده معتبر در دسترس نیست');
+    }
     return lines.join('\n');
   }
 
@@ -339,103 +355,129 @@ export class IntentDetectorService {
       cold: 'سرد (Cold)',
       warm: 'گرم (Warm)',
       hot: 'داغ (Hot)',
-    };
-    const progress =
-      ctx.nextPhaseThreshold > 0
-        ? Math.min(
-            100,
-            Math.round((ctx.phaseScore / ctx.nextPhaseThreshold) * 100),
-          )
-        : 100;
-    const lines = [
-      `📈 فاز فعلی شما: ${phaseNames[ctx.phase]}`,
-      `امتیاز: ${ctx.phaseScore.toFixed(1)} از ${ctx.nextPhaseThreshold} (${progress}%)`,
-      `رتبه شما از کل کاربران: ${ctx.percentile}%`,
-    ];
+    } as const;
+    if (!ctx.phase) {
+      return '📈 در حال حاضر داده کافی برای تعیین فاز کاربری شما در دسترس نیست.';
+    }
+
+    const lines = [`📈 فاز فعلی شما: ${phaseNames[ctx.phase]}`];
+    if (ctx.phaseScore !== null && ctx.nextPhaseThreshold !== null) {
+      const progress =
+        ctx.nextPhaseThreshold > 0
+          ? Math.min(100, Math.round((ctx.phaseScore / ctx.nextPhaseThreshold) * 100))
+          : null;
+      lines.push(
+        progress === null
+          ? `امتیاز فاز: ${ctx.phaseScore.toFixed(1)}`
+          : `امتیاز: ${ctx.phaseScore.toFixed(1)} از ${ctx.nextPhaseThreshold} (${progress}%)`,
+      );
+    } else {
+      lines.push('امتیاز/آستانه فاز: داده معتبر در دسترس نیست');
+    }
+    if (ctx.percentile !== null) {
+      lines.push(`رتبه درصدی ثبت‌شده: ${ctx.percentile}%`);
+    }
     if (ctx.phase !== 'hot' && ctx.suggestedActions.length > 0) {
-      lines.push(``, `برای پیشرفت: ${ctx.suggestedActions[0]}`);
+      lines.push('', `برای پیشرفت: ${ctx.suggestedActions[0]}`);
     } else if (ctx.phase === 'hot') {
-      lines.push(``, `✅ شما در بالاترین فاز هستید!`);
+      lines.push('', '✅ شما در بالاترین فاز ثبت‌شده هستید!');
     }
     return lines.join('\n');
   }
 
   private buildTrustResponse(ctx: UserContext): string {
+    if (ctx.trustScore === null) {
+      return '🔒 امتیاز اعتماد شما فعلاً قابل نمایش نیست؛ سرویس یا داده معتبر اعتماد در دسترس نیست.';
+    }
     const [level, advice] =
       ctx.trustScore >= 80
-        ? ['عالی ✅', 'پروفایل شما اعتماد بالایی دارد.']
+        ? ['عالی ✅', 'امتیاز ثبت‌شده شما در بازه بالا قرار دارد.']
         : ctx.trustScore >= 60
-          ? ['خوب 👍', 'برای افزایش اعتماد، احراز هویت چهره را تکمیل کنید.']
+          ? ['خوب 👍', 'برای افزایش اعتماد، مراحل تکمیل و تأیید پروفایل را بررسی کنید.']
           : [
-              'نیاز به بهبود ⚠️',
-              'تأیید شماره تلفن، افزودن عکس، و احراز هویت چهره را انجام دهید.',
+              'نیاز به بررسی ⚠️',
+              'اطلاعات پروفایل و مراحل تأیید حساب را بررسی کنید.',
             ];
-    return `🔒 امتیاز اعتماد شما: ${ctx.trustScore}/100 (${level})\n\n${advice}`;
+    return `🔒 امتیاز اعتماد ثبت‌شده شما: ${ctx.trustScore}/100 (${level})\n\n${advice}`;
   }
 
-  /**
-   * FIX: این متد الان همیشه یه جواب مفید برمیگردونه.
-   * قبلاً وقتی issues خالی بود، یه پیام ثابت هاردکد برمیگشت
-   * ولی مشکل اصلی اینجا نبود — مشکل اینه که needsLLM: false بود
-   * ولی openRouter.ask() صدا زده میشد و fallback میداد.
-   */
   private buildNoReplyResponse(ctx: UserContext): string {
     const issues: string[] = [];
 
-    if (ctx.probabilities.response < 0.15)
+    if (ctx.probabilities.response !== null && ctx.probabilities.response < 0.15) {
       issues.push(
-        `• نرخ پاسخ‌گویی پایین (${(ctx.probabilities.response * 100).toFixed(0)}%) — زیر میانگین`,
+        `• احتمال پاسخ ثبت‌شده پایین است (${(ctx.probabilities.response * 100).toFixed(0)}%). این تخمین به‌تنهایی علت را ثابت نمی‌کند.`,
       );
+    }
 
-    if (ctx.trustScore < 50)
+    if (ctx.trustScore !== null && ctx.trustScore < 50) {
+      issues.push(`• امتیاز اعتماد ثبت‌شده: ${ctx.trustScore}/100`);
+    }
+
+    if (
+      ctx.metrics.views7d !== null &&
+      ctx.metrics.likes7d !== null &&
+      ctx.metrics.views7d > 20 &&
+      ctx.metrics.likes7d < 2
+    ) {
       issues.push(
-        `• امتیاز اعتماد پایین (${ctx.trustScore}/100) — پروفایل غیررسمی به نظر میرسه`,
+        `• ${ctx.metrics.views7d} بازدید و ${ctx.metrics.likes7d} لایک در ۷ روز اخیر ثبت شده است؛ این یک نشانه برای بررسی پروفایل است، نه اثبات علت.`,
       );
+    }
 
-    if (ctx.metrics.views7d > 20 && ctx.metrics.likes7d < 2)
-      issues.push(
-        `• ${ctx.metrics.views7d} بازدید اما فقط ${ctx.metrics.likes7d} لایک — عکس اصلی جذاب نیست`,
-      );
+    if (ctx.metrics.views7d === 0) {
+      issues.push('• در ۷ روز اخیر بازدیدی برای پروفایل ثبت نشده است.');
+    }
+    if (ctx.phase === 'cold') {
+      issues.push('• فاز ثبت‌شده حساب Cold است.');
+    }
 
-    if (ctx.metrics.views7d === 0)
-      issues.push('• پروفایل بازدید ندارد — فاز Cold محدودیت نمایش داره');
+    if (issues.length === 0) {
+      return [
+        '❤️ علت کم بودن پاسخ یا لایک با داده‌های فعلی قابل تعیین نیست.',
+        'برای تحلیل دقیق‌تر به آمار معتبر بازدید، تعامل و وضعیت نمایش پروفایل نیاز داریم.',
+        ...(ctx.suggestedActions.length
+          ? [`پیشنهاد ثبت‌شده سیستم: ${ctx.suggestedActions[0]}`]
+          : []),
+      ].join('\n\n');
+    }
 
-    if (ctx.phase === 'cold')
-      issues.push('• فاز Cold: الگوریتم کمتر پروفایلت رو نمایش میده');
-
-    // اگر هیچ مشکل خاصی تشخیص داده نشد، راهنمایی عمومی بده
-    const mainIssues =
-      issues.length > 0
-        ? issues.join('\n')
-        : '• فعالیت کم در اپ\n• پیام‌های عمومی بدون شخصی‌سازی\n• ساعت نامناسب ارسال پیام (بهترین: ۲۰-۲۳)';
-
-    const suggestion =
-      ctx.suggestedActions[0] ?? 'پروفایل رو کامل کن و روزانه ۵ نفر رو لایک کن';
-
-    return `❤️ دلایل احتمالی کم بودن لایک:\n${mainIssues}\n\n💡 پیشنهاد: ${suggestion}`;
+    return [
+      '❤️ نشانه‌های قابل مشاهده (نه علت قطعی):',
+      issues.join('\n'),
+      ...(ctx.suggestedActions.length
+        ? ['', `💡 پیشنهاد ثبت‌شده: ${ctx.suggestedActions[0]}`]
+        : []),
+    ].join('\n');
   }
 
   private buildVisibilityResponse(ctx: UserContext): string {
     const reasons: string[] = [];
-    if (ctx.phase === 'cold')
-      reasons.push('• فاز Cold: فعالیت بیشتری نیاز دارید');
-    if (ctx.trustScore < 60)
-      reasons.push(`• اعتماد پایین (${ctx.trustScore}/100)`);
-    if (ctx.metrics.retentionDays < 3)
-      reasons.push('• فعالیت کم در ۷ روز اخیر');
-    if (ctx.metrics.boostUsed7d === 0) reasons.push('• بوست استفاده نشده');
-    const lines = [
-      'دلایل کمتر دیده شدن:',
-      ...(reasons.length ? reasons : ['• اطلاعات کافی برای تحلیل وجود ندارد']),
-    ];
-    if (ctx.suggestedActions.length > 0)
-      lines.push(`\nراه‌حل اول: ${ctx.suggestedActions[0]}`);
+    if (ctx.phase === 'cold') reasons.push('• فاز ثبت‌شده حساب Cold است.');
+    if (ctx.trustScore !== null && ctx.trustScore < 60) {
+      reasons.push(`• امتیاز اعتماد ثبت‌شده: ${ctx.trustScore}/100`);
+    }
+    if (ctx.metrics.retentionDays !== null && ctx.metrics.retentionDays < 3) {
+      reasons.push('• در کمتر از ۳ روز از ۷ روز اخیر فعالیت ثبت شده است.');
+    }
+    if (ctx.metrics.boostUsed7d === 0) reasons.push('• در ۷ روز اخیر بوستی ثبت نشده است.');
+    if (reasons.length === 0) {
+      reasons.push('• اطلاعات کافی برای شناسایی علت کمتر دیده‌شدن وجود ندارد.');
+    }
+    const lines = ['دلایل/نشانه‌های قابل مشاهده درباره نمایش پروفایل:', ...reasons];
+    if (ctx.suggestedActions.length > 0) {
+      lines.push(`\nپیشنهاد ثبت‌شده سیستم: ${ctx.suggestedActions[0]}`);
+    }
     return lines.join('\n');
   }
 
   private buildPaymentResponse(ctx: UserContext): string {
+    if (ctx.everPaid === null) {
+      return '💳 سابقه خرید شما در حال حاضر قابل راستی‌آزمایی نیست. برای بررسی اعتبار یا خرید، وضعیت کیف پول را در اپ مشاهده کنید.';
+    }
     return ctx.everPaid
-      ? '💳 اعتبار شما تمام شده یا قابلیت مورد نظر نیاز به اشتراک دارد.\nبرای شارژ اعتبار به بخش پرداخت مراجعه کنید.'
-      : '💳 برای ارسال پیام نیاز به اعتبار دارید.\nبا اولین خرید، می‌توانید پیام‌های نامحدود ارسال کنید.';
+      ? '💳 سابقه حداقل یک خرید موفق برای حساب شما ثبت شده است. برای وضعیت فعلی اعتبار، موجودی کیف پول را بررسی کنید.'
+      : '💳 سابقه خرید موفقی برای حساب شما ثبت نشده است. برای مشاهده امکانات و بسته‌ها، بخش پرداخت را بررسی کنید.';
   }
+
 }
