@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import logging
+import math
 import os
 from typing import Dict, List
 
@@ -67,8 +68,13 @@ class ModerationEngine:
     # ── API عمومی ──────────────────────────────────────────────────────────────
 
     async def moderate_text(self, text: str, context: str = "message") -> Dict:
-        if not text or not text.strip():
-            return {"allowed": True, "reason": None, "confidence": 1.0, "layer": "none"}
+        if not isinstance(text, str) or not text.strip():
+            return {
+                "allowed": False,
+                "reason": "invalid_input",
+                "confidence": 0.0,
+                "layer": "validation",
+            }
 
         text = text.strip()
         cache_key = hashlib.md5(f"{context}:{text}".encode()).hexdigest()
@@ -136,7 +142,17 @@ class ModerationEngine:
                     json={"text": text},
                 )
                 r.raise_for_status()
-                text_emb = r.json()["embedding"]
+                text_payload = r.json()
+                text_emb = text_payload.get("embedding") if isinstance(text_payload, dict) else None
+                if not isinstance(text_emb, list) or not text_emb:
+                    raise ValueError("embedding service returned an invalid text vector")
+                if any(
+                    isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not math.isfinite(float(value))
+                    for value in text_emb
+                ):
+                    raise ValueError("embedding service returned non-finite text vector values")
+                text_emb = [float(value) for value in text_emb]
 
                 # embedding همه exemplarها به صورت batch
                 r_batch = await client.post(
@@ -144,19 +160,44 @@ class ModerationEngine:
                     json={"texts": _BANNED_EXEMPLARS},
                 )
                 r_batch.raise_for_status()
-                exemplar_embs = r_batch.json()["embeddings"]
+                batch_payload = r_batch.json()
+                exemplar_embs = batch_payload.get("embeddings") if isinstance(batch_payload, dict) else None
+                if not isinstance(exemplar_embs, list) or len(exemplar_embs) != len(_BANNED_EXEMPLARS):
+                    raise ValueError("embedding service returned an incomplete exemplar batch")
 
-                # بررسی similarity با هر exemplar
+                validated_exemplars = []
+                for ex_emb in exemplar_embs:
+                    if not isinstance(ex_emb, list) or len(ex_emb) != len(text_emb):
+                        raise ValueError("embedding service returned an incompatible exemplar vector")
+                    if any(
+                        isinstance(value, bool) or not isinstance(value, (int, float))
+                        or not math.isfinite(float(value))
+                        for value in ex_emb
+                    ):
+                        raise ValueError("embedding service returned non-finite exemplar vector values")
+                    validated_exemplars.append([float(value) for value in ex_emb])
+
+                # بررسی similarity با همه exemplarها؛ هر پاسخ ناقص/نامعتبر fail-closed است.
                 max_sim = 0.0
                 matched_exemplar = None
 
-                for exemplar, ex_emb in zip(_BANNED_EXEMPLARS, exemplar_embs):
+                for exemplar, ex_emb in zip(_BANNED_EXEMPLARS, validated_exemplars):
                     r_sim = await client.post(
                         f"{EMBEDDING_SERVICE_URL}/similarity",
                         json={"vector_a": text_emb, "vector_b": ex_emb},
                     )
                     r_sim.raise_for_status()
-                    sim = r_sim.json()["similarity"]
+                    similarity_payload = r_sim.json()
+                    sim = similarity_payload.get("similarity") if isinstance(similarity_payload, dict) else None
+                    if (
+                        isinstance(sim, bool)
+                        or not isinstance(sim, (int, float))
+                        or not math.isfinite(float(sim))
+                        or float(sim) < -1.0
+                        or float(sim) > 1.0
+                    ):
+                        raise ValueError("embedding service returned an invalid similarity")
+                    sim = float(sim)
                     if sim > max_sim:
                         max_sim = sim
                         matched_exemplar = exemplar
