@@ -71,6 +71,7 @@ jobs:
           card-transfer.provider.spec.ts
           crypto.provider.spec.ts
           manual-verifier.service.spec.ts
+          wallet/verification/crypto-watcher.processor.spec.ts
           feature-store-rvenue.service.spec.ts
           ai-assistant/context/user-context.service.spec.ts
           moderation/moderation.service.spec.ts
