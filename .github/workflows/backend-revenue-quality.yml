@@ -72,6 +72,7 @@ jobs:
           crypto.provider.spec.ts
           manual-verifier.service.spec.ts
           feature-store-rvenue.service.spec.ts
+          ai-assistant/context/user-context.service.spec.ts
           database.config.spec.ts
 
       - name: MySQL wallet concurrency and rollback integration tests
