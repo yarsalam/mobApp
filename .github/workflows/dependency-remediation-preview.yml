@@ -1,0 +1,124 @@
+name: Backend dependency remediation preview
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - "src/app.controller.ts"
+      - "src/app.controller.spec.ts"
+      - "src/redis/redis.service.ts"
+      - ".github/workflows/dependency-remediation-preview.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  safe-remediation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Record dependency manifest base
+        run: git rev-parse HEAD:package.json > "$RUNNER_TEMP/base-package-json-sha"
+      - name: Apply targeted runtime fixes and semver-compatible security updates
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --save-exact bcrypt@6.0.0 sharp@0.35.5 --registry=https://registry.npmjs.org
+          node <<'NODE'
+          const fs = require('node:fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          pkg.overrides = {
+            ...(pkg.overrides || {}),
+            multer: '2.5.0',
+            'ip-address': '10.7.4',
+            'brace-expansion@1': '1.1.21',
+          };
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + String.fromCharCode(10));
+          NODE
+          npm install --package-lock-only --registry=https://registry.npmjs.org
+          set +e
+          npm audit fix --package-lock-only
+          status=$?
+          set -e
+          echo "npm audit fix exit code: ${status}"
+          echo "Targeted upgrades and non-forced lockfile updates will be retained only if install, build and unit tests pass."
+      - name: Install updated lockfile
+        run: npm ci
+      - name: Build backend
+        id: build
+        run: npm run build
+      - name: Run backend unit tests
+        id: tests
+        run: npm test -- --runInBand
+      - name: Generate production audit after remediation
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p security-remediation
+          npm audit --omit=dev --json > security-remediation/npm-audit-production.json || true
+          npm sbom --sbom-format cyclonedx > security-remediation/npm-sbom.cdx.json
+          cp package.json security-remediation/package.json
+          cp package-lock.json security-remediation/package-lock.json
+      - name: Enforce no critical/high production findings
+        if: always()
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync('security-remediation/npm-audit-production.json', 'utf8'));
+          const counts = report.metadata?.vulnerabilities ?? {};
+          const summary = [
+            '## Production dependency audit after semver-compatible remediation',
+            '',
+            '| Severity | Count |',
+            '|---|---:|',
+            ...['critical','high','moderate','low','info'].map(k => `| ${k} | ${counts[k] ?? 0} |`),
+            '',
+            `Total: ${counts.total ?? 0}`
+          ].join('\n');
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
+          if ((counts.critical ?? 0) > 0 || (counts.high ?? 0) > 0) process.exit(1);
+          NODE
+      - name: Commit tested dependency updates to the PR branch
+        if: always() && github.event_name == 'pull_request' && steps.build.outcome == 'success' && steps.tests.outcome == 'success'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          CANDIDATE_PACKAGE="$RUNNER_TEMP/package.json"
+          CANDIDATE_LOCK="$RUNNER_TEMP/package-lock.json"
+          BASE_PACKAGE_JSON_SHA="$(cat "$RUNNER_TEMP/base-package-json-sha")"
+          cp package.json "$CANDIDATE_PACKAGE"
+          cp package-lock.json "$CANDIDATE_LOCK"
+          git fetch origin "$HEAD_REF"
+          git checkout -B "$HEAD_REF" "origin/$HEAD_REF"
+          if [ "$(git rev-parse HEAD:package.json)" != "$BASE_PACKAGE_JSON_SHA" ]; then
+            echo "::error::package.json changed on the PR branch since this candidate was tested; refusing automatic commit."
+            exit 1
+          fi
+          cp "$CANDIDATE_PACKAGE" package.json
+          cp "$CANDIDATE_LOCK" package-lock.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          if git diff --cached --quiet; then
+            echo "No semver-compatible lockfile changes to commit."
+            exit 0
+          fi
+          git commit -m "fix(deps): apply tested semver-compatible security updates"
+          git push origin "HEAD:$HEAD_REF"
+      - name: Upload remediation candidate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-dependency-remediation-candidate
+          path: security-remediation/
+          retention-days: 30

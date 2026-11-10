@@ -8,7 +8,7 @@ import { Cron } from '@nestjs/schedule';
 import { PartitionedEvent } from './entities/partitioned-event.entity';
 import { LogEventDto } from './dto/log-event.dto';
 import { EventType } from 'src/user-event/type/event-type.enum';
-import { DataSource } from 'typeorm';
+import { DataSource, EntityManager } from 'typeorm';
 import { EventOutbox } from './entities/event-outbox.entity';
 
 @Injectable()
@@ -30,6 +30,79 @@ export class UserEventService {
 
     private readonly dataSource: DataSource,
   ) {}
+
+  /**
+   * Write an event and its outbox row inside a caller-owned transaction.
+   * Payment/entitlement services use this to commit the durable idempotency
+   * receipt in the same database transaction as the balance/entitlement change.
+   *
+   * Returns false when the stable idempotency key was already committed.
+   */
+  async logWithManager(
+    manager: EntityManager,
+    eventData: LogEventDto,
+  ): Promise<boolean> {
+    if (!Number.isSafeInteger(eventData.userId) || eventData.userId <= 0) {
+      throw new Error('Invalid userId');
+    }
+    if (!eventData.type) throw new Error('Event type is required');
+
+    const key = eventData.idempotencyKey?.trim();
+    if (key && key.length > 128) {
+      throw new Error('idempotencyKey must not exceed 128 characters');
+    }
+
+    const events = manager.getRepository(PartitionedEvent);
+    const outbox = manager.getRepository(EventOutbox);
+
+    if (key) {
+      const existing = await events.findOne({
+        where: { userId: eventData.userId, idempotencyKey: key },
+      });
+      if (existing) {
+        const outboxExists = await outbox.findOne({
+          where: { eventId: existing.id },
+        });
+        if (!outboxExists) {
+          await outbox.save(
+            outbox.create({
+              eventId: existing.id,
+              userId: existing.userId,
+              type: existing.type,
+              status: 'pending',
+            }),
+          );
+        }
+        return false;
+      }
+    }
+
+    const event = await events.save(
+      events.create({
+        userId: eventData.userId,
+        targetUserId: eventData.targetUserId ?? undefined,
+        type: eventData.type,
+        sessionId: eventData.sessionId,
+        metadata: eventData.metadata,
+        value: eventData.value,
+        currency: eventData.currency,
+        duration: eventData.duration,
+        platform: eventData.platform,
+        country: eventData.country,
+        idempotencyKey: key || null,
+      }),
+    );
+
+    await outbox.save(
+      outbox.create({
+        eventId: event.id,
+        userId: event.userId,
+        type: event.type,
+        status: 'pending',
+      }),
+    );
+    return true;
+  }
 
   async log(eventData: LogEventDto): Promise<void> {
     if (!Number.isSafeInteger(eventData.userId) || eventData.userId <= 0) {

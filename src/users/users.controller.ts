@@ -1,5 +1,6 @@
 import {
   Controller,
+  ForbiddenException,
   Get,
   Post,
   Body,
@@ -34,8 +35,16 @@ export class UsersController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
-    return this.usersService.update(+id, updateUserDto);
+  @UseGuards(JwtAuthGuard)
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() updateUserDto: UpdateUserDto,
+    @Req() req,
+  ) {
+    if (id !== this.authenticatedUserId(req)) {
+      throw new ForbiddenException('فقط می‌توانید پروفایل خود را ویرایش کنید');
+    }
+    return this.usersService.update(id, updateUserDto);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -99,15 +108,43 @@ export class UsersController {
     return this.usersService.findFullProfile(id);
   }
 
+  private authenticatedUserId(req: { user?: { sub?: string | number } }): number {
+    const userId = Number(req.user?.sub);
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      throw new ForbiddenException('شناسه کاربر احراز هویت‌شده معتبر نیست');
+    }
+    return userId;
+  }
+
+  @Patch('me/suspend')
+  @UseGuards(JwtAuthGuard)
+  async suspendMyAccount(@Req() req) {
+    return this.usersService.suspendAccount(this.authenticatedUserId(req));
+  }
+
+  @Patch('me/resign')
+  @UseGuards(JwtAuthGuard)
+  async resignMyAccount(@Req() req) {
+    return this.usersService.resignAccount(this.authenticatedUserId(req));
+  }
+
+  // Keep the legacy routes, but never allow an authenticated user to mutate
+  // another account by substituting a different ID in the URL.
   @Patch(':id/suspend')
   @UseGuards(JwtAuthGuard)
-  async suspendAccount(@Param('id', ParseIntPipe) id: number) {
+  async suspendAccount(@Param('id', ParseIntPipe) id: number, @Req() req) {
+    if (id !== this.authenticatedUserId(req)) {
+      throw new ForbiddenException('فقط می‌توانید حساب خود را تعلیق کنید');
+    }
     return this.usersService.suspendAccount(id);
   }
 
   @Patch(':id/resign')
   @UseGuards(JwtAuthGuard)
-  async resignAccount(@Param('id', ParseIntPipe) id: number) {
+  async resignAccount(@Param('id', ParseIntPipe) id: number, @Req() req) {
+    if (id !== this.authenticatedUserId(req)) {
+      throw new ForbiddenException('فقط می‌توانید حساب خود را غیرفعال کنید');
+    }
     return this.usersService.resignAccount(id);
   }
 }

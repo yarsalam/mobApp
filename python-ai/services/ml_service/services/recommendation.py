@@ -1,10 +1,13 @@
 import json
 import logging
-from typing import List, Dict, Optional
+import math
+from datetime import datetime, timezone
+from typing import Dict, List, Optional
+
 import numpy as np
-from core.embedding_client import EmbeddingClient
-from core.redis_client import redis_client
+
 from core.config import settings
+from core.embedding_client import EmbeddingClient
 
 logger = logging.getLogger(__name__)
 
@@ -22,151 +25,217 @@ class RecommendationService:
 
         keys = [f"emb:user:{uid}" for uid in user_ids]
         raw_values = await self.redis.mget(keys)
-
-        result = {}
+        result: Dict[int, Optional[list]] = {}
         for uid, raw in zip(user_ids, raw_values):
-            result[uid] = json.loads(raw) if raw else None
+            try:
+                result[uid] = json.loads(raw) if raw else None
+            except (TypeError, ValueError, json.JSONDecodeError):
+                logger.warning("Ignoring malformed cached embedding for entity %s", uid)
+                result[uid] = None
         return result
 
-    async def _get_revenue_signals_batch(self, user_ids: List[int]) -> Dict[int, float]:
-        """Batch revenue signals"""
+    async def _get_revenue_signals_batch(
+        self, user_ids: List[int]
+    ) -> Dict[int, Optional[float]]:
+        """Return only observed, finite revenue signals; missing is not a score."""
         if not user_ids:
             return {}
         keys = [f"revenue:potential:{uid}" for uid in user_ids]
         raw_values = await self.redis.mget(keys)
 
-        result = {}
+        result: Dict[int, Optional[float]] = {}
         for uid, raw in zip(user_ids, raw_values):
-            result[uid] = float(raw) if raw else 0.35
+            if raw is None:
+                result[uid] = None
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                result[uid] = None
+                continue
+            result[uid] = value if math.isfinite(value) and 0.0 <= value <= 1.0 else None
         return result
 
     def _compute_similarities_vectorized(
         self, user_emb: list, candidate_embs: List[list]
-    ) -> List[float]:
+    ) -> List[Optional[float]]:
         if not candidate_embs:
             return []
 
-        user_vec = np.array(user_emb, dtype=np.float32).reshape(1, -1)
-        cand_matrix = np.array(candidate_embs, dtype=np.float32)
+        try:
+            user_vec = np.asarray(user_emb, dtype=np.float32).reshape(1, -1)
+            cand_matrix = np.asarray(candidate_embs, dtype=np.float32)
+            if cand_matrix.ndim != 2 or cand_matrix.shape[1] != user_vec.shape[1]:
+                return [None] * len(candidate_embs)
+            if not np.isfinite(user_vec).all() or not np.isfinite(cand_matrix).all():
+                return [None] * len(candidate_embs)
+        except (TypeError, ValueError):
+            return [None] * len(candidate_embs)
 
-        user_norm = np.linalg.norm(user_vec)
-        if user_norm == 0:
-            return [0.0] * len(candidate_embs)
+        user_norm = float(np.linalg.norm(user_vec))
+        if not math.isfinite(user_norm) or user_norm <= 0:
+            return [None] * len(candidate_embs)
 
-        norms = np.linalg.norm(cand_matrix, axis=1, keepdims=True)
-        norms[norms == 0] = 1e-10
-
-        similarities = (cand_matrix @ user_vec.T).flatten() / (
-            norms.flatten() * user_norm
-        )
-        return np.nan_to_num(similarities, nan=0.0).tolist()
+        norms = np.linalg.norm(cand_matrix, axis=1)
+        dot_products = (cand_matrix @ user_vec.T).flatten()
+        results: List[Optional[float]] = []
+        for dot, norm in zip(dot_products, norms):
+            if not math.isfinite(float(norm)) or norm <= 0:
+                results.append(None)
+                continue
+            score = float(dot / (norm * user_norm))
+            results.append(score if math.isfinite(score) else None)
+        return results
 
     async def get_recommendations(
         self, user_id: int, candidate_ids: List[int], limit: int = None
     ):
         limit = min(limit or settings.DEFAULT_LIMIT, settings.MAX_LIMIT)
+        candidate_ids = list(dict.fromkeys(
+            candidate_id for candidate_id in candidate_ids[: settings.MAX_CANDIDATES]
+            if candidate_id != user_id
+        ))
         if not candidate_ids:
-            raise ValueError("candidates required")
-
-        # Batch everything
-        all_ids = list(set([user_id] + candidate_ids[: settings.MAX_CANDIDATES]))
-        embeddings = await self._get_embeddings_batch(all_ids)
-        revenue_signals = await self._get_revenue_signals_batch(all_ids)
-
-        user_emb = embeddings.get(user_id)
-
-        # === Cold Start واقعی ===
-        if not user_emb:
-            popular = await self._get_cold_start_recommendations(user_id, limit)
             return {
-                "recommendations": popular[:limit],
-                "cold_start": True,
-                "fallback": "personalized_cold_start",
-                "message": "Personalization warming up...",
+                "recommendations": [],
+                "cold_start": False,
+                "status": "no_candidates",
+                "total_scored": 0,
             }
 
-        # Vectorized processing
-        candidate_ids = candidate_ids[: settings.MAX_CANDIDATES]
-        candidate_embs = [
-            embeddings[cid] for cid in candidate_ids if embeddings.get(cid)
-        ]
-        actual_cids = [cid for cid in candidate_ids if embeddings.get(cid)]
+        all_ids = list(dict.fromkeys([user_id] + candidate_ids))
+        embeddings = await self._get_embeddings_batch(all_ids)
+        revenue_signals = await self._get_revenue_signals_batch(candidate_ids)
+        user_emb = embeddings.get(user_id)
 
-        if not candidate_embs:
-            return {"recommendations": [], "cold_start": False}
+        if not user_emb:
+            popular = await self._get_cold_start_recommendations(
+                user_id, candidate_ids, limit
+            )
+            return {
+                "recommendations": popular,
+                "cold_start": True,
+                "fallback": "observed_popularity" if popular else "none",
+                "status": "ok" if popular else "insufficient_data",
+                "message": (
+                    "Using observed popularity for eligible candidates."
+                    if popular else
+                    "No user embedding or observed popularity data is available."
+                ),
+            }
 
-        sim_scores = self._compute_similarities_vectorized(user_emb, candidate_embs)
+        actual_ids = [candidate_id for candidate_id in candidate_ids if embeddings.get(candidate_id)]
+        candidate_embs = [embeddings[candidate_id] for candidate_id in actual_ids]
+        similarities = self._compute_similarities_vectorized(user_emb, candidate_embs)
 
         results = []
-        for cid, sim in zip(actual_cids, sim_scores):
-            revenue = revenue_signals.get(cid, 0.35)
-            engagement = 0.5  # بعداً از cache user-event
+        for candidate_id, similarity in zip(actual_ids, similarities):
+            if similarity is None:
+                continue
 
-            final_score = (
-                settings.RECOMMENDATION_WEIGHTS["embedding"] * sim
-                + settings.RECOMMENDATION_WEIGHTS["revenue"] * revenue
-                + settings.RECOMMENDATION_WEIGHTS["engagement"] * engagement
-            )
+            # Match compatibility is computed only from compatibility evidence.
+            # Commercial propensity is retained as a separate business signal and
+            # must never raise or lower a person's position in another user's matches.
+            revenue = revenue_signals.get(candidate_id)
+            compatibility_score = float(similarity)
 
-            results.append(
-                {
-                    "user_id": cid,
-                    "score": round(final_score, 4),
-                    "similarity": round(sim, 4),
-                    "revenue_potential": round(revenue, 4),
-                }
-            )
+            result = {
+                "user_id": candidate_id,
+                "score": round(compatibility_score, 4),
+                "similarity": round(compatibility_score, 4),
+                "revenue_potential": round(float(revenue), 4) if revenue is not None else None,
+                "score_type": "compatibility_similarity",
+                "score_components": {
+                    "embedding": round(compatibility_score, 4),
+                },
+                "business_signals": (
+                    {"revenue_potential": round(float(revenue), 4)}
+                    if revenue is not None else {}
+                ),
+                "explanation": ["embedding_similarity"],
+            }
+            results.append(result)
 
-        results.sort(key=lambda x: x["score"], reverse=True)
+        results.sort(key=lambda item: item["score"], reverse=True)
         return {
             "recommendations": results[:limit],
             "cold_start": False,
+            "status": "ok" if results else "insufficient_data",
             "total_scored": len(results),
+            "excluded_count": len(candidate_ids) - len(actual_ids),
         }
 
     async def _get_popular_fallback(self) -> List[Dict]:
-        """Fallback برای Cold Start"""
+        """Return validated observed popularity data; never invent candidate IDs."""
         raw = await self.redis.get(settings.POPULAR_USERS_KEY)
-        if raw:
-            return json.loads(raw)[:50]
-        # Default fallback (بعداً cron job محبوب‌ها را آپدیت کند)
-        return [
-            {"user_id": i, "score": 0.85, "reason": "popular"} for i in range(1, 51)
-        ]
+        if not raw:
+            return []
+        try:
+            records = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            logger.warning("Ignoring malformed observed-popularity cache")
+            return []
+        if not isinstance(records, list):
+            return []
 
-    async def predict_match_score(self, user_a: int, user_b: int) -> float:
+        valid_records = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            try:
+                candidate_id = int(record.get("user_id"))
+                score = float(record.get("score"))
+            except (TypeError, ValueError):
+                continue
+            if candidate_id <= 0 or not math.isfinite(score):
+                continue
+            valid_records.append({
+                "user_id": candidate_id,
+                "score": score,
+                "reason": "observed_popularity",
+            })
+        return valid_records[: settings.MAX_CANDIDATES]
+
+    async def predict_match_score(
+        self, user_a: int, user_b: int
+    ) -> Optional[float]:
         embeddings = await self._get_embeddings_batch([user_a, user_b])
         emb_a = embeddings.get(user_a)
         emb_b = embeddings.get(user_b)
         if not emb_a or not emb_b:
-            return 0.45
-        return self._compute_similarities_vectorized(emb_a, [emb_b])[0]
+            return None
+        scores = self._compute_similarities_vectorized(emb_a, [emb_b])
+        return scores[0] if scores else None
 
     async def track_events(self, payload: dict):
-        """Event tracking با Redis Stream"""
+        """Persist the legacy event payload or raise so the API never falsely acknowledges loss."""
         try:
             await self.redis.xadd(
                 "ml:training:events",
                 {
                     "payload": json.dumps(payload),
-                    "ts": str(__import__("datetime").datetime.utcnow()),
+                    "ts": datetime.now(timezone.utc).isoformat(),
                 },
-                maxlen=100000,
+                maxlen=settings.STREAM_MAXLEN,
                 approximate=True,
             )
-            logger.info(
-                f"Tracked {len(payload.get('events', []))} events to Redis Stream"
-            )
-        except Exception as e:
-            logger.error(f"Failed to track events: {e}")
+        except Exception as exc:
+            logger.exception("Failed to persist recommendation events")
+            raise RuntimeError("recommendation_event_persistence_failed") from exc
+
+        logger.info(
+            "Tracked %s events to Redis Stream",
+            len(payload.get("events", [])) if isinstance(payload, dict) else 0,
+        )
 
     async def _get_cold_start_recommendations(
-        self, user_id: int, limit: int
+        self, user_id: int, candidate_ids: List[int], limit: int
     ) -> List[Dict]:
-        # 1. Same city / language / age (از Redis cache)
-        # 2. Popular global
-        # 3. High engagement
-
-        # فعلاً ساده (بعداً با user metadata کامل می‌شود)
-        popular = await self._get_popular_fallback()
-        return popular[:limit]
+        allowed_ids = set(candidate_ids)
+        observed = await self._get_popular_fallback()
+        eligible = [
+            item for item in observed
+            if item["user_id"] in allowed_ids and item["user_id"] != user_id
+        ]
+        eligible.sort(key=lambda item: item["score"], reverse=True)
+        return eligible[:limit]

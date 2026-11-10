@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Payment } from 'src/payments/entities/payment.entity';
 import { PaymentsService } from 'src/payments/payments.service';
+import { WalletService } from '../wallet.service';
 /**
  * EntitlementService — لایه بین Payment و grantBundle.
  *
@@ -14,11 +15,34 @@ export class EntitlementService {
 
   constructor(private readonly paymentsService: PaymentsService) {}
 
-  async grantFromPayment(payment: Payment): Promise<void> {
+  async grantFromPayment(payment: Payment, amountRials?: number): Promise<void> {
+    if (payment.productCode === 'wallet_charge') {
+      // Wallet top-ups are credited by the payment verifier, not granted as a bundle.
+      return;
+    }
+
+    const normalizedAmountRials =
+      amountRials ?? (payment.currency === 'IRT'
+        ? Number(payment.amount)
+        : payment.currency === 'USDT'
+          ? WalletService.usdtCentsToRials(Number(payment.amount))
+          : null);
+
+    if (!Number.isSafeInteger(normalizedAmountRials) || Number(normalizedAmountRials) <= 0) {
+      throw new Error(
+        `Cannot grant paid bundle ${payment.productCode}: payment currency/unit is not safely convertible to IRT rials`,
+      );
+    }
+
     try {
       await this.paymentsService.grantBundle(
         payment.userId,
         payment.productCode,
+        {
+          amountRials: Number(normalizedAmountRials),
+          source: 'payment',
+          idempotencyKey: `payment:${payment.id}:bundle`,
+        },
       );
       this.logger.log(
         `Entitlement granted: user=${payment.userId} bundle=${payment.productCode}`,

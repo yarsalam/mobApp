@@ -46,6 +46,13 @@ export class CryptoWatcherProcessor extends WorkerHost {
   }
 
   private async checkAllPending(): Promise<void> {
+    // Recover claims left behind by a crashed worker. Settlement effects use
+    // durable idempotency receipts, so replay is safe even after partial work.
+    await this.paymentRepo.update(
+      { method: 'crypto_usdt', status: 'processing', updatedAt: LessThan(new Date(Date.now() - 10 * 60 * 1000)) },
+      { status: 'pending' },
+    );
+
     const pending = await this.paymentRepo.find({
       where: {
         method: 'crypto_usdt',
@@ -70,7 +77,8 @@ export class CryptoWatcherProcessor extends WorkerHost {
       .createQueryBuilder()
       .update(Payment)
       .set({ status: 'expired' })
-      .where('status = :s AND expiresAt < :now', {
+      .where('method = :method AND status = :s AND expiresAt < :now', {
+        method: 'crypto_usdt',
         s: 'pending',
         now: new Date(),
       })
@@ -78,33 +86,74 @@ export class CryptoWatcherProcessor extends WorkerHost {
   }
 
   private async checkSinglePayment(paymentId: number): Promise<void> {
-    const payment = await this.paymentRepo.findOne({
-      where: { id: paymentId, status: 'pending' },
-    });
+    // Atomic claim: only one active verifier can move this payment from pending
+    // to processing. A worker that lost the claim performs no external effects.
+    const claim = await this.paymentRepo.update(
+      { id: paymentId, method: 'crypto_usdt', status: 'pending' },
+      { status: 'processing' },
+    );
+    if (!claim.affected) return;
 
+    const payment = await this.paymentRepo.findOne({
+      where: { id: paymentId, method: 'crypto_usdt', status: 'processing' },
+    });
     if (!payment) return;
 
-    const confirmed = this.isMock
-      ? await this.mockCheck(payment)
-      : await this.checkTronGrid(payment);
+    try {
+      const confirmed = this.isMock
+        ? await this.mockCheck(payment)
+        : await this.checkTronGrid(payment);
 
-    if (confirmed) {
-      await this.walletService.credit(
-        payment.userId,
-        payment.amount,
-        `payment:${payment.id}`,
-      );
+      if (!confirmed) {
+        await this.paymentRepo.update(
+          { id: paymentId, status: 'processing' },
+          { status: 'pending' },
+        );
+        return;
+      }
 
-      await this.entitlementService.grantFromPayment(payment);
+      if (payment.currency !== 'USDT') {
+        throw new Error(
+          `Unsupported crypto wallet credit currency: ${payment.currency}`,
+        );
+      }
 
-      await this.paymentRepo.update(
-        { id: paymentId },
+      // Payment.amount is stored in USDT cents, while the wallet balance is IRT rials.
+      const amountRials = WalletService.usdtCentsToRials(Number(payment.amount));
+
+      if (payment.productCode === 'wallet_charge') {
+        await this.walletService.creditOnce(
+          payment.userId,
+          amountRials,
+          `payment:${payment.id}`,
+          `payment:${payment.id}:wallet-credit`,
+        );
+      } else {
+        await this.entitlementService.grantFromPayment(payment, amountRials);
+      }
+
+      const settled = await this.paymentRepo.update(
+        { id: paymentId, status: 'processing' },
         { status: 'paid', confirmedAt: new Date() },
       );
+      if (!settled.affected) {
+        const latest = await this.paymentRepo.findOne({ where: { id: paymentId } });
+        if (latest?.status !== 'paid') {
+          throw new Error(`Payment ${paymentId} lost its processing claim before settlement`);
+        }
+      }
 
       this.logger.log(
-        `Crypto payment ${paymentId} confirmed for user ${payment.userId}`,
+        `Crypto payment ${paymentId} confirmed for user ${payment.userId}; credited/granted value=${amountRials} IRT rials`,
       );
+    } catch (error: unknown) {
+      // Leave the payment retryable. Any completed credit/entitlement step is
+      // protected by its own stable idempotency receipt.
+      await this.paymentRepo.update(
+        { id: paymentId, status: 'processing' },
+        { status: 'pending' },
+      );
+      throw error;
     }
   }
 
@@ -127,23 +176,44 @@ export class CryptoWatcherProcessor extends WorkerHost {
       );
 
       const txs: any[] = response.data?.data || [];
-      const amountUsdt = payment.amount / 100; // سنت به USDT
+      const expectedMicroUsdt = BigInt(Number(payment.amount)) * 10_000n;
 
       for (const tx of txs) {
-        const txAmount = Number(tx.value) / 1_000_000; // USDT decimals=6
-        const txTime = tx.block_timestamp;
-
         if (
-          txAmount >= amountUsdt &&
-          txTime > payment.createdAt.getTime() &&
-          tx.to === payment.walletAddress
+          typeof tx.transaction_id !== 'string' ||
+          typeof tx.value !== 'string' ||
+          !/^[0-9]+$/.test(tx.value)
         ) {
-          await this.paymentRepo.update(
-            { id: payment.id },
-            { txHash: tx.transaction_id },
-          );
-          return true;
+          continue;
         }
+
+        const txTime = Number(tx.block_timestamp);
+        if (
+          !Number.isFinite(txTime) ||
+          txTime <= payment.createdAt.getTime() ||
+          String(tx.to).toLowerCase() !== String(payment.walletAddress).toLowerCase()
+        ) {
+          continue;
+        }
+
+        // One on-chain transfer can settle only one payment. Overpayments are
+        // held for manual reconciliation instead of being silently over-credited.
+        const existingPayment = await this.paymentRepo.findOne({
+          where: { txHash: tx.transaction_id },
+        });
+        if (existingPayment && existingPayment.id !== payment.id) {
+          continue;
+        }
+
+        if (BigInt(tx.value) !== expectedMicroUsdt) {
+          continue;
+        }
+
+        await this.paymentRepo.update(
+          { id: payment.id, status: 'processing' },
+          { txHash: tx.transaction_id },
+        );
+        return true;
       }
     } catch (err) {
       this.logger.error(`TronGrid check failed: ${err.message}`);

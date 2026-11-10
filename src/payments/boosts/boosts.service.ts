@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { PartitionedEvent } from 'src/user-event/entities/partitioned-event.entity';
 import { UserBoost } from './entities/user-boost.entity';
 import { PaywallException } from '../paywall/paywall.exception';
 import { PhaseService } from '../../phase/phase.service';
@@ -16,6 +17,7 @@ export class BoostService {
     private readonly phaseService: PhaseService,
     private readonly userEventService: UserEventService,
     private readonly boostQueueService: BoostQueueService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async get(userId: number) {
@@ -101,6 +103,67 @@ export class BoostService {
       'instantCount',
       count,
     );
+    return this.get(userId);
+  }
+
+  /**
+   * Idempotent bundle grant. The boost increment and durable receipt share one
+   * transaction, so retrying a partially fulfilled bundle cannot add boosts twice.
+   */
+  async grantInstantOnce(
+    userId: number,
+    count: number,
+    idempotencyKey: string,
+    bundleCode: string,
+  ) {
+    if (!Number.isSafeInteger(count) || count <= 0) {
+      throw new Error('Boost grant count must be a positive safe integer');
+    }
+    if (!idempotencyKey?.trim() || idempotencyKey.length > 128) {
+      throw new Error('A stable idempotency key is required for boost grants');
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      const events = manager.getRepository(PartitionedEvent);
+      const existing = await events.findOne({
+        where: { userId, idempotencyKey },
+      });
+      if (existing) {
+        const metadata = existing.metadata ?? {};
+        if (
+          existing.type !== EventType.PURCHASE ||
+          metadata.entitlement !== 'boost' ||
+          Number(metadata.amount) !== count ||
+          metadata.bundleCode !== bundleCode
+        ) {
+          throw new Error('Idempotency key was already used for a different boost grant');
+        }
+        return;
+      }
+
+      const boosts = manager.getRepository(UserBoost);
+      await boosts
+        .createQueryBuilder()
+        .insert()
+        .values({ user: { id: userId } as any, instantCount: 0 })
+        .orIgnore()
+        .execute();
+      await boosts.increment({ user: { id: userId } } as any, 'instantCount', count);
+
+      await this.userEventService.logWithManager(manager, {
+        userId,
+        type: EventType.PURCHASE,
+        metadata: {
+          entitlement: 'boost',
+          amount: count,
+          bundleCode,
+          source: 'bundle_fulfillment_receipt',
+          isCommercialPurchase: false,
+        },
+        idempotencyKey,
+      });
+    });
+
     return this.get(userId);
   }
 

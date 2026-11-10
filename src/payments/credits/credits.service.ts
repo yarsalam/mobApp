@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { PartitionedEvent } from 'src/user-event/entities/partitioned-event.entity';
 import { UserCredits } from './entities/user-credits.entity';
 import { UserEventService } from 'src/user-event/user-event.service';
 import { PaywallException } from '../paywall/paywall.exception';
@@ -14,6 +15,7 @@ export class CreditsService {
     private readonly repo: Repository<UserCredits>,
     private readonly userEventService: UserEventService,
     private readonly boostQueueService: BoostQueueService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async get(userId: number) {
@@ -56,6 +58,62 @@ export class CreditsService {
     });
 
     return this.get(userId);
+  }
+
+  /**
+   * Purchase-specific grant with a durable receipt committed atomically with
+   * the balance increment. Safe to resume after a worker/process crash.
+   */
+  async grantOnce(userId: number, amount: number, idempotencyKey: string) {
+    if (!Number.isSafeInteger(amount) || amount <= 0) {
+      throw new Error('Credit grant amount must be a positive safe integer');
+    }
+    if (!idempotencyKey?.trim() || idempotencyKey.length > 128) {
+      throw new Error('A stable idempotency key is required for credit grants');
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      const events = manager.getRepository(PartitionedEvent);
+      const existing = await events.findOne({
+        where: { userId, idempotencyKey },
+      });
+      if (existing) {
+        const metadata = existing.metadata ?? {};
+        if (
+          existing.type !== EventType.CREDITS_GRANTED ||
+          Number(metadata.amount) !== amount ||
+          metadata.source !== 'bundle_fulfillment'
+        ) {
+          throw new Error('Idempotency key was already used for a different credit grant');
+        }
+        return;
+      }
+
+      const credits = manager.getRepository(UserCredits);
+      await credits
+        .createQueryBuilder()
+        .insert()
+        .values({ userId, balance: 0 })
+        .orIgnore()
+        .execute();
+      await credits.increment({ userId }, 'balance', amount);
+
+      const saved = await credits.findOne({ where: { userId } });
+      await this.userEventService.logWithManager(manager, {
+        userId,
+        type: EventType.CREDITS_GRANTED,
+        metadata: { amount, source: 'bundle_fulfillment', balance: saved?.balance ?? null },
+        idempotencyKey,
+      });
+    });
+
+    const saved = await this.get(userId);
+    // Queue side effects are safe to repeat; this also repairs a lost enqueue
+    // if the process stopped after committing the entitlement transaction.
+    if (saved.balance >= 100) {
+      await this.boostQueueService.enqueueHighCredit(userId, saved.balance);
+    }
+    return saved;
   }
 
   async grant(userId: number, amount: number) {

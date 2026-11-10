@@ -72,13 +72,13 @@ export class RevenueTrendService {
     const rows: { day: string; amount: string; cnt: string }[] =
       await this.paymentRepo
         .createQueryBuilder('p')
-        .select('DATE(p.createdAt)', 'day')
+        .select('DATE(COALESCE(p.confirmedAt, p.createdAt))', 'day')
         .addSelect('SUM(p.amount)', 'amount')
         .addSelect('COUNT(*)', 'cnt')
         .where('p.status = :status', { status: 'paid' })
         .andWhere('p.currency = :currency', { currency })
-        .andWhere('p.createdAt >= :since', { since })
-        .groupBy('DATE(p.createdAt)')
+        .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :since', { since })
+        .groupBy('DATE(COALESCE(p.confirmedAt, p.createdAt))')
         .getRawMany();
 
     const buckets = new Map<string, MonthlyRevenuePoint>();
@@ -139,15 +139,15 @@ export class RevenueTrendService {
 
     const rows: { day: string; amount: string }[] = await this.paymentRepo
       .createQueryBuilder('p')
-      .select('DATE(p.createdAt)', 'day')
+      .select('DATE(COALESCE(p.confirmedAt, p.createdAt))', 'day')
       .addSelect('SUM(p.amount)', 'amount')
       .where('p.status = :status', { status: 'paid' })
       .andWhere('p.currency = :currency', { currency })
-      .andWhere('p.createdAt >= :start', { start })
-      .andWhere('p.createdAt < :end', {
+      .andWhere('COALESCE(p.confirmedAt, p.createdAt) >= :start', { start })
+      .andWhere('COALESCE(p.confirmedAt, p.createdAt) < :end', {
         end: new Date(today.getTime() + 24 * 60 * 60 * 1000),
       })
-      .groupBy('DATE(p.createdAt)')
+      .groupBy('DATE(COALESCE(p.confirmedAt, p.createdAt))')
       .orderBy('day', 'ASC')
       .getRawMany();
 

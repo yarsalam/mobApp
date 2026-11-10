@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Payment } from 'src/payments/entities/payment.entity';
 import { EventType } from 'src/user-event/type/event-type.enum';
@@ -37,6 +37,19 @@ export class CardTransferProvider {
     productCode: string,
     amountRials: number,
   ): Promise<CardTransferInitResult> {
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      throw new BadRequestException('Invalid userId');
+    }
+    if (!Number.isSafeInteger(amountRials) || amountRials <= 0) {
+      throw new BadRequestException('amountRials must be a positive safe integer');
+    }
+    const normalizedCard = this.DESTINATION_CARD.replace(/[\s-]/g, '');
+    if (!/^\d{16}$/.test(normalizedCard)) {
+      throw new ServiceUnavailableException(
+        'Card transfer is not configured. Contact support or use another payment method.',
+      );
+    }
+
     const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 دقیقه
 
     const payment = this.paymentRepo.create({
@@ -47,7 +60,7 @@ export class CardTransferProvider {
       method: 'manual_card',
       status: 'pending',
       expiresAt,
-      metadata: { cardNumber: this.DESTINATION_CARD },
+      metadata: { cardNumber: normalizedCard },
     });
 
     await this.paymentRepo.save(payment);
@@ -68,7 +81,7 @@ export class CardTransferProvider {
 
     return {
       paymentId: payment.id,
-      cardNumber: this.DESTINATION_CARD,
+      cardNumber: normalizedCard,
       accountHolder: this.ACCOUNT_HOLDER,
       amount: amountRials,
       currency: 'IRT',
@@ -79,18 +92,48 @@ export class CardTransferProvider {
   /**
    * کاربر رسید آپلود کرد — منتظر تأیید ادمین.
    */
-  async submitProof(paymentId: number, proofUrl: string): Promise<void> {
+  async submitProof(
+    paymentId: number,
+    userId: number,
+    proofUrl: string,
+  ): Promise<void> {
+    const normalizedProofUrl = typeof proofUrl === 'string' ? proofUrl.trim() : '';
+    if (!normalizedProofUrl || normalizedProofUrl.length > 2048) {
+      throw new BadRequestException('A valid proof reference is required');
+    }
+
+    // Scope both the read and the write to the authenticated owner. The
+    // conditional update also prevents a late proof upload from overwriting a
+    // payment that an admin/worker has already moved out of pending state.
     const payment = await this.paymentRepo.findOne({
-      where: { id: paymentId, status: 'pending' },
+      where: {
+        id: paymentId,
+        userId,
+        status: 'pending',
+        method: 'manual_card',
+      },
     });
-    if (!payment) return;
+    if (!payment) {
+      throw new NotFoundException('Pending payment not found');
+    }
 
-    payment.proofUrl = proofUrl;
-    payment.metadata = {
-      ...(payment.metadata ?? {}),
-      proofSubmittedAt: new Date().toISOString(),
-    };
-
-    await this.paymentRepo.save(payment);
+    const result = await this.paymentRepo.update(
+      {
+        id: paymentId,
+        userId,
+        status: 'pending',
+        method: 'manual_card',
+      },
+      {
+        proofUrl: normalizedProofUrl,
+        metadata: {
+          ...(payment.metadata ?? {}),
+          proofSubmittedAt: new Date().toISOString(),
+        } as any,
+      },
+    );
+    if (!result.affected) {
+      throw new NotFoundException('Pending payment not found');
+    }
   }
 }

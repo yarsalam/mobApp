@@ -216,21 +216,14 @@ export class RevenueScorerService {
             ? matchProbability * responseProbability * purchaseProbability * ltv
             : 0;
 
-        // درآمد فقط وقتی وارد رتبه‌بندی می‌شود که دادهٔ LTV موجود باشد.
-        // log1p مانع سلطهٔ مقادیر درآمدی بسیار بزرگ بر امتیاز می‌شود.
+        // Monetization is retained as a separate business-intelligence signal.
+        // It must never improve or reduce a person's match ranking.
         const businessSignal =
           ltv > 0 ? this.clamp(Math.log1p(expectedRevenue) / 10, 0, 1) : 0;
 
-        // سازگاری رابطه‌ای همچنان عامل اصلی است.
-        // درآمد حداکثر 3 درصد وزن دارد.
-        const revenueWeight = ltv > 0 ? 0.03 : 0;
-
-        const decisionScore = this.clamp(
-          compatibilityScore * (1 - revenueWeight) +
-            businessSignal * revenueWeight,
-          0,
-          1,
-        );
+        // Candidate ordering is exclusively relationship compatibility.
+        // Revenue, LTV and purchase probability are intentionally excluded.
+        const decisionScore = compatibilityScore;
 
         const confidence = this.calculateConfidence(userFeatures, candidate);
 
@@ -304,6 +297,12 @@ export class RevenueScorerService {
   private vectorAgreement(a: number[], b: number[]): number {
     if (!a.length || !b.length) return 0.5;
 
+    // All-zero personality segment means no validated questionnaire evidence.
+    // Treat the missing comparison neutrally instead of rewarding two unknowns.
+    const hasUsableValues = (vector: number[]) =>
+      vector.some((value) => Number.isFinite(value) && value !== 0);
+    if (!hasUsableValues(a) || !hasUsableValues(b)) return 0.5;
+
     const length = Math.min(a.length, b.length);
 
     if (length === 0) return 0.5;
@@ -361,7 +360,14 @@ export class RevenueScorerService {
     const checks = [
       [user.profileVector, candidate.profileVector],
       [user.preferenceVector, candidate.preferenceVector],
-      [user.personalityVector, candidate.personalityVector],
+      [
+        user.personalityVector?.some((value) => Number.isFinite(value) && value !== 0)
+          ? user.personalityVector
+          : undefined,
+        candidate.personalityVector?.some((value) => Number.isFinite(value) && value !== 0)
+          ? candidate.personalityVector
+          : undefined,
+      ],
       [user.behaviorVector, candidate.behaviorVector],
       [user.geoVector, candidate.geoVector],
     ];

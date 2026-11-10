@@ -10,6 +10,7 @@ import { AdminApiGuard } from '../../guards/api-key.guard';
 import { RevenueIntelligenceService } from '../../../revenue/revenue-intelligence.service';
 import { RevenueAttributionService } from '../../../revenue/revenue-attribution.service';
 import { RevenueTrendService } from '../../../revenue/revenue-trend.service';
+import { RevenueAnalyticsService } from '../../../revenue/revenue-analytics.service';
 import { PaymentCurrency } from '../../../payments/entities/payment.entity';
 
 const SUPPORTED_CURRENCIES: PaymentCurrency[] = ['IRT', 'USDT', 'BTC', 'USD'];
@@ -21,6 +22,7 @@ export class AdminApiRevenueController {
     private readonly revenueAttribution: RevenueAttributionService,
     private readonly revenueIntelligence: RevenueIntelligenceService,
     private readonly revenueTrend: RevenueTrendService,
+    private readonly revenueAnalytics: RevenueAnalyticsService,
   ) {}
 
   private parseBoundedInt(
@@ -175,6 +177,100 @@ export class AdminApiRevenueController {
     }
 
     return anomalies.slice(-10).reverse();
+  }
+
+
+  // ─── Revenue intelligence: all values come from confirmed payment records ───
+
+  @Get('by-gender')
+  async byGender(
+    @Query('days') days?: string,
+    @Query('currency') currencyInput?: string,
+  ) {
+    return this.revenueAnalytics.byGender(
+      this.parseCurrency(currencyInput),
+      this.parseBoundedInt(days, 90, 1, 3650, 'days'),
+    );
+  }
+
+  @Get('by-product')
+  async byProduct(
+    @Query('days') days?: string,
+    @Query('currency') currencyInput?: string,
+  ) {
+    return this.revenueAnalytics.byProduct(
+      this.parseCurrency(currencyInput),
+      this.parseBoundedInt(days, 90, 1, 3650, 'days'),
+    );
+  }
+
+  @Get('arppu')
+  async arppu(
+    @Query('days') days?: string,
+    @Query('currency') currencyInput?: string,
+  ) {
+    return this.revenueAnalytics.arppu(
+      this.parseCurrency(currencyInput),
+      this.parseBoundedInt(days, 30, 1, 3650, 'days'),
+    );
+  }
+
+  @Get('mrr')
+  async mrr(@Query('currency') currencyInput?: string) {
+    return this.revenueAnalytics.mrr(this.parseCurrency(currencyInput));
+  }
+
+  @Get('cohort')
+  async cohort(
+    @Query('months') months?: string,
+    @Query('currency') currencyInput?: string,
+  ) {
+    return this.revenueAnalytics.cohort(
+      this.parseCurrency(currencyInput),
+      this.parseBoundedInt(months, 12, 1, 60, 'months'),
+    );
+  }
+
+  @Get('funnel')
+  async funnel(
+    @Query('days') days?: string,
+    @Query('currency') currencyInput?: string,
+  ) {
+    return this.revenueAnalytics.funnel(
+      this.parseCurrency(currencyInput),
+      this.parseBoundedInt(days, 30, 1, 3650, 'days'),
+    );
+  }
+
+  @Get('churn')
+  async churn(@Query('days') days?: string) {
+    return this.revenueAnalytics.vipChurn(
+      this.parseBoundedInt(days, 30, 1, 3650, 'days'),
+    );
+  }
+
+  @Get('concentration')
+  async concentration(
+    @Query('days') days?: string,
+    @Query('currency') currencyInput?: string,
+  ) {
+    return this.revenueAnalytics.concentration(
+      this.parseCurrency(currencyInput),
+      this.parseBoundedInt(days, 365, 1, 3650, 'days'),
+    );
+  }
+
+  @Get('forecast-accuracy')
+  async forecastAccuracy(
+    @Query('days') days?: string,
+    @Query('currency') currencyInput?: string,
+  ) {
+    const currency = this.parseCurrency(currencyInput);
+    const daily = await this.revenueTrend.getDailyHistory(
+      this.parseBoundedInt(days, 90, 15, 365, 'days'),
+      currency,
+    );
+    return this.revenueAnalytics.forecastAccuracy(daily, currency);
   }
 
   /**

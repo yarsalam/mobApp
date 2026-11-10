@@ -12,6 +12,8 @@ import { RevenueIntelligenceService } from './revenue-intelligence.service';
 import { DecisionEngineService } from './decision-engine.service';
 import { RevenueAttributionService } from './revenue-attribution.service';
 import { RevenueTrendService } from './revenue-trend.service';
+import { RevenueAnalyticsService } from './revenue-analytics.service';
+import { UserVip } from '../payments/vip/entities/vip.entity';
 
 import { RedisModule } from '../redis/redis.module';
 import { QueuesModule } from '../queues/queues.module';
@@ -23,7 +25,7 @@ import { FeatureStoreModule } from '../feature-store/feature-store.module';
     // ---------------------------------------------------------
     // Database
     // ---------------------------------------------------------
-    TypeOrmModule.forFeature([User, Payment, SEOActivity, PartitionedEvent]),
+    TypeOrmModule.forFeature([User, Payment, SEOActivity, PartitionedEvent, UserVip]),
 
     // ---------------------------------------------------------
     // Redis
@@ -71,6 +73,7 @@ import { FeatureStoreModule } from '../feature-store/feature-store.module';
     DecisionEngineService,
     RevenueAttributionService,
     RevenueTrendService,
+    RevenueAnalyticsService,
   ],
 
   exports: [
@@ -78,6 +81,7 @@ import { FeatureStoreModule } from '../feature-store/feature-store.module';
     DecisionEngineService,
     RevenueAttributionService,
     RevenueTrendService,
+    RevenueAnalyticsService,
   ],
 })
 export class RevenueModule {}

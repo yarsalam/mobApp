@@ -13,7 +13,7 @@ import {
 export type PaymentMethod =
   'manual_card' | 'crypto_usdt' | 'crypto_btc' | 'gateway';
 
-export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'expired';
+export type PaymentStatus = 'pending' | 'processing' | 'paid' | 'failed' | 'expired';
 
 export type PaymentCurrency = 'IRT' | 'USDT' | 'BTC' | 'USD';
 

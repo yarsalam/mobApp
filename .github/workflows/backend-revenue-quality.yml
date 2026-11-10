@@ -1,0 +1,115 @@
+name: Backend Revenue Quality
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/personality/**"
+      - "src/feature-store/**"
+      - "src/suggestion/scoring/**"
+      - "src/ai-assistant/**"
+      - "src/revenue/**"
+      - "src/feature-store-rvenue/**"
+      - "src/moderation/**"
+      - "src/app.controller.ts"
+      - "src/app.controller.spec.ts"
+      - "src/config/**"
+      - "src/redis/redis.service.ts"
+      - "src/message/**"
+      - "src/payments/**"
+      - "src/user-event/**"
+      - "python-ai/services/ml_service/**"
+      - "python-ai/tests/test_matching_scoring.py"
+      - "python-ai/services/ai_moderation/**"
+      - "python-ai/tests/test_ai_moderation_fail_closed.py"
+      - "src/admin-api/controllers/revenue/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/backend-revenue-quality.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  revenue-backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: test-root
+          MYSQL_DATABASE: yarsalam_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -ptest-root"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Revenue, payments and moderation unit tests
+        run: >-
+          npm test -- --runInBand
+          revenue-analytics.service.spec.ts
+          personality.service.spec.ts
+          app.controller.spec.ts
+          payments.service.spec.ts
+          wallet.service.spec.ts
+          card-transfer.provider.spec.ts
+          crypto.provider.spec.ts
+          manual-verifier.service.spec.ts
+          wallet/verification/crypto-watcher.processor.spec.ts
+          feature-store-rvenue.service.spec.ts
+          ai-assistant/context/user-context.service.spec.ts
+          moderation/moderation.service.spec.ts
+          database.config.spec.ts
+
+      - name: MySQL wallet concurrency and rollback integration tests
+        env:
+          MYSQL_INTEGRATION_URL: mysql://root:test-root@127.0.0.1:3306/yarsalam_test
+        run: npm test -- --runInBand wallet.mysql.integration.spec.ts
+
+      - name: Compile backend
+        run: npm run build
+
+  ai-revenue-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install isolated revenue test dependencies
+        run: python -m pip install --disable-pip-version-check pytest numpy scipy scikit-learn joblib fastapi pydantic httpx
+      - name: Run LTV provenance and model integrity contracts
+        working-directory: python-ai
+        run: python -m pytest -q tests/test_ai_revenue_predictor.py tests/test_revenue_feature_contract.py
+
+  matching-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install minimal test dependencies
+        run: python -m pip install --disable-pip-version-check pytest numpy fastapi pydantic pydantic-settings httpx redis
+      - name: Run matching fail-closed and persistence tests
+        working-directory: python-ai
+        run: python -m pytest -q tests/test_matching_scoring.py

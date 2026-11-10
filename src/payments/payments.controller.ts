@@ -1,6 +1,8 @@
 import {
   Body,
   Controller,
+  Headers,
+  BadRequestException,
   Get,
   NotFoundException,
   Param,
@@ -91,17 +93,34 @@ export class PaymentsController {
   async buyWithWallet(
     @CurrentUser('sub') userId: number,
     @Param('bundleCode') bundleCode: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
+    const stableKey = idempotencyKey?.trim();
+    if (!stableKey || stableKey.length > 80) {
+      throw new BadRequestException(
+        'Idempotency-Key header is required and must be at most 80 characters',
+      );
+    }
+
     const bundle = await this.bundleRepo.findOne({
       where: { code: bundleCode, active: true },
     });
     if (!bundle) throw new NotFoundException('محصول یافت نشد');
 
     // کسر از wallet به ریال
-    await this.walletService.debit(userId, bundle.price, `buy:${bundleCode}`);
+    await this.walletService.debitOnce(
+      userId,
+      bundle.price,
+      `buy:${bundleCode}`,
+      `wallet-checkout:${stableKey}:debit`,
+    );
 
     // grant محصول
-    await this.paymentsService.grantBundle(userId, bundleCode);
+    await this.paymentsService.grantBundle(userId, bundleCode, {
+      amountRials: bundle.price,
+      source: 'wallet',
+      idempotencyKey: `wallet-checkout:${stableKey}`,
+    });
 
     return { success: true, message: 'خرید با موفقیت انجام شد' };
   }
@@ -111,10 +130,11 @@ export class PaymentsController {
   @Post(':paymentId/proof')
   @UseGuards(JwtAuthGuard)
   async submitProof(
+    @CurrentUser('sub') userId: number,
     @Param('paymentId', ParseIntPipe) paymentId: number,
     @Body() body: { proofUrl: string },
   ) {
-    await this.cardTransferProvider.submitProof(paymentId, body.proofUrl);
+    await this.cardTransferProvider.submitProof(paymentId, userId, body.proofUrl);
     return {
       success: true,
       message: 'رسید دریافت شد، منتظر تأیید ادمین باشید',

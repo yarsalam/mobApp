@@ -3,6 +3,9 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { HttpModule } from '@nestjs/axios';
 import { Personality } from './entities/personality.entity';
 import { Payment } from '../payments/entities/payment.entity';
+import { User } from '../users/entities/user.entity';
+import { Message } from '../message/entities/message.entity';
+import { OpenRouterClientService } from '../ai-assistant/llm/openrouter-client.service';
 import { RedisModule } from '../redis/redis.module';
 import { PersonalityController } from './personality.controller';
 import { PersonalityService } from './personality.service';
@@ -12,7 +15,7 @@ import { PersonalityLearningService } from './services/personality-learning.serv
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Personality, Payment]),
+    TypeOrmModule.forFeature([Personality, Payment, User, Message]),
     HttpModule.register({ timeout: 5000 }),
     RedisModule,
   ],
@@ -22,6 +25,7 @@ import { PersonalityLearningService } from './services/personality-learning.serv
     PersonalityAIClient,
     PersonalityWeightService,
     PersonalityLearningService,
+    OpenRouterClientService,
   ],
   exports: [PersonalityService],
 })

@@ -5,6 +5,7 @@ on:
     paths:
       - "docker-compose.yml"
       - "docker-compose.production.yml"
+      - "docker-compose.runtime.yml"
       - ".env.example"
       - ".env.production.example"
       - ".github/workflows/compose-validation.yml"
@@ -37,3 +38,12 @@ jobs:
 
       - name: Validate production Compose overlay
         run: docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.production.yml config --quiet
+
+      - name: Validate backend-only runtime Compose
+        run: |
+          cat > .env.production <<'ENV'
+          BACKEND_IMAGE_TAG=sha-test-only
+          MYSQL_PASSWORD=not-a-secret
+          PUBLIC_ASSETS_DIR=/tmp/yarsalam-public
+          ENV
+          docker compose --env-file .env.production -f docker-compose.runtime.yml config --quiet

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Payment } from 'src/payments/entities/payment.entity';
 import { EventType } from 'src/user-event/type/event-type.enum';
@@ -35,6 +35,18 @@ export class CryptoProvider {
     productCode: string,
     amountCents: number, // 500 = 5 USDT
   ): Promise<CryptoInitResult> {
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      throw new BadRequestException('Invalid userId');
+    }
+    if (!Number.isSafeInteger(amountCents) || amountCents <= 0) {
+      throw new BadRequestException('amountCents must be a positive safe integer');
+    }
+    if (!/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(this.WALLET_ADDRESS_TRC20)) {
+      throw new ServiceUnavailableException(
+        'USDT TRC20 deposits are not configured. Contact support or use another payment method.',
+      );
+    }
+
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 ساعت
 
     const payment = this.paymentRepo.create({
