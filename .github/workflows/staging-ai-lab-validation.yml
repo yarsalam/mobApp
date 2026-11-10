@@ -44,6 +44,9 @@ jobs:
           cp .env.staging.example .env.staging
           chmod 600 .env.staging
 
+      - name: Validate shell scripts
+        run: bash -n scripts/staging/bootstrap.sh scripts/staging/ai-service.sh scripts/staging/build-ai-base.sh
+
       - name: Validate staging Compose without starting services
         run: |
           docker compose version
@@ -53,7 +56,7 @@ jobs:
             -f docker-compose.production.yml \
             -f docker-compose.staging.yml config --quiet
 
-      - name: Verify critical AI profiles resolve
+      - name: Validate every AI service profile independently
         run: |
           set -euo pipefail
           check_profile() {
@@ -67,14 +70,25 @@ jobs:
               --profile "$profile" config --services)"
             printf '%s\n' "$services" | grep -Fx "$expected" >/dev/null
           }
+          check_profile ai-ops ai_ops
+          check_profile ai-feedback ai_feedback
+          check_profile ai-seo ai_seo
+          check_profile ai-monetization ai_monetization
+          check_profile ai-revenue ai_revenue
           check_profile ai-assistant ai_assistant
           check_profile ai-moderation ai_moderation
           check_profile ai-moderation embedded_ai
-          check_profile ai-matching ml_service
-          check_profile ai-personality personality
-          check_profile ai-support ai_support
-          check_profile ai-image ai_image
           check_profile ai-verification ai_verification
+          check_profile ai-embedding embedded_ai
+          check_profile ai-matching ml_service
+          check_profile ai-matching embedded_ai
+          check_profile ai-uplift ai_uplift
+          check_profile ai-backlink-quality ai_backlink_quality
+          check_profile ai-seo-recommender ai_seo_recommender
+          check_profile ai-personality personality
+          check_profile ai-image ai_image
+          check_profile ai-support ai_support
+          check_profile ai-aeo aeo_tracker
 
       - name: Generate deterministic synthetic fixtures
         run: |
@@ -93,3 +107,47 @@ jobs:
           path: ${{ runner.temp }}/yarsalam-ai-eval/
           retention-days: 14
           if-no-files-found: error
+  
+  staging-runtime-ai-ops:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create fresh isolated staging secrets
+        run: bash scripts/staging/bootstrap.sh
+
+      - name: Start the isolated base stack
+        run: bash scripts/staging/ai-service.sh base-up
+
+      - name: Build and start only AI Ops
+        run: bash scripts/staging/ai-service.sh ai-up ai_ops
+
+      - name: Verify AI Ops HTTP health
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:18025/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "AI Ops health endpoint did not become ready."
+          exit 1
+
+      - name: Capture staging logs on failure
+        if: failure()
+        run: |
+          docker compose --env-file .env.staging -p yarsalam-staging \
+            -f docker-compose.yml -f docker-compose.production.yml \
+            -f docker-compose.staging.yml logs --no-color --tail=120 || true
+
+      - name: Stop staging containers without deleting volumes
+        if: always()
+        run: |
+          if [[ -s .env.staging ]]; then
+            docker compose --env-file .env.staging -p yarsalam-staging \
+              -f docker-compose.yml -f docker-compose.production.yml \
+              -f docker-compose.staging.yml stop ai_ops backend qdrant user-mysql redis || true
+          fi
