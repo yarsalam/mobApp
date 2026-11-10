@@ -76,10 +76,14 @@ export class ProblemDetectorService {
       lastPurchaseDays: (rawMetrics as any)?.lastPurchaseDays ?? 0,
     };
 
-    const personality: PersonalityProfile =
-      (rawPersonality as PersonalityProfile | null) ?? {
-        ocean: { extraversion: 0.5 },
-      };
+    // Advice must not infer a personality trait from a missing or legacy
+    // unverified record. Only an explicitly consented, validated questionnaire
+    // is eligible for this rule-based personality hint.
+    const personality =
+      rawPersonality?.matchingEligible === true &&
+      rawPersonality?.oceanSource === 'validated_questionnaire'
+        ? (rawPersonality as PersonalityProfile)
+        : null;
 
     problems.push(
       ...(await this.detectProfileProblems(userId, safePhase, userImages)),
@@ -235,12 +239,10 @@ export class ProblemDetectorService {
 
   private async detectPersonalityProblems(
     _userId: number,
-    personality: PersonalityProfile,
+    personality: PersonalityProfile | null,
     interactions: InteractionAnalysis[],
   ): Promise<UserProblem[]> {
     const problems: UserProblem[] = [];
-    if (!personality) return problems;
-
     const messages = interactions.filter((i) => i.type === 'message');
     if (messages.length > 0) {
       const negativeMessages = messages.filter(
@@ -258,8 +260,12 @@ export class ProblemDetectorService {
       }
     }
 
-    const extraversion = personality.ocean?.extraversion ?? 0.5;
-    if (extraversion < 0.3) {
+    const extraversion = personality?.ocean?.extraversion;
+    if (
+      typeof extraversion === 'number' &&
+      Number.isFinite(extraversion) &&
+      extraversion < 0.3
+    ) {
       problems.push({
         category: 'personality',
         severity: 'low',
