@@ -21,6 +21,7 @@ import {
 import { ModerationService } from './moderation.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../current-user/current-user.decorator';
+import { AdminApiGuard } from 'src/admin-api/guards/api-key.guard';
 
 @ApiTags('moderation')
 @Controller('moderation')
@@ -78,7 +79,8 @@ export class ModerationController {
     return { success: true, message: 'بررسی در صف قرار گرفت' };
   }
 
-  @Get('user/:userId/risk')
+    @Get('user/:userId/risk')
+  @UseGuards(AdminApiGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'دریافت ریسک کاربر' })
   async getUserRisk(@Param('userId', ParseIntPipe) userId: number) {
@@ -86,7 +88,8 @@ export class ModerationController {
     return { success: true, data: risk };
   }
 
-  @Get('stats/daily')
+    @Get('stats/daily')
+  @UseGuards(AdminApiGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'آمار روزانه' })
   @ApiQuery({ name: 'days', required: false, type: Number })
@@ -95,7 +98,8 @@ export class ModerationController {
     return { success: true, data: stats };
   }
 
-  @Get('high-risk-users')
+    @Get('high-risk-users')
+  @UseGuards(AdminApiGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'لیست کاربران پرخطر' })
   async getHighRiskUsers(
@@ -109,7 +113,8 @@ export class ModerationController {
     return { success: true, data: users };
   }
 
-  @Post('user/:userId/unblock')
+    @Post('user/:userId/unblock')
+  @UseGuards(AdminApiGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'رفع محدودیت کاربر' })
   async unblockUser(@Param('userId', ParseIntPipe) userId: number) {
@@ -117,7 +122,8 @@ export class ModerationController {
     return { success: true, message: 'محدودیت کاربر رفع شد' };
   }
 
-  @Get('reports/export')
+    @Get('reports/export')
+  @UseGuards(AdminApiGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'خروجی اکسل گزارش‌ها' })
   async exportReports(@Query('start') start: Date, @Query('end') end: Date) {
