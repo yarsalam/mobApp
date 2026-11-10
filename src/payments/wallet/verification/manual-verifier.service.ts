@@ -55,11 +55,19 @@ export class ManualVerifierService {
     }
 
     try {
+      // MySQL drivers may hydrate BIGINT columns as strings even though the
+      // entity property is typed as number. Normalize before the wallet's
+      // safe-integer validation so valid manual-card payments do not fail.
+      const amountRials = Number(payment.amount);
+      if (!Number.isSafeInteger(amountRials) || amountRials <= 0) {
+        throw new BadRequestException('Payment amount must be a positive safe integer');
+      }
+
       // The wallet increment and receipt are atomic. A retry after a crash
       // between credit and payment-status update safely observes the receipt.
       await this.walletService.creditOnce(
         payment.userId,
-        payment.amount,
+        amountRials,
         `payment:${payment.id}`,
         `payment:${payment.id}:wallet-credit`,
       );
@@ -70,7 +78,7 @@ export class ManualVerifierService {
         metadata: {
           paymentId,
           method: payment.method,
-          amount: payment.amount,
+          amount: amountRials,
           walletCredited: true,
           adminNote: adminNote ?? null,
         },
@@ -97,7 +105,7 @@ export class ManualVerifierService {
       }
 
       this.logger.log(
-        `Payment ${paymentId} confirmed → wallet +${payment.amount}ریال for user ${payment.userId}`,
+        `Payment ${paymentId} confirmed → wallet +${amountRials}ریال for user ${payment.userId}`,
       );
     } catch (error) {
       await this.paymentRepo.update(
