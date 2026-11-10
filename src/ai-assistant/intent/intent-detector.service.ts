@@ -335,17 +335,27 @@ export class IntentDetectorService {
     } else if (metrics.boostUsed7d === null) {
       lines.push('🚀 بوست: داده در دسترس نیست');
     }
-    if (ctx.probabilities.response !== null) {
-      lines.push(`احتمال پاسخ گرفتن ثبت‌شده: ${(ctx.probabilities.response * 100).toFixed(0)}%`);
-    }
-    if (ctx.probabilities.match !== null) {
-      lines.push(`احتمال مچ شدن ثبت‌شده: ${(ctx.probabilities.match * 100).toFixed(0)}%`);
+    if (
+      ctx.observedRates.response !== null &&
+      ctx.rateSamples.responseMessagesSent !== null
+    ) {
+      lines.push(
+        `نرخ پاسخ تاریخی: ${(ctx.observedRates.response * 100).toFixed(0)}% از ${ctx.rateSamples.responseMessagesSent} پیام ارسالی؛ پیش‌بینی پاسخ آینده نیست.`,
+      );
     }
     if (
-      ctx.probabilities.response === null &&
-      ctx.probabilities.match === null
+      ctx.observedRates.match !== null &&
+      ctx.rateSamples.matchLikes !== null
     ) {
-      lines.push('احتمال پاسخ و مچ: مدل/داده معتبر در دسترس نیست');
+      lines.push(
+        `نرخ تبدیل Like به Match تاریخی: ${(ctx.observedRates.match * 100).toFixed(0)}% از ${ctx.rateSamples.matchLikes} لایک.`,
+      );
+    }
+    if (
+      ctx.observedRates.response === null &&
+      ctx.observedRates.match === null
+    ) {
+      lines.push('نرخ تاریخی پاسخ/مچ به علت نبود نمونه معتبر قابل محاسبه نیست.');
     }
     return lines.join('\n');
   }
@@ -404,9 +414,13 @@ export class IntentDetectorService {
   private buildNoReplyResponse(ctx: UserContext): string {
     const issues: string[] = [];
 
-    if (ctx.probabilities.response !== null && ctx.probabilities.response < 0.15) {
+    if (
+      ctx.observedRates.response !== null &&
+      ctx.observedRates.response < 0.15 &&
+      ctx.rateSamples.responseMessagesSent !== null
+    ) {
       issues.push(
-        `• احتمال پاسخ ثبت‌شده پایین است (${(ctx.probabilities.response * 100).toFixed(0)}%). این تخمین به‌تنهایی علت را ثابت نمی‌کند.`,
+        `• نرخ پاسخ تاریخی پایین است (${(ctx.observedRates.response * 100).toFixed(0)}% از ${ctx.rateSamples.responseMessagesSent} پیام ارسالی). این سابقه علت قطعی کم‌پاسخی فعلی نیست.`,
       );
     }
 
