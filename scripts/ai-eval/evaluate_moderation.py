@@ -175,6 +175,7 @@ def main() -> int:
     report = {
         "synthetic_only": True,
         "model": sample_embedding.get("model_name"),
+        "model_revision": sample_embedding.get("model_revision"),
         "embedding_dimension": sample_embedding.get("dimension"),
         "unique_cases_evaluated": len(observations),
         "binary_labeled_cases": len(binary),
