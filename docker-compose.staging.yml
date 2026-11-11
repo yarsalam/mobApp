@@ -123,8 +123,9 @@ services:
     profiles: ["ai-embedding", "ai-matching", "ai-moderation"]
     restart: "no"
     environment:
-      MODEL_NAME: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+      MODEL_REPO_ID: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
       MODEL_REVISION: e8f8c211226b894fcb81acc59f3b34ba3efd5f42
+      MODEL_PATH: /app/model-cache/model
       HF_HOME: /app/model-cache
       HF_HUB_DISABLE_TELEMETRY: "1"
     volumes: !override
