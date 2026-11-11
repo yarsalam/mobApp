@@ -41,5 +41,5 @@
       ]
     }
   },
-  "postStartCommand": "bash scripts/staging/ai-service.sh base-up && bash scripts/staging/ai-service.sh ai-up ai_ops && for attempt in $(seq 1 30); do if curl --fail --silent http://127.0.0.1:18025/health >/dev/null; then echo 'Yarsalam staging API and AI Ops are ready.'; exit 0; fi; sleep 2; done; echo 'AI Ops health check failed; inspect docker compose logs ai_ops' >&2; exit 1"
+  "postStartCommand": "bash scripts/staging/codespaces-start.sh"
 }
