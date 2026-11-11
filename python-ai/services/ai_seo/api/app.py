@@ -5,6 +5,8 @@ from typing import Dict, List
 from fastapi import FastAPI, HTTPException, Body
 from pydantic import BaseModel
 
+from core.url_audit import audit_public_url as run_public_url_audit
+
 from core.predictive.predictive_seo import PredictiveSEOEngine
 from core.self_learning_engine import SelfLearningSEOEngine
 
@@ -13,15 +15,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="AI SEO Service", version="1.0.0")
+app = FastAPI(title="AI SEO Service", version="1.1.0")
 
 predictive_engine = PredictiveSEOEngine()
 learning_engine = SelfLearningSEOEngine()
 
-
 class TrafficRequest(BaseModel):
     historical_data: List[Dict]
     days: int = 90
+
+
+class UrlAuditRequest(BaseModel):
+    url: str
+
+
+@app.post("/audit/url")
+async def audit_public_url(request: UrlAuditRequest):
+    """Bounded on-page HTML checklist for a public URL; not a Google ranking score."""
+    try:
+        return await run_public_url_audit(request.url)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("URL audit failed")
+        raise HTTPException(500, "URL audit failed") from exc
 
 
 @app.post("/predict/traffic")
@@ -57,6 +74,7 @@ async def health():
     return {
         "status": "healthy",
         "service": "ai_seo",
+        "version": "1.1.0",
         "timestamp": datetime.now().isoformat(),
     }
 
@@ -65,6 +83,6 @@ async def health():
 async def root():
     return {
         "name": "AI SEO Service",
-        "version": "1.0.0",
-        "endpoints": ["/health", "/predict/traffic", "/feedback/campaign"],
+        "version": "1.1.0",
+        "endpoints": ["/health", "/audit/url", "/predict/traffic", "/feedback/campaign"],
     }
