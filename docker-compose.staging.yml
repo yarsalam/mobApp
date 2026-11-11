@@ -124,7 +124,9 @@ services:
     restart: "no"
     environment:
       MODEL_NAME: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+      MODEL_REVISION: e8f8c211226b894fcb81acc59f3b34ba3efd5f42
       HF_HOME: /app/model-cache
+      HF_HUB_DISABLE_TELEMETRY: "1"
     volumes: !override
       - embedding_model_hub_cache:/app/model-cache
     healthcheck:
