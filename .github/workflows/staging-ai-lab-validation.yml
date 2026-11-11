@@ -222,8 +222,10 @@ jobs:
 
           moderation_ready=false
           for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:18018/health | \
-              python -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status") == "healthy" and d.get("service") == "ai_moderation"'
+            if curl --fail --silent --output "$RUNNER_TEMP/moderation-health.json" \
+              http://127.0.0.1:18018/health && \
+              python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d.get("status") == "healthy" and d.get("service") == "ai_moderation"' \
+                "$RUNNER_TEMP/moderation-health.json" 2>/dev/null
             then
               moderation_ready=true
               break
