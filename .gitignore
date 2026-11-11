@@ -1,0 +1,23 @@
+# Staging secrets and local environment
+.env
+.env.*
+!.env.example
+!.env.production.example
+!.env.staging.example
+
+# Node / frontend artifacts
+node_modules/
+dist/
+coverage/
+*.log
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Local Docker and model caches
+python-ai/**/models/*
+!python-ai/**/models/.gitkeep

@@ -1,0 +1,41 @@
+{
+  "name": "Yarsalam AI Staging Lab",
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "16gb"
+  },
+  "forwardPorts": [5001, 18025],
+  "portsAttributes": {
+    "5001": {
+      "label": "Yarsalam staging API",
+      "onAutoForward": "notify",
+      "visibility": "private"
+    },
+    "18025": {
+      "label": "Yarsalam AI Ops",
+      "onAutoForward": "notify",
+      "visibility": "private"
+    }
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest",
+      "moby": true,
+      "dockerDashComposeVersion": "v2"
+    }
+  },
+  "postCreateCommand": "bash scripts/staging/bootstrap.sh",
+  "customizations": {
+    "codespaces": {
+      "openFiles": [
+        "docs/STAGING_AI_LAB.md"
+      ]
+    },
+    "vscode": {
+      "extensions": [
+        "ms-azuretools.vscode-docker",
+        "ms-python.python"
+      ]
+    }
+  }
+}
