@@ -130,6 +130,21 @@ jobs:
       - name: Start the isolated base stack
         run: bash scripts/staging/ai-service.sh base-up
 
+      - name: Verify backend MySQL and Redis readiness
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:5001/health/ready; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Backend database/Redis readiness did not become healthy."
+          docker compose --env-file .env.staging -p yarsalam-staging \
+            -f docker-compose.yml -f docker-compose.production.yml \
+            -f docker-compose.staging.yml logs --no-color --tail=100 backend user-mysql redis
+          exit 1
+
       - name: Build and start only AI Ops
         run: bash scripts/staging/ai-service.sh ai-up ai_ops
 
