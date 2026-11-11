@@ -16,6 +16,13 @@ class SyntheticFixtureTests(unittest.TestCase):
         self.assertEqual(len(data["assistant_cases"]), 100)
         self.assertEqual(len(data["support_cases"]), 100)
 
+    def test_moderation_corpus_has_at_least_100_unique_texts(self):
+        data = build_dataset(20261110)
+        unique_texts = {case["text"] for case in data["moderation_cases"]}
+        self.assertGreaterEqual(len(unique_texts), 100)
+        labels = {case["expected_policy"] for case in data["moderation_cases"]}
+        self.assertEqual(labels, {"allow", "block", "review"})
+
     def test_matching_pairs_reference_known_profiles(self):
         data = build_dataset(20261110)
         profile_ids = {p["synthetic_id"] for p in data["profiles"]}
