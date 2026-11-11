@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from moderation_engine import ModerationEngine, _BANNED_EXEMPLARS
+from moderation_engine import ModerationEngine, _BANNED_EXEMPLARS, _SAFE_EXEMPLARS
 
 
 class FailingEmbeddingClient:
@@ -56,10 +56,11 @@ class SimilarityClient:
             return FakeResponse({"embedding": [0.1, 0.2]})
         if url.endswith("/embed/batch"):
             return FakeResponse({
-                "embeddings": [[0.1, 0.2] for _ in _BANNED_EXEMPLARS]
+                "embeddings": [
+                    [self.similarity, 0.2]
+                    for _ in (_BANNED_EXEMPLARS + _SAFE_EXEMPLARS)
+                ]
             })
-        if url.endswith("/similarity"):
-            return FakeResponse({"similarity": self.similarity})
         raise AssertionError(f"Unexpected embedding endpoint: {url}")
 
 
