@@ -17,6 +17,30 @@ sessions or real user uploads.
 
 ## One-time Codespaces setup
 
+The repository includes `.devcontainer/devcontainer.json` with a requested
+minimum of 4 CPU cores and 16 GB RAM, Docker-in-Docker + Compose v2, and private
+forwarding for the API and AI Ops test ports. This machine is intended for the
+backend plus one AI model at a time.
+
+1. Open the branch-specific Codespaces creation page:
+   https://github.com/codespaces/new?repo=1409282513&ref=infra%2Fstaging-ai-lab-2026-11
+2. Confirm the payer displayed by GitHub is your personal account and choose a
+   machine matching 4 cores / 16 GB RAM. If that machine is unavailable or
+   would require paid usage, do not create it; tell us which machine types are
+   shown.
+3. Keep both forwarded ports private.
+4. When the browser editor is ready, the post-create hook will have generated
+   the private `.env.staging` file. In the integrated terminal, run:
+
+       docker compose version
+       bash scripts/staging/ai-service.sh validate
+       bash scripts/staging/ai-service.sh base-up
+
+5. Once the base stack reports healthy, start one AI service, for example:
+
+       bash scripts/staging/ai-service.sh ai-up ai_ops
+
+
 1. Open the yarsalam/mobApp repository on GitHub.
 2. Select branch infra/staging-ai-lab-2026-11.
 3. Select Code -> Codespaces -> Create codespace on branch.
@@ -111,6 +135,15 @@ Matching needs offline ranking and hard-constraint evaluation. Passing this
 synthetic suite alone does not authorize broad real-world marketing claims.
 
 ## Codespaces free quota
+
+GitHub's current documentation lists 120 core-hours and 15 GB-month of
+Codespaces storage for personal GitHub Free accounts. A 4-core Codespace uses
+4 core-hours per active hour, so the compute allowance is at most 30 active
+hours per month before accounting for other Codespaces usage. If no valid
+payment method is attached, GitHub blocks Codespaces usage after the included
+quota is exhausted. No card should be added for this lab; stop the Codespace
+when finished and do not approve paid usage.
+
 
 GitHub documents 120 core-hours and 15 GB-month of Codespaces storage per
 personal GitHub Free account. A 4-core machine consumes 4 core-hours per active
