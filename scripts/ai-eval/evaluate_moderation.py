@@ -172,6 +172,22 @@ def main() -> int:
     f1 = 2 * precision * recall / (precision + recall) if precision is not None and recall else None
     accuracy = (tp + tn) / len(binary) if binary else None
 
+    binary_misclassifications = [
+        {
+            "case_id": row["case_id"],
+            "category": row["category"],
+            "expected_policy": row["expected_policy"],
+            "actual_policy": row["actual_policy"],
+            "reason": row["reason"],
+            "layer": row["layer"],
+            "confidence": row["confidence"],
+            "text": row["text"],
+        }
+        for row in observations
+        if row["expected_policy"] in {"allow", "block"}
+        and row["expected_policy"] != row["actual_policy"]
+    ]
+
     report = {
         "synthetic_only": True,
         "model": sample_embedding.get("model_name"),
@@ -188,6 +204,7 @@ def main() -> int:
             "f1_block": f1,
         },
         "review_label_actual_outcomes": dict(review_counts),
+        "binary_misclassifications": binary_misclassifications,
         "semantic_unavailable_count": unavailable,
         "category_metrics": category_metrics,
         "duration_seconds": round(time.monotonic() - started, 2),
