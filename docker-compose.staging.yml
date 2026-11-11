@@ -135,7 +135,7 @@ services:
         - CMD
         - python
         - -c
-        - "import json, urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=4)); assert d.get('model_loaded') is True and d.get('redis') is True, d"
+        - "import json, urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=4)); assert d.get('model_loaded') is True and d.get('redis') is True and d.get('dimension') == 384, d"
       interval: 10s
       timeout: 5s
       retries: 12
