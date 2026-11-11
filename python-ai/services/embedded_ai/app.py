@@ -14,10 +14,10 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
 )
 
-# MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 MODEL_NAME = os.getenv(
     "MODEL_NAME", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 )
+MODEL_REVISION = os.getenv("MODEL_REVISION") or None
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
 model: SentenceTransformer = None
@@ -27,15 +27,27 @@ redis_client: aioredis.Redis = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global model, redis_client
-    model = SentenceTransformer(MODEL_NAME)
+    logger.info(
+        "Loading embedding model %s (revision=%s)",
+        MODEL_NAME,
+        MODEL_REVISION or "default",
+    )
+    # On first Staging start, sentence-transformers downloads the public model
+    # into HF_HOME. In Codespaces the HF_HOME path is backed by a named volume,
+    # so subsequent starts reuse the verified model without another download.
+    model = SentenceTransformer(MODEL_NAME, revision=MODEL_REVISION)
     redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
-    logger.info("Embedding hub started, model loaded: %s", MODEL_NAME)
+    logger.info(
+        "Embedding hub started; model loaded: %s; dimension=%s",
+        MODEL_NAME,
+        model.get_sentence_embedding_dimension(),
+    )
     yield
     await redis_client.aclose()
     logger.info("Embedding hub stopped")
 
 
-app = FastAPI(title="Embedding Hub Service", version="3.0.0", lifespan=lifespan)
+app = FastAPI(title="Embedding Hub Service", version="3.1.0", lifespan=lifespan)
 
 
 class TextInput(BaseModel):
@@ -60,6 +72,7 @@ async def get_embedding(data: TextInput):
     return {
         "embedding": embedding,
         "model_name": MODEL_NAME,
+        "model_revision": MODEL_REVISION,
         "dimension": len(embedding),
     }
 
@@ -75,6 +88,7 @@ async def get_batch_embeddings(data: BatchTextInput):
     return {
         "embeddings": embeddings,
         "model_name": MODEL_NAME,
+        "model_revision": MODEL_REVISION,
         "dimension": len(embeddings[0]),
     }
 
@@ -83,11 +97,16 @@ async def get_batch_embeddings(data: BatchTextInput):
 async def compute_similarity(data: CompareVectorsInput):
     a = np.array(data.vector_a, dtype=np.float32)
     b = np.array(data.vector_b, dtype=np.float32)
+    if a.ndim != 1 or b.ndim != 1 or a.shape != b.shape:
+        raise HTTPException(status_code=422, detail="Vectors must be 1D and have equal dimensions")
     norm_a = np.linalg.norm(a)
     norm_b = np.linalg.norm(b)
     if norm_a == 0 or norm_b == 0:
         return {"similarity": 0.0}
-    return {"similarity": float(np.dot(a, b) / (norm_a * norm_b))}
+    similarity = float(np.dot(a, b) / (norm_a * norm_b))
+    if not np.isfinite(similarity):
+        raise HTTPException(status_code=422, detail="Similarity is not finite")
+    return {"similarity": similarity}
 
 
 @app.get("/health")
@@ -99,8 +118,11 @@ async def health():
     except Exception:
         pass
     return {
-        "status": "healthy",
+        "status": "healthy" if model is not None and redis_ok else "degraded",
         "service": "embedding_hub",
         "model_loaded": model is not None,
+        "model_name": MODEL_NAME,
+        "model_revision": MODEL_REVISION,
+        "dimension": model.get_sentence_embedding_dimension() if model is not None else None,
         "redis": redis_ok,
     }
