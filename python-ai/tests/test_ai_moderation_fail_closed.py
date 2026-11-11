@@ -64,6 +64,23 @@ class SimilarityClient:
         raise AssertionError(f"Unexpected embedding endpoint: {url}")
 
 
+class ContrastiveEmbeddingClient:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def post(self, url, *args, **kwargs):
+        if url.endswith("/embed"):
+            return FakeResponse({"embedding": [1.0, 0.0]})
+        if url.endswith("/embed/batch"):
+            positive = [[1.0, 0.0] for _ in _BANNED_EXEMPLARS]
+            safe = [[0.0, 1.0] for _ in _SAFE_EXEMPLARS]
+            return FakeResponse({"embeddings": positive + safe})
+        raise AssertionError(f"Unexpected embedding endpoint: {url}")
+
+
 class ModerationFailClosedTests(unittest.IsolatedAsyncioTestCase):
     async def test_empty_message_is_not_allowed(self):
         engine = ModerationEngine()
@@ -102,7 +119,7 @@ class ModerationFailClosedTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["reason"], "moderation_unavailable")
         self.assertEqual(result["layer"], "semantic_unavailable")
 
-    async def test_non_finite_similarity_fails_closed(self):
+    async def test_non_finite_embedding_vector_fails_closed(self):
         engine = ModerationEngine()
         with patch("moderation_engine.httpx.AsyncClient", return_value=SimilarityClient(float("nan"))):
             result = await engine._semantic_check("ordinary conversation")
@@ -110,6 +127,16 @@ class ModerationFailClosedTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["allowed"])
         self.assertEqual(result["reason"], "moderation_unavailable")
         self.assertEqual(result["layer"], "semantic_unavailable")
+
+    async def test_semantic_violation_requires_positive_contrastive_margin(self):
+        engine = ModerationEngine()
+        with patch("moderation_engine.httpx.AsyncClient", return_value=ContrastiveEmbeddingClient()):
+            result = await engine._semantic_check("off-app contact request")
+
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["reason"], "semantic_violation")
+        self.assertGreaterEqual(result["semantic_margin"], 0.10)
+        self.assertEqual(result["layer"], "semantic")
 
     async def test_complete_valid_semantic_scan_can_return_allowed(self):
         engine = ModerationEngine()
