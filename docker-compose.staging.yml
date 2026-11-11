@@ -1,6 +1,10 @@
 # Isolated staging overlay. Requires Docker Compose v2.24.4+ for !override.
 # Data stores remain private; every optional AI service is independently profile-gated.
 # Backend port is for a PRIVATE Codespaces forwarded port, not a public VPS.
+
+volumes:
+  embedding_model_hub_cache: {}
+
 services:
   redis:
     ports: !override []
@@ -103,7 +107,7 @@ services:
       redis:
         condition: service_healthy
       embedded_ai:
-        condition: service_started
+        condition: service_healthy
     ports: !override ["127.0.0.1:18018:8018"]
     deploy:
       resources:
@@ -118,6 +122,21 @@ services:
   embedded_ai:
     profiles: ["ai-embedding", "ai-matching", "ai-moderation"]
     restart: "no"
+    environment:
+      MODEL_NAME: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+      HF_HOME: /app/model-cache
+    volumes: !override
+      - embedding_model_hub_cache:/app/model-cache
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import json, urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=4)); assert d.get('model_loaded') is True and d.get('redis') is True, d"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
     ports: !override ["127.0.0.1:18104:8100"]
     deploy:
       resources:
@@ -130,7 +149,7 @@ services:
       redis:
         condition: service_healthy
       embedded_ai:
-        condition: service_started
+        condition: service_healthy
     deploy:
       resources:
         limits: {cpus: "1.50", memory: 1792M}
