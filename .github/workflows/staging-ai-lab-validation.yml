@@ -219,6 +219,24 @@ jobs:
             sleep 10
           done
           curl --fail --silent http://127.0.0.1:18104/health
+
+          moderation_ready=false
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:18018/health | \
+              python -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status") == "healthy" and d.get("service") == "ai_moderation"'
+            then
+              moderation_ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$moderation_ready" != true ]]; then
+            echo "Moderation HTTP health did not become ready."
+            docker compose --env-file .env.staging -p yarsalam-staging \
+              -f docker-compose.yml -f docker-compose.production.yml \
+              -f docker-compose.staging.yml logs --no-color --tail=100 ai_moderation embedded_ai
+            exit 1
+          fi
           curl --fail --silent http://127.0.0.1:18018/health
 
       - name: Run the synthetic Persian moderation evaluation
