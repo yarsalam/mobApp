@@ -164,14 +164,25 @@ Generate deterministic test fixtures:
 Initial fixture sizes:
 - 300 synthetic profiles;
 - 1,500 directed Matching candidate pairs with expected hard-eligibility labels;
-- 700 Persian Moderation cases spanning safe, external-contact, financial
+- 700 Persian Moderation rows spanning safe, external-contact, financial
   solicitation, harassment, threat, lexical-collision and obfuscation classes;
+  at least 100 distinct texts (15 curated variants per class) are generated;
+  repeated rows provide stable class weighting, and the evaluator deduplicates
+  identical text before inference;
 - 100 Assistant grounding/privacy prompts;
 - 100 Support ticket classification cases.
 
 Every record is tagged synthetic_only and all identities use SYN-* identifiers.
 These are controlled test inputs, not real-user data, not training data and not
 evidence about the Yarsalam audience or psychometric accuracy.
+
+The Moderation rule layer uses high-specificity actions rather than
+blocking isolated words such as "group", "price", "Instagram" or "threat".
+It normalizes common Arabic/Persian character variants and diacritics. The
+semantic layer compares messages against both violation exemplars and neutral
+Persian examples; it blocks only when violation similarity exceeds the
+threshold and the positive-vs-safe similarity margin. The margin is a
+conservative engineering guard, not a calibrated probability.
 
 The validation workflow checks Compose configuration and fixture
 contracts. The runtime Moderation job downloads the pinned Embedding model,
