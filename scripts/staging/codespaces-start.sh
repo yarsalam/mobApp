@@ -10,6 +10,20 @@ fi
 
 bash scripts/staging/ai-service.sh validate
 bash scripts/staging/ai-service.sh base-up
+
+backend_ready=false
+for attempt in $(seq 1 30); do
+  if curl --fail --silent http://127.0.0.1:5001/health/ready >/dev/null; then
+    backend_ready=true
+    break
+  fi
+  sleep 2
+done
+if [[ "$backend_ready" != true ]]; then
+  echo "Backend database/Redis readiness failed. Inspect backend logs." >&2
+  exit 1
+fi
+
 bash scripts/staging/ai-service.sh ai-up ai_ops
 
 for attempt in $(seq 1 30); do
