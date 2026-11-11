@@ -49,6 +49,11 @@ case "$command" in
     [[ -n "$service" ]] || { echo "Usage: $0 ai-up <service>"; exit 2; }
     profile="$(profile_for "$service")"
     bash scripts/staging/build-ai-base.sh "$service"
+    case "$service" in
+      ai_moderation|ml_service|embedded_ai)
+        bash scripts/staging/prepare-embedding-model.sh "$profile"
+        ;;
+    esac
     "${COMPOSE[@]}" --profile "$profile" up -d --build "$service"
     "${COMPOSE[@]}" --profile "$profile" ps "$service"
     ;;
