@@ -51,7 +51,7 @@ jobs:
           chmod 600 .env.staging
 
       - name: Validate shell scripts
-        run: bash -n scripts/staging/bootstrap.sh scripts/staging/ai-service.sh scripts/staging/build-ai-base.sh
+        run: bash -n scripts/staging/bootstrap.sh scripts/staging/ai-service.sh scripts/staging/build-ai-base.sh scripts/staging/codespaces-start.sh
 
       - name: Validate Codespaces devcontainer configuration
         run: python -m json.tool .devcontainer/devcontainer.json >/dev/null
