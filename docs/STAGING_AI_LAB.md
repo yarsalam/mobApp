@@ -117,11 +117,16 @@ Apache-2.0 license.
 The model binary is intentionally not committed to Git. Before
 `ai_moderation`, Matching, or Embedding starts, `ai-service.sh ai-up`
 invokes `scripts/staging/prepare-embedding-model.sh`. That one-shot container
-downloads the pinned snapshot into the Docker named volume
-`embedding_model_hub_cache` mounted at `/app/model-cache`, creates a Persian
-embedding, and verifies its 384-dimensional finite output. The actual service
-then starts using the same cache. Subsequent starts reuse it without another
-download. The empty historical
+downloads only the required Sentence-Transformers/PyTorch assets (one
+`model.safetensors` weight file plus tokenizer/configuration files) into the
+Docker named volume `embedding_model_hub_cache` mounted at
+`/app/model-cache/model`. It deliberately excludes the repository's duplicate
+PyTorch `.bin`, TensorFlow, ONNX and OpenVINO exports. The model weight file
+is about 471 MB; the full Hub repository is much larger because it includes
+those alternative exports. The preparation step loads the local snapshot,
+creates a Persian embedding, and verifies its 384-dimensional finite output.
+The actual service then starts in local-files-only mode using the same cache.
+Subsequent starts reuse it without another download. The empty historical
 `python-ai/services/embedded_ai/models/minilm-model` bind mount is replaced
 in the Staging overlay, so it cannot shadow the downloaded model.
 
