@@ -9,9 +9,12 @@ build_base() {
   local image="$1" dockerfile="$2" base_image="${3:-}"
   if docker image inspect "$image:latest" >/dev/null 2>&1; then return; fi
   echo "Building staging base image $image"
-  local -a args=(docker build --pull -f "python-ai/staging-base-images/$dockerfile" -t "$image:latest")
+  local -a args=(docker build -f "python-ai/staging-base-images/$dockerfile" -t "$image:latest")
   if [[ -n "$base_image" ]]; then
+    # --pull would ignore the already-built local FROM image and query Docker Hub.
     args+=(--build-context "$base_image=docker-image://$base_image:latest")
+  else
+    args+=(--pull)
   fi
   args+=(.)
   "${args[@]}"
