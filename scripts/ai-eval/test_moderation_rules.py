@@ -35,10 +35,14 @@ class PersianModerationRuleTests(unittest.TestCase):
         self.assert_allowed("اگر احساس خطر کردی گفتگو را متوقف و گزارش کن.")
         self.assert_allowed("از آزار و تهدید دیگران پرهیز کنیم.")
 
-    def test_normalization_handles_arabic_forms_and_diacritics(self):
+    def test_normalization_handles_arabic_forms_diacritics_and_spaced_evasion(self):
         self.assertEqual(normalize_for_rules("كِتاب يَک‌روز"), "کتاب یکروز")
+        self.assertEqual(normalize_for_rules("ت ل گرام"), "تلگرام")
+        self.assertEqual(normalize_for_rules("آی دی"), "آیدی")
         self.assert_blocked("بیا تِلگِرام صحبت کنیم.", "external_contact")
+        self.assert_blocked("بیا در ت ل گرام حرف بزنیم.", "external_contact")
         self.assert_blocked("آیدی واتس‌اَپت رو بده.", "external_contact")
+        self.assert_blocked("آی دی واتساپت را بفرست.", "external_contact")
 
     def test_external_contact_requires_actionable_transfer_or_link(self):
         samples = [
@@ -58,6 +62,7 @@ class PersianModerationRuleTests(unittest.TestCase):
             "برای دریافت جایزه، مبلغ را کارت به کارت کن.",
             "شماره کارتت را برای واریز وجه بفرست.",
             "برای سود تضمینی پولت را به این حساب منتقل کن.",
+            "سرمایه‌ات را به حساب من واریز کن.",
         ]
         for sample in samples:
             with self.subTest(sample=sample):
