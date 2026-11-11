@@ -14,6 +14,8 @@ on:
       - "scripts/staging/**"
       - "scripts/ai-eval/**"
       - "python-ai/staging-base-images/**"
+      - "python-ai/services/ai_moderation/**"
+      - "python-ai/services/embedded_ai/**"
       - "python-ai/downloaded_wheels/.gitkeep"
       - ".github/workflows/staging-ai-lab-validation.yml"
       - "docs/STAGING_AI_LAB.md"
@@ -26,6 +28,8 @@ on:
       - "scripts/staging/**"
       - "scripts/ai-eval/**"
       - "python-ai/staging-base-images/**"
+      - "python-ai/services/ai_moderation/**"
+      - "python-ai/services/embedded_ai/**"
       - ".github/workflows/staging-ai-lab-validation.yml"
   workflow_dispatch:
 
