@@ -34,6 +34,11 @@ def normalize_for_rules(text: str) -> str:
     value = unicodedata.normalize("NFKC", text).translate(_ARABIC_TRANSLATION).casefold()
     value = "".join(ch for ch in value if not unicodedata.combining(ch))
     value = re.sub(r"\s+", " ", value).strip()
+
+    # Collapse deliberate intra-word spacing used to evade Persian text filters.
+    value = re.sub(r"ت\s*ل\s*گ\s*ر\s*ا\s*م", "تلگرام", value)
+    value = re.sub(r"و\s*ا\s*ت\s*س\s*ا\s*پ", "واتساپ", value)
+    value = re.sub(r"(?:آ|ا)\s*ی\s*د\s*ی", "آیدی", value)
     return value
 
 
@@ -51,7 +56,7 @@ _RULES: tuple[tuple[str, str, tuple[re.Pattern[str], ...]], ...] = (
             re.compile(r"(?:خارج شو|بیرون برو|از اپ خارج شو).{0,45}(?:تلگرام|واتساپ|واتس\s*اپ|اینستاگرام|پیام رسان دیگری)", re.I),
             re.compile(r"(?:تلگرام|واتساپ|واتس\s*اپ|اینستاگرام).{0,35}(?:بیا|بریم|صحبت کنیم|حرف بزنیم|حرف بزن|پیام بده|ادامه بده)", re.I),
             re.compile(
-                r"(?:(?:آیدی|ایدی|شناسه|یوزرنیم).{0,35}(?:تلگرام|واتساپ|واتس\s*اپ|اینستاگرام)|"
+                r"(?:(?:آیدی|آی\s*دی|ایدی|شناسه|یوزرنیم).{0,35}(?:تلگرام|واتساپ|واتس\s*اپ|اینستاگرام)|"
                 r"(?:تلگرام|واتساپ|واتس\s*اپ|اینستاگرام).{0,35}(?:آیدی|ایدی|شناسه|یوزرنیم))"
                 r".{0,25}(?:بده|بفرست|ارسال کن|بنویس)",
                 re.I,
@@ -71,7 +76,7 @@ _RULES: tuple[tuple[str, str, tuple[re.Pattern[str], ...]], ...] = (
             re.compile(r"شماره\s*کارت", re.I),
             re.compile(r"کارت\s*بانکی", re.I),
             re.compile(r"(?:سود تضمینی|درآمد تضمینی).{0,55}(?:پول|مبلغ|وجه|حساب|واریز|منتقل)", re.I),
-            re.compile(r"(?:پول|مبلغ|وجه).{0,35}(?:واریز کن|واریز کنید|منتقل کن|منتقل کنید|انتقال بده|انتقال دهید|وجه بزن)", re.I),
+            re.compile(r"(?:پول|مبلغ|وجه|سرمایه).{0,35}(?:واریز کن|واریز کنید|منتقل کن|منتقل کنید|انتقال بده|انتقال دهید|وجه بزن)", re.I),
             re.compile(r"(?:واریز کن|واریز کنید|انتقال بده|انتقال دهید).{0,35}(?:پول|مبلغ|وجه|سرمایه)", re.I),
             re.compile(r"(?:به این حساب|به حساب من).{0,25}(?:وجه بزن|پول واریز کن|مبلغ واریز کن)", re.I),
         ),
