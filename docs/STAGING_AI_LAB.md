@@ -114,11 +114,14 @@ Hugging Face, pinned to revision
 384-dimensional sentence embedding model for 50 languages and declares the
 Apache-2.0 license.
 
-The model binary is intentionally not committed to Git. On the first
-`ai-up ai_moderation` or `ai-up embedded_ai` run, Sentence-Transformers
-downloads the pinned model snapshot into the Docker named volume
-`embedding_model_hub_cache` mounted at `/app/model-cache`. The same cache
-is reused on subsequent container starts. The empty historical
+The model binary is intentionally not committed to Git. Before
+`ai_moderation`, Matching, or Embedding starts, `ai-service.sh ai-up`
+invokes `scripts/staging/prepare-embedding-model.sh`. That one-shot container
+downloads the pinned snapshot into the Docker named volume
+`embedding_model_hub_cache` mounted at `/app/model-cache`, creates a Persian
+embedding, and verifies its 384-dimensional finite output. The actual service
+then starts using the same cache. Subsequent starts reuse it without another
+download. The empty historical
 `python-ai/services/embedded_ai/models/minilm-model` bind mount is replaced
 in the Staging overlay, so it cannot shadow the downloaded model.
 
@@ -137,7 +140,9 @@ To inspect the runtime state:
 The first model load requires outbound access to Hugging Face and several
 hundred megabytes of free disk space. No Hugging Face token is required for
 this public model. The named volume persists across container recreation;
-do not delete it when rebuilding the service.
+do not delete it when rebuilding the service. The staging base-image builder
+tracks each Dockerfile hash so a changed cache-permission layer is rebuilt
+instead of silently reusing an old local base image.
 
 Personality still has separate local sentiment/emotion model assets that have
 not been provisioned. A running container or a plain HTTP /health response
