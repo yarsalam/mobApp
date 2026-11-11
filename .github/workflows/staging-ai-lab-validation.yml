@@ -1,5 +1,9 @@
 name: Staging AI Lab validation
 
+concurrency:
+  group: staging-ai-lab-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     paths:
