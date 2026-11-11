@@ -51,7 +51,7 @@ jobs:
           chmod 600 .env.staging
 
       - name: Validate shell scripts
-        run: bash -n scripts/staging/bootstrap.sh scripts/staging/ai-service.sh scripts/staging/build-ai-base.sh scripts/staging/codespaces-start.sh
+        run: bash -n scripts/staging/bootstrap.sh scripts/staging/ai-service.sh scripts/staging/build-ai-base.sh scripts/staging/prepare-embedding-model.sh scripts/staging/codespaces-start.sh
 
       - name: Validate Python evaluation scripts
         run: python -m py_compile scripts/ai-eval/generate_fixtures.py scripts/ai-eval/test_fixtures.py scripts/ai-eval/evaluate_moderation.py
