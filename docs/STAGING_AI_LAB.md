@@ -29,16 +29,21 @@ backend plus one AI model at a time.
    would require paid usage, do not create it; tell us which machine types are
    shown.
 3. Keep both forwarded ports private.
-4. When the browser editor is ready, the post-create hook will have generated
-   the private `.env.staging` file. In the integrated terminal, run:
+4. The post-create hook generates a private `.env.staging` file. The
+   post-start hook then automatically validates Compose, starts MySQL, Redis,
+   Qdrant and the Backend, builds only the AI Ops dependency chain, starts
+   `ai_ops`, and waits for its HTTP health endpoint.
+5. When the Codespace finishes starting, open the **Ports** tab. The staging
+   API (5001) and AI Ops (18025) are forwarded as private ports. No terminal
+   command is required to bring up the initial test environment.
+6. Optional diagnostics in the integrated terminal:
 
-       docker compose version
-       bash scripts/staging/ai-service.sh validate
-       bash scripts/staging/ai-service.sh base-up
+       bash scripts/staging/ai-service.sh status
+       bash scripts/staging/ai-service.sh ai-logs ai_ops
 
-5. Once the base stack reports healthy, start one AI service, for example:
-
-       bash scripts/staging/ai-service.sh ai-up ai_ops
+   Other AI services can be started one at a time with
+   `bash scripts/staging/ai-service.sh ai-up SERVICE_NAME` and stopped with
+   `bash scripts/staging/ai-service.sh ai-stop SERVICE_NAME`.
 
 
 1. Open the yarsalam/mobApp repository on GitHub.
