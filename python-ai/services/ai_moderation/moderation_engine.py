@@ -6,42 +6,11 @@ import os
 from typing import Dict, List
 
 import httpx
+from moderation_rules import rule_based_check
 
 logger = logging.getLogger(__name__)
 
 EMBEDDING_SERVICE_URL = os.getenv("EMBEDDING_SERVICE_URL", "http://embedded_ai:8100")
-
-_BANNED_KEYWORDS: List[str] = [
-    "تلگرام",
-    "واتساپ",
-    "اینستاگرام",
-    "کانال",
-    "گروه",
-    "ایدی",
-    "telegram",
-    "whatsapp",
-    "instagram",
-    "@",
-    "t.me",
-    "خرید",
-    "فروش",
-    "قیمت",
-    "تومان",
-    "ریال",
-]
-
-_VIOLENCE_KEYWORDS: List[str] = [
-    "کشتن",
-    "مرگ",
-    "خودکشی",
-    "آزار",
-    "تهدید",
-    "kill",
-    "murder",
-    "suicide",
-    "threat",
-    "abuse",
-]
 
 _BANNED_EXEMPLARS: List[str] = [
     "لطفاً آیدی تلگرامت رو بده",
@@ -52,7 +21,6 @@ _BANNED_EXEMPLARS: List[str] = [
 ]
 
 SEMANTIC_THRESHOLD = 0.72
-MAX_TEXT_LENGTH = 2000
 
 
 class ModerationEngine:
@@ -99,37 +67,9 @@ class ModerationEngine:
     # ── لایه rule-based ───────────────────────────────────────────────────────
 
     def _rule_based_check(self, text: str) -> Dict:
-        text_lower = text.lower()
-
-        for kw in _BANNED_KEYWORDS:
-            if kw.lower() in text_lower:
-                return {
-                    "allowed": False,
-                    "reason": "banned_keyword",
-                    "matched": kw,
-                    "confidence": 1.0,
-                    "layer": "rule",
-                }
-
-        for kw in _VIOLENCE_KEYWORDS:
-            if kw.lower() in text_lower:
-                return {
-                    "allowed": False,
-                    "reason": "violence_keyword",
-                    "matched": kw,
-                    "confidence": 0.9,
-                    "layer": "rule",
-                }
-
-        if len(text) > MAX_TEXT_LENGTH:
-            return {
-                "allowed": False,
-                "reason": "text_too_long",
-                "confidence": 1.0,
-                "layer": "rule",
-            }
-
-        return {"allowed": True, "reason": None, "confidence": 1.0, "layer": "rule"}
+        # High-specificity contextual rules live in a pure, independently
+        # testable module. Broad isolated-word substring blocking is avoided.
+        return rule_based_check(text)
 
     # ── لایه semantic ─────────────────────────────────────────────────────────
 
