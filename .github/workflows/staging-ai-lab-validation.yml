@@ -13,6 +13,8 @@ on:
       - "python-ai/downloaded_wheels/.gitkeep"
       - ".github/workflows/staging-ai-lab-validation.yml"
       - "docs/STAGING_AI_LAB.md"
+      - ".devcontainer/devcontainer.json"
+      - ".gitignore"
   push:
     branches: [main]
     paths:
@@ -46,6 +48,9 @@ jobs:
 
       - name: Validate shell scripts
         run: bash -n scripts/staging/bootstrap.sh scripts/staging/ai-service.sh scripts/staging/build-ai-base.sh
+
+      - name: Validate Codespaces devcontainer configuration
+        run: python -m json.tool .devcontainer/devcontainer.json >/dev/null
 
       - name: Validate staging Compose without starting services
         run: |
