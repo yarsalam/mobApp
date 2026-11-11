@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 EXPECTED_DIMENSION = 384
+EXPECTED_MODEL_REVISION = "e8f8c211226b894fcb81acc59f3b34ba3efd5f42"
 
 
 def get_json(url: str, timeout: int = 30) -> dict[str, Any]:
@@ -84,6 +85,17 @@ def main() -> int:
     )
     if sample_embedding.get("dimension") != EXPECTED_DIMENSION:
         raise SystemExit(f"Unexpected embedding dimension: {sample_embedding.get('dimension')}")
+    if sample_embedding.get("model_revision") != EXPECTED_MODEL_REVISION:
+        raise SystemExit(f"Unexpected model revision: {sample_embedding.get('model_revision')}")
+    vector = sample_embedding.get("embedding")
+    if not isinstance(vector, list) or len(vector) != EXPECTED_DIMENSION:
+        raise SystemExit("Embedding vector length does not match the model contract")
+    if any(
+        isinstance(value, bool) or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        for value in vector
+    ):
+        raise SystemExit("Embedding vector contains non-finite or non-numeric values")
 
     moderation_health = get_json(f"{args.base_url}/health")
     if moderation_health.get("status") != "healthy":
