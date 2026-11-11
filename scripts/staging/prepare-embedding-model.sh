@@ -76,10 +76,11 @@ if not np.isfinite(vector).all():
     raise SystemExit("Embedding output contains non-finite values")
 
 weight_bytes = (model_path / "model.safetensors").stat().st_size
+cache_path = os.environ.get("HF_HOME")
 print(
     f"MODEL_READY repo={repo_id} revision={revision} "
     f"dimension={vector.shape[0]} safetensors_bytes={weight_bytes} "
-    f"cache={os.environ.get('HF_HOME')}",
+    f"cache={cache_path}",
     flush=True,
 )
 '
