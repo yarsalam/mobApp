@@ -23,7 +23,7 @@ forwarding for the API and AI Ops test ports. This machine is intended for the
 backend plus one AI model at a time.
 
 1. Open the branch-specific Codespaces creation page:
-   https://github.com/codespaces/new?repo=1409282513&ref=infra%2Fstaging-ai-lab-2026-11
+   https://codespaces.new/yarsalam/mobApp/tree/infra%2Fstaging-ai-lab-2026-11
 2. Confirm the payer displayed by GitHub is your personal account and choose a
    machine matching 4 cores / 16 GB RAM. If that machine is unavailable or
    would require paid usage, do not create it; tell us which machine types are
