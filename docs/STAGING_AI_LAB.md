@@ -105,11 +105,43 @@ Dockerfiles and builds only the base-image dependency chain needed by the
 selected AI service. Production Dockerfiles and production image workflows are
 not replaced.
 
-Some model assets are still absent from the repository. In particular,
-Personality expects local sentiment/emotion weights, and Embedding expects a
-MiniLM model path. A running container or an HTTP /health response alone is
-not proof that the model is loaded. Missing model assets must be reported as a
-blocker, not replaced with fake "healthy" data.
+## Embedding model provisioning
+
+The Staging Embedding service uses the public
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` model from
+Hugging Face, pinned to revision
+`e8f8c211226b894fcb81acc59f3b34ba3efd5f42`. The model card describes a
+384-dimensional sentence embedding model for 50 languages and declares the
+Apache-2.0 license.
+
+The model binary is intentionally not committed to Git. On the first
+`ai-up ai_moderation` or `ai-up embedded_ai` run, Sentence-Transformers
+downloads the pinned model snapshot into the Docker named volume
+`embedding_model_hub_cache` mounted at `/app/model-cache`. The same cache
+is reused on subsequent container starts. The empty historical
+`python-ai/services/embedded_ai/models/minilm-model` bind mount is replaced
+in the Staging overlay, so it cannot shadow the downloaded model.
+
+The Embedding health check now requires all of the following: the model is
+loaded, the embedding dimension is 384, and Redis responds to ping. Moderation
+depends on Embedding being healthy rather than merely started. If the model
+cannot be downloaded or loaded, Moderation will not start in this Staging
+profile. Do not bypass that dependency or label the service healthy.
+
+To inspect the runtime state:
+
+    docker logs embedded_ai --tail=100
+    curl -fsS http://127.0.0.1:18104/health
+    curl -fsS http://127.0.0.1:18018/health
+
+The first model load requires outbound access to Hugging Face and several
+hundred megabytes of free disk space. No Hugging Face token is required for
+this public model. The named volume persists across container recreation;
+do not delete it when rebuilding the service.
+
+Personality still has separate local sentiment/emotion model assets that have
+not been provisioned. A running container or a plain HTTP /health response
+alone is not proof that a model is loaded.
 
 ## Synthetic benchmark
 
@@ -131,13 +163,23 @@ Every record is tagged synthetic_only and all identities use SYN-* identifiers.
 These are controlled test inputs, not real-user data, not training data and not
 evidence about the Yarsalam audience or psychometric accuracy.
 
-The first validation workflow checks Compose configuration and fixture
-contracts. It does not yet certify AI output quality. Service-specific
-evaluation must be added against inspected endpoint contracts and available
-model assets. Moderation results require confusion matrices and false-positive
-analysis; OCEAN needs independent Persian human/validated questionnaire data;
-Matching needs offline ranking and hard-constraint evaluation. Passing this
-synthetic suite alone does not authorize broad real-world marketing claims.
+The validation workflow checks Compose configuration and fixture
+contracts. The runtime Moderation job downloads the pinned Embedding model,
+checks its actual 384-dimensional output, and runs the unique synthetic
+Moderation cases through the live HTTP API. It uploads a confusion-matrix
+report, excluding `review` labels from binary accuracy because the current
+Python API exposes only allow/block outcomes. This is a plumbing and
+regression check, not human-validated policy ground truth. OCEAN needs
+independent Persian human/validated questionnaire data; Matching needs
+offline ranking and hard-constraint evaluation. Passing synthetic fixtures
+alone does not authorize broad real-world marketing claims.
+
+To reproduce the Moderation evaluation after generating the fixtures and
+starting `ai_moderation`:
+
+    python scripts/ai-eval/evaluate_moderation.py \\
+      --fixtures /tmp/yarsalam-ai-eval/moderation_cases.jsonl \\
+      --output /tmp/moderation-evaluation.json
 
 ## Codespaces free quota
 
