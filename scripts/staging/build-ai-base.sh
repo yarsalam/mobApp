@@ -7,9 +7,20 @@ SERVICE="${1:-}"
 
 build_base() {
   local image="$1" dockerfile="$2" base_image="${3:-}"
-  if docker image inspect "$image:latest" >/dev/null 2>&1; then return; fi
-  echo "Building staging base image $image"
-  local -a args=(docker build -f "python-ai/staging-base-images/$dockerfile" -t "$image:latest")
+  local dockerfile_path="python-ai/staging-base-images/$dockerfile"
+  local fingerprint
+  fingerprint="$(sha256sum "$dockerfile_path" | awk '{print $1}')"
+
+  if docker image inspect "$image:latest" >/dev/null 2>&1; then
+    local existing_fingerprint
+    existing_fingerprint="$(docker image inspect "$image:latest" --format '{{ index .Config.Labels "org.yarsalam.staging.dockerfile-sha256" }}' 2>/dev/null || true)"
+    if [[ "$existing_fingerprint" == "$fingerprint" ]]; then
+      return
+    fi
+  fi
+
+  echo "Building/updating staging base image $image (Dockerfile sha256: $fingerprint)"
+  local -a args=(docker build -f "$dockerfile_path" --label "org.yarsalam.staging.dockerfile-sha256=$fingerprint" -t "$image:latest")
   if [[ -n "$base_image" ]]; then
     # --pull would ignore the already-built local FROM image and query Docker Hub.
     args+=(--build-context "$base_image=docker-image://$base_image:latest")
