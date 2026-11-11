@@ -109,6 +109,16 @@ services:
       embedded_ai:
         condition: service_healthy
     ports: !override ["127.0.0.1:18018:8018"]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import json, urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8018/health', timeout=4)); assert d.get('status') == 'healthy' and d.get('service') == 'ai_moderation', d"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
     deploy:
       resources:
         limits: {cpus: "1.00", memory: 1536M}
