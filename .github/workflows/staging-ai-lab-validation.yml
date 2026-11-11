@@ -175,3 +175,76 @@ jobs:
               -f docker-compose.yml -f docker-compose.production.yml \
               -f docker-compose.staging.yml stop ai_ops backend qdrant user-mysql redis || true
           fi
+
+  staging-runtime-moderation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create fresh isolated staging secrets
+        run: bash scripts/staging/bootstrap.sh
+
+      - name: Generate deterministic synthetic moderation fixtures
+        run: |
+          python scripts/ai-eval/generate_fixtures.py \
+            --seed 20261110 \
+            --output "$RUNNER_TEMP/yarsalam-ai-eval"
+
+      - name: Build and start Moderation with its real Embedding model
+        run: bash scripts/staging/ai-service.sh ai-up ai_moderation
+
+      - name: Verify model and service readiness
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 36); do
+            if curl --fail --silent http://127.0.0.1:18104/health | \
+              python -c 'import json,sys; d=json.load(sys.stdin); assert d["model_loaded"] is True and d["redis"] is True and d["dimension"] == 384'
+            then
+              break
+            fi
+            sleep 10
+          done
+          curl --fail --silent http://127.0.0.1:18104/health
+          curl --fail --silent http://127.0.0.1:18018/health
+
+      - name: Run the synthetic Persian moderation evaluation
+        run: |
+          python scripts/ai-eval/evaluate_moderation.py \
+            --fixtures "$RUNNER_TEMP/yarsalam-ai-eval/moderation_cases.jsonl" \
+            --output "$RUNNER_TEMP/moderation-evaluation.json"
+
+      - name: Upload moderation evaluation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yarsalam-moderation-evaluation
+          path: |
+            ${{ runner.temp }}/moderation-evaluation.json
+            ${{ runner.temp }}/yarsalam-ai-eval/manifest.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Capture moderation and embedding logs on failure
+        if: failure()
+        run: |
+          docker compose --env-file .env.staging -p yarsalam-staging \
+            -f docker-compose.yml -f docker-compose.production.yml \
+            -f docker-compose.staging.yml logs --no-color --tail=160 \
+            ai_moderation embedded_ai redis user-mysql || true
+
+      - name: Stop staging containers without deleting volumes
+        if: always()
+        run: |
+          if [[ -s .env.staging ]]; then
+            docker compose --env-file .env.staging -p yarsalam-staging \
+              -f docker-compose.yml -f docker-compose.production.yml \
+              -f docker-compose.staging.yml stop \
+              ai_moderation embedded_ai user-mysql redis || true
+          fi
