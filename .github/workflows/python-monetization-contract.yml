@@ -1,0 +1,36 @@
+name: Python Monetization Contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "python-ai/services/ai_monetization/**"
+      - "python-ai/tests/test_ai_monetization_contract.py"
+      - ".github/workflows/python-monetization-contract.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  monetization-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install minimal contract dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.1.3
+      - name: Compile Monetization source
+        run: |
+          python -m py_compile \
+            python-ai/services/ai_monetization/app.py \
+            python-ai/services/ai_monetization/core/feature_builder.py \
+            python-ai/services/ai_monetization/core/model_loader.py \
+            python-ai/services/ai_monetization/routes/promotion.py \
+            python-ai/services/ai_monetization/train_model.py
+      - name: Verify feature, fallback and model-state contracts
+        env:
+          PYTHONPATH: python-ai/services/ai_monetization
+        run: python python-ai/tests/test_ai_monetization_contract.py -v
