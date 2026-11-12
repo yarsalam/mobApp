@@ -17,6 +17,10 @@ on:
       - "src/redis/redis.service.ts"
       - "src/message/**"
       - "src/payments/**"
+      - "src/feed/**"
+      - "src/user-metrics/**"
+      - "src/admin-api/controllers/growth/monetization.controller.ts"
+      - "src/admin-api/controllers/product/experiments.controller.ts"
       - "src/user-event/**"
       - "python-ai/services/ml_service/**"
       - "python-ai/tests/test_matching_scoring.py"
@@ -67,6 +71,9 @@ jobs:
           personality.service.spec.ts
           app.controller.spec.ts
           payments.service.spec.ts
+          payments.controller.spec.ts
+          promotion-exposure.service.spec.ts
+          feed.controller.spec.ts
           wallet.service.spec.ts
           card-transfer.provider.spec.ts
           crypto.provider.spec.ts
