@@ -195,6 +195,8 @@ async def collect_feedback(feedback: FeedbackItem):
         raise HTTPException(422, "user_id must be positive")
     try:
         variant = FeatureBuilder.normalize_variant(feedback.variant)
+        # Store only complete pre-exposure snapshots; never backfill defaults.
+        FeatureBuilder.build_features(feedback.features, variant)
         if feedback.label not in (None, 0, 1):
             raise ValueError("label must be 0, 1, or null")
         if feedback.propensity is not None and (
