@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
 import { User } from '../users/entities/user.entity';
@@ -22,7 +22,7 @@ export class FeatureService {
       this.getUserEvents(userId),
     ]);
 
-    if (!user) return this.getDefaultFeatures();
+    if (!user) throw new NotFoundException('User feature profile not found');
 
     const daysSinceSignup = Math.max(
       1,
@@ -42,7 +42,9 @@ export class FeatureService {
       engagement_score: await this.calculateEngagementScore(userId, events),
       days_since_signup: daysSinceSignup,
       swipe_velocity: await this.calculateSwipeVelocity(userId, last7Days),
-      session_depth: events.length,
+      recent_event_count: events.filter(
+        (event) => new Date(event.createdAt).getTime() >= last7Days.getTime(),
+      ).length,
       dismiss_rate: await this.calculateDismissRate(userId, last30Days),
       promotion_ctr: await this.calculatePromotionCTR(userId, last30Days),
       last_purchase_days: await this.getLastPurchaseDays(userId),
@@ -70,7 +72,7 @@ export class FeatureService {
     userId: number,
     events: PartitionedEvent[],
   ): Promise<number> {
-    if (events.length === 0) return 0.5;
+    if (events.length === 0) return 0;
 
     const weights: Partial<Record<EventType, number>> = {
       [EventType.LIKE]: 2,
@@ -118,7 +120,7 @@ export class FeatureService {
       }),
     ]);
 
-    if (shown === 0) return 0.2;
+    if (shown === 0) return 0;
     return Math.min(1, dismissed / shown);
   }
 
@@ -143,7 +145,7 @@ export class FeatureService {
       }),
     ]);
 
-    if (shown === 0) return 0.1;
+    if (shown === 0) return 0;
     return clicked / shown;
   }
 
@@ -161,19 +163,4 @@ export class FeatureService {
     );
   }
 
-  private getDefaultFeatures(): Record<string, number> {
-    return {
-      engagement_score: 0.5,
-      days_since_signup: 1,
-      dismiss_rate: 0.2,
-      last_purchase_days: 999,
-      swipe_velocity: 0,
-      avg_session_time: 180,
-      promotion_ctr: 0.1,
-      conversion_score: 0.3,
-      hour_of_day: 12,
-      is_weekend: 0,
-      session_depth: 0,
-    };
-  }
 }
