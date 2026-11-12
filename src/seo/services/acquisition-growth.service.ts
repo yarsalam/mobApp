@@ -39,11 +39,11 @@ export class AcquisitionGrowthService {
       'SUM(CASE WHEN u.isCompleted = 1 THEN 1 ELSE 0 END) AS completedProfiles, ' +
       'SUM(CASE WHEN u.isVerified = 1 THEN 1 ELSE 0 END) AS verifiedUsers, ' +
       'SUM(CASE WHEN u.isFaceVerified = 1 THEN 1 ELSE 0 END) AS faceVerifiedUsers ' +
-      'FROM \`user\` u WHERE u.createdAt >= ? AND u.createdAt <= ? GROUP BY source';
+      'FROM `user` u WHERE u.createdAt >= ? AND u.createdAt <= ? GROUP BY source';
 
     const activationSql =
       'SELECT ' + SOURCE_SQL + ' AS source, COUNT(DISTINCT u.id) AS activatedUsers ' +
-      'FROM \`user\` u INNER JOIN user_events e ON e.userId = u.id ' +
+      'FROM `user` u INNER JOIN user_events e ON e.userId = u.id ' +
       'WHERE u.createdAt >= ? AND u.createdAt <= ? ' +
       'AND e.createdAt >= u.createdAt AND e.createdAt < DATE_ADD(u.createdAt, INTERVAL 7 DAY) ' +
       "AND e.type IN ('like', 'match', 'message_sent') GROUP BY source";
@@ -55,13 +55,13 @@ export class AcquisitionGrowthService {
       'AND e.createdAt >= DATE_ADD(u.createdAt, INTERVAL ' + day + ' DAY) ' +
       'AND e.createdAt < DATE_ADD(u.createdAt, INTERVAL ' + (day + 1) + ' DAY)) ' +
       'THEN 1 ELSE 0 END) AS retainedUsers ' +
-      'FROM \`user\` u WHERE u.createdAt >= ? AND u.createdAt < ? GROUP BY source';
+      'FROM `user` u WHERE u.createdAt >= ? AND u.createdAt < ? GROUP BY source';
 
     const revenueSql =
       'SELECT ' + SOURCE_SQL + ' AS source, p.currency AS currency, ' +
       'COUNT(*) AS paidTransactions, COUNT(DISTINCT u.id) AS payingUsers, ' +
       'SUM(p.amount) AS amountMinorUnits ' +
-      'FROM payments p INNER JOIN \`user\` u ON u.id = p.userId ' +
+      'FROM payments p INNER JOIN `user` u ON u.id = p.userId ' +
       "WHERE p.status = 'paid' AND COALESCE(p.confirmedAt, p.createdAt) >= ? " +
       'AND COALESCE(p.confirmedAt, p.createdAt) <= ? ' +
       'GROUP BY source, p.currency ORDER BY source, p.currency';
@@ -139,7 +139,7 @@ export class AcquisitionGrowthService {
         currency: String(row.currency || 'unknown'),
         paidTransactions: this.count(row.paidTransactions),
         payingUsers: this.count(row.payingUsers),
-        amountMinorUnits: this.count(row.amountMinorUnits),
+        amountMinorUnits: String(row.amountMinorUnits ?? '0'),
       })),
       cac: {
         value: null,
