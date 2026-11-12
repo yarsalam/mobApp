@@ -25,6 +25,8 @@ on:
       - "python-ai/services/ml_service/**"
       - "python-ai/tests/test_matching_scoring.py"
       - "python-ai/services/ai_moderation/**"
+      - "python-ai/services/ai_feedback/**"
+      - "python-ai/tests/test_ai_feedback_contract.py"
       - "python-ai/tests/test_ai_moderation_fail_closed.py"
       - "src/admin-api/controllers/revenue/**"
       - "package.json"
@@ -104,7 +106,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check pytest numpy scipy scikit-learn joblib fastapi pydantic httpx
       - name: Run LTV provenance and model integrity contracts
         working-directory: python-ai
-        run: python -m pytest -q tests/test_ai_revenue_predictor.py tests/test_revenue_feature_contract.py
+        run: python -m pytest -q tests/test_ai_revenue_predictor.py tests/test_revenue_feature_contract.py tests/test_ai_feedback_contract.py
 
   matching-python:
     runs-on: ubuntu-latest
