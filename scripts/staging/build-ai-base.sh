@@ -50,8 +50,9 @@ case "$SERVICE" in
     build_ml_lite
     build_base python-ai-ml-http Dockerfile.ml-http python-ai-ml-lite ;;
   ai_revenue)
-    build_tf
-    build_base python-ai-tf-panda Dockerfile.tf-panda python-ai-tf ;;
+    # Revenue uses NumPy/scikit-learn/joblib, all included in the lightweight ML base.
+    # Keep TensorFlow for image/verification only; avoid an unnecessary PyPI download.
+    build_ml_lite ;;
   ai_image|ai_verification)
     build_tf
     build_base python-ai-tf-pillow Dockerfile.tf-pillow python-ai-tf ;;
