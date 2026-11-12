@@ -72,8 +72,6 @@ export class TechnicalSEOService {
         metricDate: new Date(),
         type: 'technical',
         data: metrics,
-        // No arbitrary composite SEO score is stored.
-        score: null,
       });
 
       return metrics;
