@@ -225,7 +225,7 @@ export class FeedPromotionService {
         createdAt: new Date().toISOString(),
       }),
       'EX',
-      7 * 24 * 3600,
+      8 * 24 * 3600,
     );
 
     // ردیابی و لاگ
