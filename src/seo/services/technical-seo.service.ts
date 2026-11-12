@@ -20,51 +20,47 @@ export class TechnicalSEOService {
         this.externalTools.getPageSpeedMetrics(undefined, 'mobile'),
         this.externalTools.getPageSpeedMetrics(undefined, 'desktop'),
         this.externalTools.getCruxData(),
-        // FIX: قبلاً getSearchConsoleData(28) بود — پارامتر اول حالا siteUrl است
         this.externalTools.getSearchConsoleData(undefined, 28),
       ]);
 
       const metrics = {
-        // ── Lab metrics (Lighthouse / mobile) ───────────────────────────────
-        lcp: psiMobile?.lcp ?? 2.5,
-        fid: psiMobile?.fid ?? 100,
-        cls: psiMobile?.cls ?? 0.1,
-        ttfb: psiMobile?.ttfb ?? 200,
-        fcp: psiMobile?.fcp ?? 1.5,
-
-        // ── Scores ──────────────────────────────────────────────────────────
-        performanceScore: psiMobile?.performanceScore ?? 0,
-        seoScore: psiMobile?.seoScore ?? 0,
-        accessibilityScore: psiMobile?.accessibilityScore ?? 0,
-
-        // ── FIX: فیلدهایی که admin-api-seo.controller.ts انتظار دارد ──────
-        // mobileScore = همان performanceScore موبایل (0–100)
-        mobileScore: psiMobile?.mobileScore ?? psiMobile?.performanceScore ?? 0,
-        // crawlErrors و brokenLinks از GSC/API جداگانه — فعلاً placeholder صفر
-        crawlErrors: gsc?.crawlErrors ?? 0,
-        brokenLinks: gsc?.brokenLinks ?? 0,
-
-        // ── Desktop ─────────────────────────────────────────────────────────
-        desktopLcp: psiDesktop?.lcp ?? 0,
-        desktopCls: psiDesktop?.cls ?? 0,
-        desktopScore: psiDesktop?.performanceScore ?? 0,
-
-        // ── Field data (CrUX — داده واقعی Chrome) ───────────────────────────
+        dataAvailable: Boolean(
+          psiMobile?.dataAvailable ||
+          psiDesktop?.dataAvailable ||
+          crux ||
+          gsc?.dataAvailable,
+        ),
+        sources: {
+          pageSpeedMobile: psiMobile?.dataAvailable ? 'available' : 'unavailable',
+          pageSpeedDesktop: psiDesktop?.dataAvailable ? 'available' : 'unavailable',
+          chromeUxReport: crux ? 'available' : 'unavailable',
+          searchConsole: gsc?.dataAvailable ? 'available' : 'unavailable',
+        },
+        // Current Core Web Vitals: LCP, INP and CLS. FID is obsolete.
+        lcp: psiMobile?.lcp ?? null,
+        inp: psiMobile?.inp ?? psiMobile?.fieldData?.inp?.value ?? null,
+        cls: psiMobile?.cls ?? null,
+        ttfb: psiMobile?.ttfb ?? null,
+        fcp: psiMobile?.fcp ?? null,
+        performanceScore: psiMobile?.performanceScore ?? null,
+        seoScore: psiMobile?.seoScore ?? null,
+        accessibilityScore: psiMobile?.accessibilityScore ?? null,
+        mobileScore: psiMobile?.performanceScore ?? null,
+        crawlErrors: null,
+        brokenLinks: null,
+        desktopLcp: psiDesktop?.lcp ?? null,
+        desktopCls: psiDesktop?.cls ?? null,
+        desktopScore: psiDesktop?.performanceScore ?? null,
         fieldLcp: crux?.lcp?.p75 ?? null,
         fieldInp: crux?.inp?.p75 ?? null,
         fieldCls: crux?.cls?.p75 ?? null,
         fieldTtfb: crux?.ttfb?.p75 ?? null,
-
-        // ── Opportunities ───────────────────────────────────────────────────
         opportunities: psiMobile?.opportunities ?? [],
-
-        // ── Search Console ──────────────────────────────────────────────────
-        clicks: gsc?.totalClicks ?? 0,
-        impressions: gsc?.totalImpressions ?? 0,
-        avgCTR: gsc?.avgCTR ?? 0,
-        avgPosition: gsc?.avgPosition ?? 0,
+        clicks: gsc?.totalClicks ?? null,
+        impressions: gsc?.totalImpressions ?? null,
+        avgCTR: gsc?.avgCTR ?? null,
+        avgPosition: gsc?.avgPosition ?? null,
         topQueries: gsc?.topQueries ?? [],
-
         timestamp: new Date(),
       };
 
@@ -72,48 +68,30 @@ export class TechnicalSEOService {
         metricDate: new Date(),
         type: 'technical',
         data: metrics,
-        score: this.calculateTechnicalScore(metrics),
+        // No arbitrary composite SEO score is stored.
+        score: null,
       });
 
       return metrics;
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Technical SEO analysis failed: ${message}`);
-      return null;
+      this.logger.error('Technical SEO analysis failed: ' + message);
+      return {
+        dataAvailable: false,
+        status: 'unavailable',
+        reason: 'technical_measurement_failed',
+        timestamp: new Date(),
+      };
     }
   }
 
-  async notifyNewContent(
-    urls: string[],
-  ): Promise<{ success: number; failed: number }> {
-    return this.externalTools.batchRequestIndexing(urls);
-  }
-
-  private calculateTechnicalScore(metrics: any): number {
-    let score = 100;
-
-    if (metrics.lcp > 4) score -= 20;
-    else if (metrics.lcp > 2.5) score -= 10;
-
-    if (metrics.cls > 0.25) score -= 15;
-    else if (metrics.cls > 0.1) score -= 8;
-
-    if (metrics.ttfb > 1800) score -= 10;
-    else if (metrics.ttfb > 800) score -= 5;
-
-    if (metrics.fieldLcp !== null) {
-      if (metrics.fieldLcp > 4) score -= 15;
-      else if (metrics.fieldLcp > 2.5) score -= 8;
-    }
-
-    if (metrics.fieldInp !== null) {
-      if (metrics.fieldInp > 500) score -= 10;
-      else if (metrics.fieldInp > 200) score -= 5;
-    }
-
-    if (metrics.crawlErrors > 10) score -= metrics.crawlErrors * 2;
-    if (metrics.brokenLinks > 0) score -= metrics.brokenLinks * 5;
-
-    return Math.max(0, Math.min(100, score));
+  async notifyNewContent(urls: string[]) {
+    // Google Indexing API is not a generic indexing endpoint for ordinary pages.
+    return {
+      success: 0,
+      failed: urls.length,
+      status: 'not_supported_for_general_pages',
+      reason: 'Use sitemap discovery and Search Console for ordinary website pages.',
+    };
   }
 }
