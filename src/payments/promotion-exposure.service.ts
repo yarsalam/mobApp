@@ -294,15 +294,9 @@ export class PromotionExposureService {
       .digest('hex')
       .slice(0, 32);
 
-    const firstConversion = await this.redis.set(
-      `promo:event:${promotionId}:converted`,
-      '1',
-      'EX',
-      this.EVENT_TTL_SECONDS,
-      'NX',
-    );
-    if (!firstConversion) return { success: true, duplicate: true };
-
+    // Persist the durable database event before setting the Redis dedupe
+    // marker. If Redis is temporarily unavailable, a retry remains safe
+    // because UserEventService.log is itself idempotent.
     await this.userEventService.log({
       userId,
       type: EventType.PROMOTION_CONVERTED,
@@ -314,6 +308,15 @@ export class PromotionExposureService {
       },
       idempotencyKey: `promotion:${promotionId}:conversion`,
     });
+
+    const firstConversion = await this.redis.set(
+      `promo:event:${promotionId}:converted`,
+      '1',
+      'EX',
+      this.EVENT_TTL_SECONDS,
+      'NX',
+    );
+    if (!firstConversion) return { success: true, duplicate: true };
 
     if (firstConversion) {
       await this.redis.set(
