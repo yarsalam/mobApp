@@ -1,5 +1,6 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import Redis from 'ioredis';
+import { createHash } from 'crypto';
 import { AiFeedbackService } from 'src/ai-feedback/ai-feedback.service';
 import { REDIS_CLIENT } from 'src/redis/redis.constants';
 import { PaywallService } from './paywall/paywall.service';
@@ -7,11 +8,26 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom, timeout } from 'rxjs';
 import { FeatureService } from '../user-metrics/feature.service';
+import { UserEventService } from 'src/user-event/user-event.service';
+import { EventType } from 'src/user-event/type/event-type.enum';
+
+interface PromotionContext {
+  userId: number;
+  variant: string;
+  score?: number;
+  phase?: string;
+  tone?: string;
+  experimentId?: string;
+  assignmentId?: string;
+  propensity?: number;
+}
 
 @Injectable()
 export class PromotionExposureService {
   private readonly logger = new Logger(PromotionExposureService.name);
   private readonly mlUrl: string;
+  private readonly ATTRIBUTION_TTL_SECONDS = 7 * 24 * 60 * 60;
+  private readonly EVENT_TTL_SECONDS = 30 * 24 * 60 * 60;
 
   private readonly DAILY_LIMITS: Record<string, number> = {
     boost: 3,
@@ -38,6 +54,7 @@ export class PromotionExposureService {
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
     private readonly featureService: FeatureService,
+    private readonly userEventService: UserEventService,
   ) {
     this.mlUrl = this.configService.get(
       'AI_MONETIZATION_URL',
@@ -50,64 +67,151 @@ export class PromotionExposureService {
       const dailyKey = `promo:daily:${userId}:${variant}:${this.getTodayDate()}`;
       const dailyCount = await this.redis.get(dailyKey);
       const dailyLimit = this.DAILY_LIMITS[variant] ?? 2;
-      if (dailyCount && parseInt(dailyCount) >= dailyLimit) return false;
+      if (dailyCount && Number.parseInt(dailyCount, 10) >= dailyLimit) return false;
 
       const lastShownKey = `promo:last:${userId}:${variant}`;
       const lastShown = await this.redis.get(lastShownKey);
       if (lastShown) {
         const hoursSinceLastShow =
-          (Date.now() - parseInt(lastShown)) / (1000 * 60 * 60);
+          (Date.now() - Number.parseInt(lastShown, 10)) / (1000 * 60 * 60);
         const cooldown = this.COOLDOWN_HOURS[variant] ?? 6;
         if (hoursSinceLastShow < cooldown) return false;
       }
 
       const blockKey = `promo:block:${userId}:${variant}`;
-      const blocked = await this.redis.get(blockKey);
-      return !blocked;
+      return !(await this.redis.get(blockKey));
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`Error in canShow: ${message}`);
-      return true;
+      // Fail closed: do not exceed frequency limits when Redis is unavailable.
+      return false;
     }
   }
 
-  async trackImpression(userId: number, variant: string) {
-    try {
-      const today = this.getTodayDate();
-      const dailyKey = `promo:daily:${userId}:${variant}:${today}`;
-      await this.redis.incr(dailyKey);
-      await this.redis.expire(dailyKey, 86400);
-      const lastShownKey = `promo:last:${userId}:${variant}`;
-      await this.redis.set(lastShownKey, Date.now().toString(), 'EX', 86400);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Error in trackImpression: ${message}`);
+  private async getPromotionContext(
+    userId: number,
+    promotionId: string,
+  ): Promise<PromotionContext> {
+    if (!promotionId || promotionId.length > 80) {
+      throw new NotFoundException('Promotion not found');
     }
+    const raw = await this.redis.get(`promo:map:${promotionId}`);
+    if (!raw) throw new NotFoundException('Promotion not found or attribution expired');
+
+    let context: PromotionContext;
+    try {
+      context = JSON.parse(raw) as PromotionContext;
+    } catch {
+      throw new NotFoundException('Promotion metadata is invalid');
+    }
+    if (!context || Number(context.userId) !== Number(userId) || !context.variant) {
+      throw new NotFoundException('Promotion does not belong to this user');
+    }
+    return context;
   }
 
-  async trackDismiss(userId: number, variant: string, promotionId: string) {
+  async trackImpression(
+    userId: number,
+    variant: string,
+    promotionId: string,
+  ): Promise<void> {
+    const context = await this.getPromotionContext(userId, promotionId);
+    if (context.variant !== variant) {
+      throw new NotFoundException('Promotion variant mismatch');
+    }
+
+    const firstSeen = await this.redis.set(
+      `promo:event:${promotionId}:shown`,
+      '1',
+      'EX',
+      this.EVENT_TTL_SECONDS,
+      'NX',
+    );
+    if (!firstSeen) return;
+
+    const today = this.getTodayDate();
+    const dailyKey = `promo:daily:${userId}:${variant}:${today}`;
+    await this.redis.incr(dailyKey);
+    await this.redis.expire(dailyKey, 86400);
+    await this.redis.set(
+      `promo:last:${userId}:${variant}`,
+      Date.now().toString(),
+      'EX',
+      86400,
+    );
+  }
+
+  async trackClick(
+    userId: number,
+    promotionId: string,
+  ): Promise<{ success: true; duplicate: boolean }> {
+    const context = await this.getPromotionContext(userId, promotionId);
+    await this.userEventService.log({
+      userId,
+      type: EventType.PROMOTION_CLICKED,
+      metadata: { promotionId, variant: context.variant },
+      idempotencyKey: `promotion:${promotionId}:click`,
+    });
+
+    const firstClick = await this.redis.set(
+      `promo:event:${promotionId}:click`,
+      '1',
+      'EX',
+      this.EVENT_TTL_SECONDS,
+      'NX',
+    );
+    if (firstClick) {
+      await this.sendFeedback(userId, promotionId, context, 'click');
+    }
+    return { success: true, duplicate: !firstClick };
+  }
+
+  async trackDismiss(
+    userId: number,
+    promotionId: string,
+  ): Promise<{ success: true; duplicate: boolean }> {
+    const context = await this.getPromotionContext(userId, promotionId);
+    const { variant } = context;
+
+    await this.userEventService.log({
+      userId,
+      type: EventType.PROMOTION_DISMISSED,
+      metadata: { promotionId, variant },
+      idempotencyKey: `promotion:${promotionId}:dismiss`,
+    });
+
+    const firstDismiss = await this.redis.set(
+      `promo:event:${promotionId}:dismiss`,
+      '1',
+      'EX',
+      this.EVENT_TTL_SECONDS,
+      'NX',
+    );
+    if (!firstDismiss) return { success: true, duplicate: true };
+
+    const dismissKey = `promo:dismiss:${userId}:${variant}`;
+    const newCount = await this.redis.incr(dismissKey);
+    await this.redis.expire(dismissKey, 604800);
+
+    if (newCount >= 3) {
+      await this.redis.set(`promo:block:${userId}:${variant}`, '1', 'EX', 86400);
+    }
+
+    if (['boost', 'credit', 'credits', 'vip', 'bundle'].includes(variant)) {
+      try {
+        await this.paywallService.adjustWeights(
+          context.phase || 'warm',
+          variant,
+          context.tone || 'soft_sell',
+          -0.5,
+        );
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(`Paywall adjustment after dismiss failed: ${message}`);
+      }
+    }
+
     try {
-      const dismissKey = `promo:dismiss:${userId}:${variant}`;
-      const count = await this.redis.get(dismissKey);
-      const newCount = count ? parseInt(count) + 1 : 1;
-      await this.redis.set(dismissKey, newCount.toString(), 'EX', 604800);
-
-      if (newCount >= 3) {
-        const blockKey = `promo:block:${userId}:${variant}`;
-        await this.redis.set(blockKey, '1', 'EX', 86400);
-      }
-
-      const promoMap = await this.redis.get(`promo:map:${promotionId}`);
-      const phase = promoMap ? JSON.parse(promoMap).phase || 'warm' : 'warm';
-      const product = variant;
-      const tone = promoMap
-        ? JSON.parse(promoMap).tone || 'soft_sell'
-        : 'soft_sell';
-
-      if (['boost', 'credit', 'credits', 'vip', 'bundle'].includes(product)) {
-        await this.paywallService.adjustWeights(phase, product, tone, -0.5);
-      }
-
       await this.aiFeedbackService.create({
         userId,
         feature: 'promotion',
@@ -115,22 +219,88 @@ export class PromotionExposureService {
         value: { variant, promotionId },
         convertedToPurchase: false,
       });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`AI feedback persistence after dismiss failed: ${message}`);
+    }
 
+    await this.sendFeedback(userId, promotionId, context, 'dismiss');
+    return { success: true, duplicate: false };
+  }
+
+  async trackConversion(
+    userId: number,
+    promotionId: string,
+    purchaseReference: string,
+    productCode: string,
+  ): Promise<{ success: true; duplicate: boolean }> {
+    const context = await this.getPromotionContext(userId, promotionId);
+    const purchaseHash = createHash('sha256')
+      .update(String(purchaseReference))
+      .digest('hex')
+      .slice(0, 32);
+
+    await this.userEventService.log({
+      userId,
+      type: EventType.PROMOTION_CONVERTED,
+      metadata: {
+        promotionId,
+        variant: context.variant,
+        productCode,
+        purchaseReference: purchaseHash,
+      },
+      idempotencyKey: `promotion:${promotionId}:conversion:${purchaseHash}`,
+    });
+
+    const firstConversion = await this.redis.set(
+      `promo:event:${promotionId}:conversion:${purchaseHash}`,
+      '1',
+      'EX',
+      this.ATTRIBUTION_TTL_SECONDS,
+      'NX',
+    );
+    if (firstConversion) {
+      await this.sendFeedback(
+        userId,
+        promotionId,
+        context,
+        'conversion',
+        1,
+        { product_code: productCode, purchase_reference: purchaseHash },
+      );
+    }
+    return { success: true, duplicate: !firstConversion };
+  }
+
+  private async sendFeedback(
+    userId: number,
+    promotionId: string,
+    context: PromotionContext,
+    eventType: 'click' | 'dismiss' | 'conversion',
+    label?: number,
+    extraContext: Record<string, unknown> = {},
+  ): Promise<void> {
+    try {
       const features = await this.featureService.getUserFeatures(userId);
+      const body: Record<string, unknown> = {
+        user_id: userId,
+        variant: context.variant,
+        features,
+        promotion_id: promotionId,
+        feedback_id: `promotion:${promotionId}:${eventType}${extraContext.purchase_reference ? ':' + extraContext.purchase_reference : ''}`,
+        event_type: eventType,
+        experiment_id: context.experimentId,
+        assignment_id: context.assignmentId,
+        propensity: context.propensity,
+        context: extraContext,
+      };
+      if (label !== undefined) body.label = label;
       await firstValueFrom(
-        this.httpService
-          .post(`${this.mlUrl}/api/feedback`, {
-            user_id: userId,
-            variant,
-            features,
-            label: 0,
-          })
-          .pipe(timeout(3000)),
+        this.httpService.post(`${this.mlUrl}/api/feedback`, body).pipe(timeout(3000)),
       );
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Error in trackDismiss: ${message}`);
-      return true;
+      this.logger.warn(`Monetization feedback delivery failed: ${message}`);
     }
   }
 
