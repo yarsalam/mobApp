@@ -26,7 +26,7 @@ class MonetizationFeatureContractTests(unittest.TestCase):
             "promotion_ctr": 0.15,
             "hour_of_day": 18,
             "is_weekend": 0,
-            "session_depth": 12,
+            "recent_event_count": 12,
             "profile_incomplete": 0,
             # These old placeholders must not affect schema-v2 features.
             "avg_session_time": 180,
