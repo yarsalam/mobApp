@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import numpy as np
 import redis as sync_redis
+import redis.asyncio as async_redis
 from fastapi import HTTPException
 
 # The training implementation is patched in the queue tests; keep this unit
@@ -65,10 +66,20 @@ def training_row(index, variant, label):
 
 class MonetizationRedisContractTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        # Each IsolatedAsyncioTestCase owns a fresh event loop. Never reuse the
+        # module-level async client across loops or its sockets become bound to
+        # a closed loop from the previous test.
+        self._original_redis_client = promotion.redis_client
+        promotion.redis_client = async_redis.from_url(
+            os.getenv("REDIS_URL", "redis://localhost:6379/15"),
+            decode_responses=True,
+        )
         await promotion.redis_client.flushdb()
 
     async def asyncTearDown(self):
         await promotion.redis_client.flushdb()
+        await promotion.redis_client.aclose()
+        promotion.redis_client = self._original_redis_client
 
     async def test_feedback_idempotency_prevents_duplicate_queue_entries(self):
         item = promotion.FeedbackItem(
