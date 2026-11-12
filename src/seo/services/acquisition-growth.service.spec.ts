@@ -79,7 +79,7 @@ describe('AcquisitionGrowthService', () => {
 
     expect(report.paidRevenue).toHaveLength(2);
     expect(report.paidRevenue.map((item) => item.currency)).toEqual(['IRT', 'USD']);
-    expect(report.paidRevenue[0].amountMinorUnits).toBe(30000);
+    expect(report.paidRevenue[0].amountMinorUnits).toBe('30000');
     expect(report.cac).toEqual({
       value: null,
       status: 'unavailable',
