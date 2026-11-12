@@ -3,11 +3,8 @@ import { Redis } from 'ioredis';
 import { randomUUID } from 'crypto';
 import { REDIS_CLIENT } from '../../redis/redis.constants';
 import { PromotionEngineService } from '../../payments/promotion-engine.service';
-import { PromotionExposureService } from '../../payments/promotion-exposure.service';
-import { UserEventService } from '../../user-event/user-event.service';
 import { FeedItem, PromotionConfig } from '../types/feed.types';
 import { FeedPhase } from '../types/feed-phase.interface';
-import { EventType } from 'src/user-event/type/event-type.enum';
 
 @Injectable()
 export class FeedPromotionService {
@@ -82,8 +79,6 @@ export class FeedPromotionService {
 
   constructor(
     private readonly promotionEngine: PromotionEngineService,
-    private readonly exposureService: PromotionExposureService,
-    private readonly userEventService: UserEventService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
@@ -220,6 +215,8 @@ export class FeedPromotionService {
         score: decision.score,
         phase: phase.phase,
         tone: 'soft_sell',
+        position: feedPosition,
+        features: decision.featuresSnapshot,
         scoreKind: decision.scoreKind,
         modelStatus: decision.modelStatus,
         experimentId: decision.experimentId,
@@ -233,28 +230,8 @@ export class FeedPromotionService {
       8 * 24 * 3600,
     );
 
-    // ردیابی و لاگ
-    await this.exposureService.trackImpression(
-      userId,
-      decision.variant,
-      promotionId,
-    );
-    await this.userEventService.log({
-      userId,
-      type: EventType.PROMOTION_SHOWN,
-      metadata: {
-        variant: decision.variant,
-        score: decision.score,
-        position: feedPosition,
-        promotionId,
-        experimentId: decision.experimentId,
-        assignmentId: decision.assignmentId,
-        propensity: decision.propensity,
-        scoreKind: decision.scoreKind,
-        modelStatus: decision.modelStatus,
-      },
-      idempotencyKey: `promotion:${promotionId}:shown`,
-    });
+    // Impression is recorded later by POST /feed/impression/:promotionId
+    // when the client confirms that this item is actually visible.
 
     return {
       id: promotionId,
