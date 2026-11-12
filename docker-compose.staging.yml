@@ -85,6 +85,9 @@ services:
   ai_revenue:
     profiles: ["ai-revenue"]
     restart: "no"
+    build:
+      context: ./python-ai/services/ai_revenue
+      dockerfile: Dockerfile.staging
     ports: !override ["127.0.0.1:18006:8000"]
     deploy:
       resources:
