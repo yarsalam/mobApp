@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import Redis from 'ioredis';
 import { createHash } from 'crypto';
 import { AiFeedbackService } from 'src/ai-feedback/ai-feedback.service';
@@ -290,13 +290,32 @@ export class PromotionExposureService {
     }
 
     const purchaseHash = createHash('sha256')
-      .update(String(purchaseReference))
+      .update(`${userId}:${String(purchaseReference)}`)
       .digest('hex')
       .slice(0, 32);
 
-    // Persist the durable database event before setting the Redis dedupe
-    // marker. If Redis is temporarily unavailable, a retry remains safe
-    // because UserEventService.log is itself idempotent.
+    // A single purchase idempotency key must never be attributed to two
+    // different promotion exposures, even if a retry changes its request body.
+    const purchaseAttributionKey =
+      `promo:purchase-attribution:${userId}:${purchaseHash}`;
+    const reservedForThisPromotion = await this.redis.set(
+      purchaseAttributionKey,
+      promotionId,
+      'EX',
+      this.ATTRIBUTION_TTL_SECONDS,
+      'NX',
+    );
+    if (!reservedForThisPromotion) {
+      const existingPromotionId = await this.redis.get(purchaseAttributionKey);
+      if (existingPromotionId !== promotionId) {
+        throw new ConflictException(
+          'This purchase is already attributed to a different promotion',
+        );
+      }
+    }
+
+    // Persist the durable database event before setting the per-exposure
+    // Redis dedupe marker. UserEventService.log is itself idempotent.
     await this.userEventService.log({
       userId,
       type: EventType.PROMOTION_CONVERTED,
