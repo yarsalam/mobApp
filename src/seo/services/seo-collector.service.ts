@@ -25,6 +25,12 @@ export class SEOCollectorService {
       }),
     ]);
 
+    const technicalSourceStatuses = Object.values(technical?.sources ?? {});
+    const technicalPartial =
+      !technical?.dataAvailable ||
+      technicalSourceStatuses.length === 0 ||
+      technicalSourceStatuses.some((status) => status !== 'available');
+
     return {
       technical,
       campaign,
@@ -48,7 +54,7 @@ export class SEOCollectorService {
         keywordGapAndDifficulty: 'retired_from_growth_engine',
       },
       collectedAt: new Date().toISOString(),
-      partial: technical === null || !technical.dataAvailable || campaign === null,
+      partial: technicalPartial || campaign === null,
     };
   }
 
