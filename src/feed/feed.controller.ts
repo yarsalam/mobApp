@@ -14,6 +14,16 @@ export class FeedController {
     private readonly promotionExposure: PromotionExposureService,
   ) {}
 
+  @Post('impression/:promotionId')
+  @ApiOperation({ summary: 'ثبت نمایش واقعی پیشنهاد در صفحه کاربر' })
+  async impressionPromotion(
+    @GetUser('id') userId: number,
+    @Param('promotionId') promotionId: string,
+  ) {
+    const result = await this.promotionExposure.trackImpression(userId, promotionId);
+    return { success: true, ...result };
+  }
+
   @Post('click/:promotionId')
   @ApiOperation({ summary: 'ثبت کلیک روی پیشنهاد فید' })
   async clickPromotion(
