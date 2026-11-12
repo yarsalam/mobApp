@@ -21,6 +21,10 @@ interface PromotionContext {
   experimentId?: string;
   assignmentId?: string;
   propensity?: number;
+  features?: Record<string, number>;
+  scoreKind?: string;
+  modelStatus?: string;
+  position?: number;
 }
 
 @Injectable()
@@ -113,13 +117,29 @@ export class PromotionExposureService {
 
   async trackImpression(
     userId: number,
-    variant: string,
     promotionId: string,
-  ): Promise<void> {
+  ): Promise<{ success: true; duplicate: boolean }> {
     const context = await this.getPromotionContext(userId, promotionId);
-    if (context.variant !== variant) {
-      throw new NotFoundException('Promotion variant mismatch');
-    }
+    const variant = context.variant;
+
+    // The mobile client calls this only when the promotion becomes visible.
+    // Building a feed is not itself counted as an impression.
+    await this.userEventService.log({
+      userId,
+      type: EventType.PROMOTION_SHOWN,
+      metadata: {
+        promotionId,
+        variant,
+        score: context.score,
+        position: context.position,
+        experimentId: context.experimentId,
+        assignmentId: context.assignmentId,
+        propensity: context.propensity,
+        scoreKind: context.scoreKind,
+        modelStatus: context.modelStatus,
+      },
+      idempotencyKey: `promotion:${promotionId}:shown`,
+    });
 
     const firstSeen = await this.redis.set(
       `promo:event:${promotionId}:shown`,
@@ -128,7 +148,7 @@ export class PromotionExposureService {
       this.EVENT_TTL_SECONDS,
       'NX',
     );
-    if (!firstSeen) return;
+    if (!firstSeen) return { success: true, duplicate: true };
 
     const today = this.getTodayDate();
     const dailyKey = `promo:daily:${userId}:${variant}:${today}`;
@@ -145,6 +165,7 @@ export class PromotionExposureService {
       Date.now() + 7 * 24 * 60 * 60 * 1000,
       promotionId,
     );
+    return { success: true, duplicate: false };
   }
 
   async trackClick(
@@ -299,7 +320,7 @@ export class PromotionExposureService {
     extraContext: Record<string, unknown> = {},
   ): Promise<boolean> {
     try {
-      const features = await this.featureService.getUserFeatures(userId);
+      const features = context.features ?? await this.featureService.getUserFeatures(userId);
       const body: Record<string, unknown> = {
         user_id: userId,
         variant: context.variant,
