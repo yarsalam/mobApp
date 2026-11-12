@@ -4,6 +4,7 @@ import {
   Headers,
   BadRequestException,
   Get,
+  Logger,
   NotFoundException,
   Param,
   ParseIntPipe,
@@ -21,15 +22,19 @@ import { CardTransferProvider } from './wallet/providers/card-transfer.provider'
 import { CryptoProvider } from './wallet/providers/crypto.provider';
 import { ManualVerifierService } from './wallet/verification/manual-verifier.service';
 import { ProductBundle } from 'src/product/entities/product-bundle.entity';
+import { PromotionExposureService } from './promotion-exposure.service';
 
 @Controller('payments')
 export class PaymentsController {
+  private readonly logger = new Logger(PaymentsController.name);
+
   constructor(
     private readonly paymentsService: PaymentsService,
     private readonly cardTransferProvider: CardTransferProvider,
     private readonly cryptoProvider: CryptoProvider,
     private readonly manualVerifier: ManualVerifierService,
     private readonly walletService: WalletService,
+    private readonly promotionExposure: PromotionExposureService,
     @InjectRepository(ProductBundle)
     private readonly bundleRepo: Repository<ProductBundle>,
   ) {}
@@ -93,6 +98,7 @@ export class PaymentsController {
   async buyWithWallet(
     @CurrentUser('sub') userId: number,
     @Param('bundleCode') bundleCode: string,
+    @Body() body?: { promotionId?: string },
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     const stableKey = idempotencyKey?.trim();
@@ -115,14 +121,44 @@ export class PaymentsController {
       `wallet-checkout:${stableKey}:debit`,
     );
 
-    // grant محصول
+    const promotionId = body?.promotionId?.trim();
+    if (
+      promotionId &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(promotionId)
+    ) {
+      throw new BadRequestException('promotionId must be a valid promotion exposure ID');
+    }
+
+    // grant محصول; promotionId is captured in the durable PURCHASE event.
     await this.paymentsService.grantBundle(userId, bundleCode, {
       amountRials: bundle.price,
       source: 'wallet',
       idempotencyKey: `wallet-checkout:${stableKey}`,
+      ...(promotionId ? { promotionId } : {}),
     });
 
-    return { success: true, message: 'خرید با موفقیت انجام شد' };
+    let promotionAttribution: 'not_supplied' | 'recorded' | 'failed' = 'not_supplied';
+    if (promotionId) {
+      try {
+        await this.promotionExposure.trackConversion(
+          userId,
+          promotionId,
+          stableKey,
+          bundleCode,
+        );
+        promotionAttribution = 'recorded';
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(`Purchase succeeded but promotion attribution failed: ${message}`);
+        promotionAttribution = 'failed';
+      }
+    }
+
+    return {
+      success: true,
+      message: 'خرید با موفقیت انجام شد',
+      promotionAttribution,
+    };
   }
 
   // ─── کاربر: آپلود رسید ───────────────────────────────────────
