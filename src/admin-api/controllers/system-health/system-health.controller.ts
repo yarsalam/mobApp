@@ -10,17 +10,12 @@ interface ServiceStatus {
 
 // پورت‌ها از نقشه‌راه اولیه — هرکدوم که در .env واقعی فرق داره، env var معادلش رو اضافه کن
 const MICROSERVICE_REGISTRY: Record<string, string> = {
-  ai_seo: process.env.AI_SEO_URL ?? 'http://ai_seo:8021',
   ai_monetization:
     process.env.AI_MONETIZATION_URL ?? 'http://ai_monetization:8015',
   ai_feedback: process.env.AI_FEEDBACK_URL ?? 'http://ai_feedback:8005',
   ai_assistant: process.env.AI_ASSISTANT_URL ?? 'http://ai_assistant:8000',
-  ai_seo_recommender:
-    process.env.AI_SEO_RECOMMENDER_URL ?? 'http://ai_seo_recommender:8033',
-  ai_aeo_tracker:
-    process.env.AI_AEO_TRACKER_URL ?? 'http://ai_aeo_tracker:8000',
-  ai_backlink_quality:
-    process.env.AI_BACKLINK_QUALITY_URL ?? 'http://ai_backlink_quality:8000',
+  aeo_tracker:
+    process.env.AEO_TRACKER_URL ?? 'http://aeo_tracker:8030',
   ai_image: process.env.AI_IMAGE_URL ?? 'http://ai_image:8000',
   ai_moderation: process.env.AI_MODERATION_URL ?? 'http://ai_moderation:8000',
   ai_ops: process.env.AI_OPS_URL ?? 'http://ai_ops:8025',
@@ -78,13 +73,26 @@ export class SystemHealthController {
     return {
       system: collectorOutput?.system ?? null, // { cpu, memory, disk }
       app: collectorOutput?.app ?? {
-        avg_response_time: 0,
-        error_rate: 0,
+        avg_response_time: null,
+        error_rate: null,
         is_available: false,
       },
       issues: issues ?? [],
       lastUpdated: collectorOutput?.timestamp ?? null,
       dataAvailable: metricsResult.status === 'fulfilled' && !!collectorOutput,
+    };
+  }
+
+
+  @Get('retired-services')
+  getRetiredServices() {
+    return {
+      status: 'retired',
+      services: [
+        { name: 'ai_seo', replacement: 'NestJS AcquisitionGrowthService and evidence-based technical SEO' },
+        { name: 'ai_seo_recommender', replacement: 'Product recommendation and Matching modules' },
+        { name: 'ai_backlink_quality', replacement: 'Referral acquisition measurement; no backlink score' },
+      ],
     };
   }
 
