@@ -7,6 +7,7 @@ import { PaywallService } from './paywall/paywall.service';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom, timeout } from 'rxjs';
+import { Cron } from '@nestjs/schedule';
 import { FeatureService } from '../user-metrics/feature.service';
 import { UserEventService } from 'src/user-event/user-event.service';
 import { EventType } from 'src/user-event/type/event-type.enum';
@@ -139,6 +140,11 @@ export class PromotionExposureService {
       'EX',
       86400,
     );
+    await this.redis.zadd(
+      'promo:pending-outcomes',
+      Date.now() + 7 * 24 * 60 * 60 * 1000,
+      promotionId,
+    );
   }
 
   async trackClick(
@@ -260,7 +266,14 @@ export class PromotionExposureService {
       'NX',
     );
     if (firstConversion) {
-      await this.sendFeedback(
+      await this.redis.set(
+        `promo:conversion:${promotionId}`,
+        JSON.stringify({ productCode, purchaseHash }),
+        'EX',
+        this.ATTRIBUTION_TTL_SECONDS,
+      );
+      await this.redis.zrem('promo:pending-outcomes', promotionId);
+      const delivered = await this.sendFeedback(
         userId,
         promotionId,
         context,
@@ -268,6 +281,11 @@ export class PromotionExposureService {
         1,
         { product_code: productCode, purchase_reference: purchaseHash },
       );
+      if (!delivered) {
+        // Retry delivery from the scheduled outcome worker; the conversion
+        // marker prevents it from ever being mislabeled as a non-conversion.
+        await this.redis.zadd('promo:pending-outcomes', Date.now(), promotionId);
+      }
     }
     return { success: true, duplicate: !firstConversion };
   }
@@ -276,10 +294,10 @@ export class PromotionExposureService {
     userId: number,
     promotionId: string,
     context: PromotionContext,
-    eventType: 'click' | 'dismiss' | 'conversion',
+    eventType: 'click' | 'dismiss' | 'conversion' | 'non_conversion',
     label?: number,
     extraContext: Record<string, unknown> = {},
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       const features = await this.featureService.getUserFeatures(userId);
       const body: Record<string, unknown> = {
@@ -298,9 +316,80 @@ export class PromotionExposureService {
       await firstValueFrom(
         this.httpService.post(`${this.mlUrl}/api/feedback`, body).pipe(timeout(3000)),
       );
+      return true;
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(`Monetization feedback delivery failed: ${message}`);
+      return false;
+    }
+  }
+
+  @Cron('15 * * * *')
+  async processMaturePromotionOutcomes(): Promise<void> {
+    const now = Date.now();
+    const due = await this.redis.zrangebyscore(
+      'promo:pending-outcomes',
+      '-inf',
+      now,
+      'LIMIT',
+      0,
+      100,
+    );
+
+    for (const promotionId of due) {
+      try {
+        const raw = await this.redis.get(`promo:map:${promotionId}`);
+        if (!raw) {
+          await this.redis.zrem('promo:pending-outcomes', promotionId);
+          continue;
+        }
+        const context = JSON.parse(raw) as PromotionContext;
+        const userId = Number(context.userId);
+        if (!Number.isSafeInteger(userId) || userId <= 0) {
+          await this.redis.zrem('promo:pending-outcomes', promotionId);
+          continue;
+        }
+
+        const conversionRaw = await this.redis.get(`promo:conversion:${promotionId}`);
+        if (conversionRaw) {
+          const conversion = JSON.parse(conversionRaw) as {
+            productCode: string;
+            purchaseHash: string;
+          };
+          const delivered = await this.sendFeedback(
+            userId,
+            promotionId,
+            context,
+            'conversion',
+            1,
+            {
+              product_code: conversion.productCode,
+              purchase_reference: conversion.purchaseHash,
+            },
+          );
+          if (delivered) await this.redis.zrem('promo:pending-outcomes', promotionId);
+          continue;
+        }
+
+        await this.userEventService.log({
+          userId,
+          type: EventType.PROMOTION_NON_CONVERTED,
+          metadata: { promotionId, variant: context.variant, attributionWindowDays: 7 },
+          idempotencyKey: `promotion:${promotionId}:non-conversion`,
+        });
+        const delivered = await this.sendFeedback(
+          userId,
+          promotionId,
+          context,
+          'non_conversion',
+          0,
+          { outcome_window_complete: true, attribution_window_days: 7 },
+        );
+        if (delivered) await this.redis.zrem('promo:pending-outcomes', promotionId);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(`Could not mature promotion outcome ${promotionId}: ${message}`);
+      }
     }
   }
 
