@@ -21,7 +21,7 @@ export class FeedController {
     @Param('promotionId') promotionId: string,
   ) {
     const result = await this.promotionExposure.trackImpression(userId, promotionId);
-    return { success: true, ...result };
+    return { ...result };
   }
 
   @Post('click/:promotionId')
@@ -41,7 +41,7 @@ export class FeedController {
     @Param('promotionId') promotionId: string,
   ) {
     const result = await this.promotionExposure.trackDismiss(userId, promotionId);
-    return { success: true, ...result, message: 'تبلیغ با موفقیت بسته شد' };
+    return { ...result, message: 'تبلیغ با موفقیت بسته شد' };
   }
 
   @Get()
