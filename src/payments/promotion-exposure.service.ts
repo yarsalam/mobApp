@@ -25,6 +25,7 @@ interface PromotionContext {
   scoreKind?: string;
   modelStatus?: string;
   position?: number;
+  impressionAt?: number;
 }
 
 @Injectable()
@@ -150,6 +151,14 @@ export class PromotionExposureService {
     );
     if (!firstSeen) return { success: true, duplicate: true };
 
+    context.impressionAt = Date.now();
+    await this.redis.set(
+      `promo:map:${promotionId}`,
+      JSON.stringify(context),
+      'EX',
+      8 * 24 * 60 * 60,
+    );
+
     const today = this.getTodayDate();
     const dailyKey = `promo:daily:${userId}:${variant}:${today}`;
     await this.redis.incr(dailyKey);
@@ -173,6 +182,9 @@ export class PromotionExposureService {
     promotionId: string,
   ): Promise<{ success: true; duplicate: boolean }> {
     const context = await this.getPromotionContext(userId, promotionId);
+    if (!(await this.redis.exists(`promo:event:${promotionId}:shown`))) {
+      throw new NotFoundException('Promotion impression has not been recorded');
+    }
     await this.userEventService.log({
       userId,
       type: EventType.PROMOTION_CLICKED,
@@ -199,6 +211,9 @@ export class PromotionExposureService {
   ): Promise<{ success: true; duplicate: boolean }> {
     const context = await this.getPromotionContext(userId, promotionId);
     const { variant } = context;
+    if (!(await this.redis.exists(`promo:event:${promotionId}:shown`))) {
+      throw new NotFoundException('Promotion impression has not been recorded');
+    }
 
     await this.userEventService.log({
       userId,
@@ -262,10 +277,31 @@ export class PromotionExposureService {
     productCode: string,
   ): Promise<{ success: true; duplicate: boolean }> {
     const context = await this.getPromotionContext(userId, promotionId);
+    if (!(await this.redis.exists(`promo:event:${promotionId}:shown`))) {
+      throw new NotFoundException('Promotion impression has not been recorded');
+    }
+    const impressionAt = Number(context.impressionAt ?? 0);
+    if (
+      !Number.isFinite(impressionAt) ||
+      impressionAt <= 0 ||
+      Date.now() > impressionAt + this.ATTRIBUTION_TTL_SECONDS * 1000
+    ) {
+      throw new NotFoundException('Promotion attribution window has expired');
+    }
+
     const purchaseHash = createHash('sha256')
       .update(String(purchaseReference))
       .digest('hex')
       .slice(0, 32);
+
+    const firstConversion = await this.redis.set(
+      `promo:event:${promotionId}:converted`,
+      '1',
+      'EX',
+      this.EVENT_TTL_SECONDS,
+      'NX',
+    );
+    if (!firstConversion) return { success: true, duplicate: true };
 
     await this.userEventService.log({
       userId,
@@ -276,16 +312,9 @@ export class PromotionExposureService {
         productCode,
         purchaseReference: purchaseHash,
       },
-      idempotencyKey: `promotion:${promotionId}:conversion:${purchaseHash}`,
+      idempotencyKey: `promotion:${promotionId}:conversion`,
     });
 
-    const firstConversion = await this.redis.set(
-      `promo:event:${promotionId}:conversion:${purchaseHash}`,
-      '1',
-      'EX',
-      this.ATTRIBUTION_TTL_SECONDS,
-      'NX',
-    );
     if (firstConversion) {
       await this.redis.set(
         `promo:conversion:${promotionId}`,
