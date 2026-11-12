@@ -234,25 +234,8 @@ export class FeatureStoreRevenueService {
     await this.getUserFeatures(userId);
   }
 
-  async getKeywordDifficulty(keyword: string): Promise<number | null> {
-    const cached = await this.redis.get(`keyword:${keyword}`);
-    if (cached) {
-      const parsed = Number.parseFloat(cached);
-      return Number.isFinite(parsed) ? parsed : null;
-    }
-
-    try {
-      const difficulty =
-        await this.externalSEOTools.getKeywordDifficulty(keyword);
-      if (difficulty === null || difficulty === undefined || !Number.isFinite(difficulty)) {
-        return null;
-      }
-
-      await this.redis.set(`keyword:${keyword}`, difficulty.toString(), 86400);
-      return difficulty;
-    } catch {
-      return null;
-    }
+  async getKeywordDifficulty(_keyword: string): Promise<number | null> {
+    return null;
   }
 
   async getAllUsers(): Promise<number[]> {
