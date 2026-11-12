@@ -3,7 +3,6 @@ import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { REDIS_CLIENT } from 'src/redis/redis.constants';
 import { Redis } from 'ioredis';
-import googleTrends from 'google-trends-api';
 
 const TTL = {
   SEARCH_CONSOLE: 3_600,
@@ -11,9 +10,6 @@ const TTL = {
   PAGESPEED: 86_400,
   CRUX: 86_400,
   SERP: 3_600,
-  TRENDS: 86_400,
-  BACKLINK: 86_400,
-  DATAFORSEO: 86_400,
 } as const;
 
 @Injectable()
@@ -46,7 +42,7 @@ export class ExternalSEOToolsService {
     const normalizedSite = site.startsWith('http')
       ? (site.endsWith('/') ? site : site + '/')
       : 'https://' + (site.endsWith('/') ? site : site + '/');
-    const cacheKey = 'gsc:v2:' + normalizedSite + ':' + days;
+    const cacheKey = 'gsc:v3:' + normalizedSite + ':' + days;
     const cached = await this.redis.get(cacheKey);
     if (cached) return JSON.parse(cached);
 
@@ -60,27 +56,42 @@ export class ExternalSEOToolsService {
     try {
       const endDate = new Date().toISOString().split('T')[0];
       const startDate = new Date(Date.now() - days * 86_400_000).toISOString().split('T')[0];
-      const { data } = await firstValueFrom(
-        this.httpService.post(
-          'https://searchconsole.googleapis.com/webmasters/v3/sites/' +
-            encodeURIComponent(normalizedSite) +
-            '/searchAnalytics/query',
-          { startDate, endDate, dimensions: ['query', 'page'], rowLimit: 100, dataState: 'all' },
-          { headers: { Authorization: 'Bearer ' + token }, timeout: 15_000 },
-        ),
-      );
+      const endpoint =
+        'https://searchconsole.googleapis.com/webmasters/v3/sites/' +
+        encodeURIComponent(normalizedSite) +
+        '/searchAnalytics/query';
+      const config = {
+        headers: { Authorization: 'Bearer ' + token },
+        timeout: 15_000,
+      };
 
-      const rows: any[] = data.rows ?? [];
-      const totalClicks = rows.reduce((sum, row) => sum + Number(row.clicks ?? 0), 0);
-      const totalImpressions = rows.reduce((sum, row) => sum + Number(row.impressions ?? 0), 0);
+      // First request is property-wide (no dimensions), so totals are not
+      // truncated by the separate top-query/page report's rowLimit.
+      const [aggregateResponse, detailResponse] = await Promise.all([
+        firstValueFrom(this.httpService.post(
+          endpoint,
+          { startDate, endDate, dataState: 'all' },
+          config,
+        )),
+        firstValueFrom(this.httpService.post(
+          endpoint,
+          { startDate, endDate, dimensions: ['query', 'page'], rowLimit: 100, dataState: 'all' },
+          config,
+        )),
+      ]);
+
+      const aggregateRows: any[] = aggregateResponse.data.rows ?? [];
+      const rows: any[] = detailResponse.data.rows ?? [];
+      const aggregate = aggregateRows[0] ?? null;
       const result = {
         dataAvailable: true,
         source: 'google_search_console',
+        totalsScope: 'property_aggregate',
         rows,
-        totalClicks,
-        totalImpressions,
-        avgCTR: totalImpressions > 0 ? totalClicks / totalImpressions : null,
-        avgPosition: rows.length ? rows.reduce((sum, row) => sum + Number(row.position ?? 0), 0) / rows.length : null,
+        totalClicks: aggregate ? Number(aggregate.clicks ?? 0) : 0,
+        totalImpressions: aggregate ? Number(aggregate.impressions ?? 0) : 0,
+        avgCTR: aggregate && Number.isFinite(Number(aggregate.ctr)) ? Number(aggregate.ctr) : null,
+        avgPosition: aggregate && Number.isFinite(Number(aggregate.position)) ? Number(aggregate.position) : null,
         topQueries: rows.slice(0, 10).map((row) => row.keys?.[0]).filter(Boolean),
         crawlErrors: null,
         brokenLinks: null,
@@ -315,30 +326,11 @@ export class ExternalSEOToolsService {
   // GOOGLE INDEXING API — رایگان، فهرست فوری
   // ══════════════════════════════════════════════════════════════════
   async requestIndexing(
-    url: string,
-    type: 'URL_UPDATED' | 'URL_DELETED' = 'URL_UPDATED',
+    _url: string,
+    _type: 'URL_UPDATED' | 'URL_DELETED' = 'URL_UPDATED',
   ): Promise<boolean> {
-    const token = await this._getGoogleToken([
-      'https://www.googleapis.com/auth/indexing',
-    ]);
-    if (!token) {
-      this.logger.warn('Indexing API: no service account');
-      return false;
-    }
-    try {
-      await firstValueFrom(
-        this.httpService.post(
-          'https://indexing.googleapis.com/v3/urlNotifications:publish',
-          { url, type },
-          { headers: { Authorization: `Bearer ${token}` }, timeout: 10_000 },
-        ),
-      );
-      this.logger.log(`Indexing requested: ${url} (${type})`);
-      return true;
-    } catch (err: unknown) {
-      this.logger.error('Indexing API failed', (err as Error).message);
-      return false;
-    }
+    // This API is not a generic indexing submission mechanism.
+    return false;
   }
 
   async batchRequestIndexing(
@@ -372,70 +364,27 @@ export class ExternalSEOToolsService {
 
   // FIX 4 (feature-store-rvenue): این متد number | null برمی‌گرداند.
   // کد صدازننده باید null را چک کند — مثال در انتهای فایل
-  async getKeywordDifficulty(keyword: string): Promise<number | null> {
-    const cacheKey = `kd:${keyword}`;
-    const cached = await this.redis.get(cacheKey);
-    if (cached) return parseFloat(cached);
-
-    const login = process.env.DATAFORSEO_LOGIN;
-    const password = process.env.DATAFORSEO_PASSWORD;
-    if (!login || !password) return null;
-
-    try {
-      const auth = Buffer.from(`${login}:${password}`).toString('base64');
-      const { data } = await firstValueFrom(
-        this.httpService.post(
-          'https://api.dataforseo.com/v3/dataforseo_labs/google/keyword_info/live',
-          [
-            {
-              keywords: [keyword],
-              language_name: 'Persian',
-              location_name: 'Iran',
-            },
-          ],
-          { headers: { Authorization: `Basic ${auth}` }, timeout: 15_000 },
-        ),
-      );
-
-      const kd: number | null =
-        data.tasks?.[0]?.result?.[0]?.items?.[0]?.keyword_difficulty ?? null;
-      if (kd !== null) {
-        await this.redis.set(cacheKey, String(kd), 'EX', TTL.DATAFORSEO);
-      }
-      return kd;
-    } catch {
-      return null;
-    }
+  async getKeywordDifficulty(_keyword: string): Promise<number | null> {
+    // Keyword difficulty is retired from product growth; never call a paid provider.
+    return null;
   }
 
   // ══════════════════════════════════════════════════════════════════
   // Google Trends — رایگان، بدون API Key
   // ══════════════════════════════════════════════════════════════════
-  async getGoogleTrends(keyword: string, geo = 'IR'): Promise<any> {
-    const cacheKey = `trends:${keyword}:${geo}`;
-    const cached = await this.redis.get(cacheKey);
-    if (cached) return JSON.parse(cached);
-
-    try {
-      const results = await googleTrends.interestOverTime({
-        keyword,
-        geo,
-        hl: 'fa',
-      });
-      const parsed = JSON.parse(results);
-      await this.redis.set(cacheKey, JSON.stringify(parsed), 'EX', TTL.TRENDS);
-      return parsed;
-    } catch (err: unknown) {
-      this.logger.error('Google Trends failed', (err as Error).message);
-      return null;
-    }
+  async getGoogleTrends(_keyword: string, _geo = 'IR'): Promise<any> {
+    return {
+      dataAvailable: false,
+      source: 'retired',
+      reason: 'Generic keyword trend tracking is not part of the product growth engine.',
+    };
   }
 
   async getKeywordGap(_domain: string, _competitors: string[]): Promise<any> {
     return {
       dataAvailable: false,
       source: 'retired',
-      reason: 'keyword_gap_and_competitor_rank_tracking_not_part_of_the_growth_engine',
+      reason: 'Keyword-gap and competitor-ranking checks are retired from the growth engine.',
     };
   }
 
