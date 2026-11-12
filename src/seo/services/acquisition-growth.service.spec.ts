@@ -5,8 +5,8 @@ describe('AcquisitionGrowthService', () => {
   const now = new Date('2026-11-12T12:00:00.000Z');
 
   const registrationRows = [
-    { source: 'google', registrations: '10', completedProfiles: '8', verifiedUsers: '7', faceVerifiedUsers: '3' },
-    { source: 'unknown', registrations: '5', completedProfiles: '3', verifiedUsers: '2', faceVerifiedUsers: '1' },
+    { source: 'google', registrations: '10', completedProfiles: '8', verifiedUsers: '7', faceVerifiedUsers: '3', activationEligibleUsers: '8' },
+    { source: 'unknown', registrations: '5', completedProfiles: '3', verifiedUsers: '2', faceVerifiedUsers: '1', activationEligibleUsers: '4' },
   ];
   const d7Rows = [
     { source: 'google', eligibleUsers: '8', retainedUsers: '6' },
@@ -51,9 +51,10 @@ describe('AcquisitionGrowthService', () => {
     expect(report.totals.registrations).toBe(15);
     expect(report.totals.completedProfiles).toBe(11);
     expect(report.totals.firstWeekActivatedUsers).toBe(5);
+    expect(report.totals.activationEligibleUsers).toBe(12);
     expect(report.channels.map((item) => item.source)).toEqual(['google', 'unknown']);
     expect(report.channels[0].profileCompletionRate).toBe(0.8);
-    expect(report.channels[1].firstWeekActivationRate).toBe(0.2);
+    expect(report.channels[1].firstWeekActivationRate).toBe(0.25);
     expect(report.attribution.missingSource).toBe('unknown');
   });
 
