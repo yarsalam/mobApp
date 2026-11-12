@@ -1,62 +1,23 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  UseGuards,
-  NotFoundException,
-  Param,
-} from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { SEOActivity } from './entities/seo-activity.entity';
 import { CampaignSEOService } from './services/campaign-seo.service';
 import { SEOCollectorService } from './services/seo-collector.service';
-import { SEORetentionService } from './services/analytics/seo-retention.service';
-import { SEOService } from './services/seo.service';
-import { ContentOpportunityService } from './services/intelligence/content-opportunity.service';
-import { RevenueIntelligenceService } from 'src/revenue/revenue-intelligence.service';
-import { AutoScalingService } from './services/intelligence/auto-scaling.service';
-import { ConfigService } from '@nestjs/config';
-import { HttpService } from '@nestjs/axios';
-import { firstValueFrom } from 'rxjs';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { SEORecommendation } from './entities/seo-recommendation.entity';
-import { AutoExecutorService } from './services/intelligence/auto-executor.service';
-import { RevenueAttributionService } from 'src/revenue/revenue-attribution.service';
-import { SEOScoreEngine } from './services/seo-score-engine.service';
 
 @ApiTags('seo')
 @Controller('seo')
 @UseGuards(JwtAuthGuard)
 export class SEOController {
   constructor(
-    @InjectRepository(SEORecommendation)
-    private seoRecommendationRepo: Repository<SEORecommendation>,
-
     private readonly seoCollector: SEOCollectorService,
     private readonly campaignService: CampaignSEOService,
-    private readonly seoRetentionService: SEORetentionService,
-    private readonly seoService: SEOService,
-    private readonly contentOpportunity: ContentOpportunityService,
-    private readonly revenueIntelligence: RevenueIntelligenceService,
-    private readonly revenueAttribution: RevenueAttributionService,
-    private readonly autoScaling: AutoScalingService,
-    private readonly configService: ConfigService,
-    private readonly httpService: HttpService,
-    private readonly autoExecutor: AutoExecutorService,
-    private readonly seoScoreEngine: SEOScoreEngine,
   ) {}
 
   @Get('dashboard')
-  @ApiOperation({ summary: 'دریافت داشبورد سئو' })
+  @ApiOperation({ summary: 'دریافت وضعیت فنی و فعالیت‌های ثبت‌شده رشد' })
   async getDashboard() {
-    const metrics = await this.seoCollector.collectAllMetrics();
-    return {
-      success: true,
-      data: metrics,
-    };
+    return { success: true, data: await this.seoCollector.collectAllMetrics() };
   }
 
   @Get('revenue-dashboard')
@@ -69,13 +30,9 @@ export class SEOController {
   }
 
   @Post('activity')
-  @ApiOperation({ summary: 'ثبت فعالیت سئو' })
+  @ApiOperation({ summary: 'ثبت فعالیت واقعی کمپین؛ بدون برآورد ROI' })
   async createActivity(@Body() activity: Partial<SEOActivity>) {
-    const result = await this.campaignService.createActivity(activity);
-    return {
-      success: true,
-      data: result,
-    };
+    return { success: true, data: await this.campaignService.createActivity(activity) };
   }
 
   @Get('recommendations')
@@ -92,7 +49,7 @@ export class SEOController {
     return {
       status: 'moved',
       endpoint: '/admin-api/seo/admin-dashboard',
-      reason: 'The legacy dashboard contained synthetic audience insights and unsupported ROI/retention claims.',
+      reason: 'Use source-based acquisition cohorts and evidence-backed technical measurements.',
     };
   }
 
@@ -100,9 +57,7 @@ export class SEOController {
   async executeRecommendation() {
     return {
       status: 'disabled',
-      reason: 'Automatic publication and unreviewed SEO recommendation execution are disabled.',
+      reason: 'Automatic publishing and unreviewed recommendation execution are disabled.',
     };
   }
-
-
 }
