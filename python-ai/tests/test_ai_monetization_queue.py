@@ -47,7 +47,7 @@ def training_row(index, variant, label):
             "promotion_ctr": 0.2,
             "hour_of_day": 12,
             "is_weekend": 0,
-            "session_depth": 8,
+            "recent_event_count": 8,
             "profile_incomplete": 0,
         },
         "promotion_id": f"promotion-{index}",
