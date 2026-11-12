@@ -6,7 +6,7 @@ This document describes the staging-only integration contract for the Monetizati
 
 - GET /health reports process health and the actual model_status, model_available, and feature_schema_version.
 - GET /version reports the model artifact path, model state, schema version, and artifact metadata when present.
-- The supported feature schema is version 2.
+- The supported feature schema is version 3.
 - A missing model is a valid service state: predictions use heuristic_priority, and the response must say model_status = "missing".
 - Heuristic priority scores are policy scores, not calibrated purchase probabilities.
 - A schema-incompatible or unversioned model artifact is rejected. The Backend fails closed if the model status and score kind do not match the contract.
@@ -23,7 +23,7 @@ The canonical variant keys are:
 
 A request must contain unique, supported candidates. Every candidate must receive exactly one finite score in the response. The top-level winner and score must match the maximum entry in all_scores.
 
-The schema-v2 feature vector excludes the old placeholder fields avg_session_time and conversion_score. It uses actual event/registration fields, including profile_incomplete, and stores the pre-exposure snapshot with the promotion ID.
+The schema-v3 feature vector excludes the old placeholder fields avg_session_time and conversion_score. It uses actual event/registration fields, including profile_incomplete, and stores the pre-exposure snapshot with the promotion ID.
 
 ## Mobile event contract
 
