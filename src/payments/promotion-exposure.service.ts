@@ -310,6 +310,7 @@ export class PromotionExposureService {
         experiment_id: context.experimentId,
         assignment_id: context.assignmentId,
         propensity: context.propensity,
+        outcome_window_complete: extraContext.outcome_window_complete === true,
         context: extraContext,
       };
       if (label !== undefined) body.label = label;
