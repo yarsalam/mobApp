@@ -75,22 +75,27 @@ export class PromotionEngineService {
         model_status?: string;
         feature_schema_version?: number;
       };
+      const bestVariant = typeof result?.variant === 'string' ? result.variant : '';
+      const bestScore = typeof result?.score === 'number' ? result.score : Number.NaN;
+      const scoreKind = typeof result?.score_kind === 'string' ? result.score_kind : '';
+      const modelStatus = typeof result?.model_status === 'string' ? result.model_status : '';
+      const allScores = result?.all_scores;
 
       if (
         result?.feature_schema_version !== PROMOTION_FEATURE_SCHEMA_VERSION ||
-        !SCORE_KINDS.includes(result?.score_kind as (typeof SCORE_KINDS)[number]) ||
-        !['ready', 'missing'].includes(result?.model_status ?? '') ||
-        !validVariants.includes(result?.variant ?? '') ||
-        !Number.isFinite(result?.score) ||
-        (result.score as number) < 0 ||
-        (result.score as number) > 1 ||
-        !Array.isArray(result.all_scores)
+        !SCORE_KINDS.includes(scoreKind as (typeof SCORE_KINDS)[number]) ||
+        !['ready', 'missing'].includes(modelStatus) ||
+        !validVariants.includes(bestVariant) ||
+        !Number.isFinite(bestScore) ||
+        bestScore < 0 ||
+        bestScore > 1 ||
+        !Array.isArray(allScores)
       ) {
         throw new Error('AI Monetization response violates the v2 promotion contract');
       }
 
       const seen = new Set<string>();
-      for (const item of result.all_scores) {
+      for (const item of allScores) {
         if (
           !validVariants.includes(item.variant) ||
           seen.has(item.variant) ||
@@ -106,33 +111,41 @@ export class PromotionEngineService {
         throw new Error('AI Monetization did not score every eligible candidate');
       }
 
+      const actualBest = [...allScores].sort((a, b) => b.score - a.score)[0];
       if (
-        (result.score_kind === 'model_probability' && result.model_status !== 'ready') ||
-        (result.score_kind === 'heuristic_priority' && result.model_status !== 'missing')
+        actualBest.variant !== bestVariant ||
+        Math.abs(actualBest.score - bestScore) > 1e-6
+      ) {
+        throw new Error('AI Monetization winner does not match all_scores');
+      }
+
+      if (
+        (scoreKind === 'model_probability' && modelStatus !== 'ready') ||
+        (scoreKind === 'heuristic_priority' && modelStatus !== 'missing')
       ) {
         throw new Error('AI Monetization model status and score kind are inconsistent');
       }
 
       this.logger.debug(
-        `Promotion decision user=${userId} best=${result.variant} score=${result.score.toFixed(3)} kind=${result.score_kind} model=${result.model_status}`,
+        `Promotion decision user=${userId} best=${bestVariant} score=${bestScore.toFixed(3)} kind=${scoreKind} model=${modelStatus}`,
       );
 
-      // The threshold is an operational display guard, not a calibrated
-      // conversion-probability threshold when score_kind is heuristic_priority.
-      if (result.score < 0.3) {
+      // This is an operational display guard, not a calibrated conversion
+      // probability threshold when score_kind is heuristic_priority.
+      if (bestScore < 0.3) {
         return {
           variant: null,
-          score: result.score,
-          scoreKind: result.score_kind as DecisionResult['scoreKind'],
-          modelStatus: result.model_status,
+          score: bestScore,
+          scoreKind: scoreKind as DecisionResult['scoreKind'],
+          modelStatus,
         };
       }
 
       return {
-        variant: result.variant,
-        score: result.score,
-        scoreKind: result.score_kind as DecisionResult['scoreKind'],
-        modelStatus: result.model_status,
+        variant: bestVariant,
+        score: bestScore,
+        scoreKind: scoreKind as DecisionResult['scoreKind'],
+        modelStatus,
       };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
