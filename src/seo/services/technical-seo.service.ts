@@ -14,7 +14,11 @@ export class TechnicalSEOService {
     private readonly externalTools: ExternalSEOToolsService,
   ) {}
 
-  async analyzeTechnicalSEO() {
+  async analyzeTechnicalSEO(): Promise<{
+    dataAvailable: boolean;
+    sources?: Record<string, string>;
+    [key: string]: any;
+  }> {
     try {
       const [psiMobile, psiDesktop, crux, gsc] = await Promise.all([
         this.externalTools.getPageSpeedMetrics(undefined, 'mobile'),
