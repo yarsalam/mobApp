@@ -158,6 +158,30 @@ describe('PromotionExposureService event attribution', () => {
     expect(redis.zrem).toHaveBeenCalledWith('promo:pending-outcomes', 'promotion-uuid');
   });
 
+  it('refuses to attribute the same purchase idempotency key to a second promotion', async () => {
+    const { service, redis, userEventService } = makeService();
+    redis.set.mockResolvedValue(null);
+    redis.get
+      .mockResolvedValueOnce(JSON.stringify({
+        userId: 42,
+        variant: 'vip',
+        features: featureSnapshot,
+        impressionAt: Date.now() - 1000,
+      }))
+      .mockResolvedValueOnce('another-promotion-id');
+
+    await expect(
+      service.trackConversion(
+        42,
+        'promotion-uuid',
+        'wallet-checkout:reused-key',
+        'starter_bundle',
+      ),
+    ).rejects.toThrow('This purchase is already attributed to a different promotion');
+
+    expect(userEventService.log).not.toHaveBeenCalled();
+  });
+
   it('refuses to attribute a purchase outside the seven-day window', async () => {
     const expired = {
       userId: 42,
