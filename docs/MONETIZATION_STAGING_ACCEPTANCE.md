@@ -23,7 +23,7 @@ The canonical variant keys are:
 
 A request must contain unique, supported candidates. Every candidate must receive exactly one finite score in the response. The top-level winner and score must match the maximum entry in all_scores.
 
-The schema-v3 feature vector excludes the old placeholder fields avg_session_time and conversion_score. It uses actual event/registration fields, including profile_incomplete, and stores the pre-exposure snapshot with the promotion ID.
+The schema-v3 feature vector excludes the old placeholder fields avg_session_time and conversion_score. It uses actual event/registration fields, including recent_event_count (the last seven days) and profile_incomplete, and stores the pre-exposure snapshot with the promotion ID. Requests missing required feature fields are rejected instead of backfilled with placeholders.
 
 ## Mobile event contract
 
