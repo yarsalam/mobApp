@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - "src/personality/**"
+      - "src/seo/**"
+      - "src/admin-api/controllers/seo/**"
+      - "src/admin-api/controllers/growth/seo-studio.controller.ts"
       - "src/feature-store/**"
       - "src/suggestion/scoring/**"
       - "src/ai-assistant/**"
@@ -85,6 +88,7 @@ jobs:
           ai-assistant/context/user-context.service.spec.ts
           moderation/moderation.service.spec.ts
           database.config.spec.ts
+          seo/services/acquisition-growth.service.spec.ts
 
       - name: MySQL wallet concurrency and rollback integration tests
         env:
