@@ -31,7 +31,7 @@ export class FeedController {
     @Param('promotionId') promotionId: string,
   ) {
     const result = await this.promotionExposure.trackClick(userId, promotionId);
-    return { success: true, ...result };
+    return { ...result };
   }
 
   @Post('dismiss/:promotionId')
