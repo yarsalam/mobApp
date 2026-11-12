@@ -49,6 +49,11 @@ class MonetizationFeatureContractTests(unittest.TestCase):
         credits = FeatureBuilder.build_features(self.sample_features(), "credits")
         np.testing.assert_array_equal(credit, credits)
 
+    def test_missing_required_feature_is_rejected(self):
+        incomplete = {"engagement_score": 0.8}
+        with self.assertRaisesRegex(ValueError, "Missing required features"):
+            FeatureBuilder.build_features(incomplete, "vip")
+
     def test_unsupported_variant_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "Unsupported promotion variant"):
             FeatureBuilder.build_features(self.sample_features(), "mystery")
