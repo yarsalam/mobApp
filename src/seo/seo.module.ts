@@ -11,6 +11,7 @@ import { CompetitorData } from './entities/competitor-data.entity';
 
 // Services
 import { TechnicalSEOService } from './services/technical-seo.service';
+import { AcquisitionGrowthService } from './services/acquisition-growth.service';
 import { UserSEOSignalsService } from './services/user-seo-signals.service';
 import { CampaignSEOService } from './services/campaign-seo.service';
 import { CompetitorSEOService } from './services/competitor-seo.service';
@@ -72,6 +73,7 @@ import { getExternalHttpOptions } from 'src/config/http-client.config';
   controllers: [SEOController],
   providers: [
     TechnicalSEOService,
+    AcquisitionGrowthService,
     UserSEOSignalsService,
     CampaignSEOService,
     CompetitorSEOService,
@@ -104,6 +106,7 @@ import { getExternalHttpOptions } from 'src/config/http-client.config';
     CampaignUpliftService,
     AEOTrackerService,
     CampaignSEOService,
+    AcquisitionGrowthService,
   ],
 })
 export class SEOModule {}
