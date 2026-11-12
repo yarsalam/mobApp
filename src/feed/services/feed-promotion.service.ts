@@ -220,13 +220,20 @@ export class FeedPromotionService {
         score: decision.score,
         phase: phase.phase,
         tone: 'soft_sell',
+        // Seven-day attribution window; conversion is accepted only for this
+        // exact user-owned exposure ID.
+        createdAt: new Date().toISOString(),
       }),
       'EX',
-      3600,
+      7 * 24 * 3600,
     );
 
     // ردیابی و لاگ
-    await this.exposureService.trackImpression(userId, decision.variant);
+    await this.exposureService.trackImpression(
+      userId,
+      decision.variant,
+      promotionId,
+    );
     await this.userEventService.log({
       userId,
       type: EventType.PROMOTION_SHOWN,
@@ -236,6 +243,7 @@ export class FeedPromotionService {
         position: feedPosition,
         promotionId,
       },
+      idempotencyKey: `promotion:${promotionId}:shown`,
     });
 
     return {
