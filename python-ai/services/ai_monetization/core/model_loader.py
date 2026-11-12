@@ -125,7 +125,7 @@ class ModelLoader:
             purchase_recency = 1.0 - float(row[3])
             swipe_velocity = float(row[4])
             promotion_ctr = float(row[5])
-            session_depth = float(row[13])
+            recent_activity = float(row[13])
             profile_incomplete = float(row[14])
 
             components = {
@@ -137,7 +137,7 @@ class ModelLoader:
                 ),
                 "boost": (
                     0.35 * swipe_velocity
-                    + 0.25 * session_depth
+                    + 0.25 * recent_activity
                     + 0.20 * engagement
                     + 0.20 * (1.0 - dismiss_rate)
                 ),
@@ -150,7 +150,7 @@ class ModelLoader:
                 "profile": (
                     0.55 * profile_incomplete
                     + 0.20 * (1.0 - engagement)
-                    + 0.15 * session_depth
+                    + 0.15 * recent_activity
                     + 0.10 * (1.0 - dismiss_rate)
                 ),
             }
