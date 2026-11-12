@@ -12,7 +12,7 @@ const featureSnapshot = {
   promotion_ctr: 0.15,
   hour_of_day: 18,
   is_weekend: 0,
-  session_depth: 12,
+  recent_event_count: 12,
   profile_incomplete: 0,
 };
 
@@ -23,41 +23,42 @@ function makeService(overrides: Record<string, any> = {}) {
     score: 0.72,
     phase: 'warm',
     tone: 'soft_sell',
-    experimentId: 'promotion-v2-staging',
+    experimentId: 'promotion-v3-staging',
     assignmentId: 'assignment-1',
     propensity: 0.5,
     features: featureSnapshot,
     position: 3,
     impressionAt: Date.now() - 1000,
   };
+
   const redis = {
-    get: jest.fn().mockResolvedValue(JSON.stringify(context)),
-    set: jest.fn().mockResolvedValue('OK'),
-    exists: jest.fn().mockResolvedValue(1),
-    incr: jest.fn().mockResolvedValue(1),
-    expire: jest.fn().mockResolvedValue(1),
-    zadd: jest.fn().mockResolvedValue(1),
-    zrem: jest.fn().mockResolvedValue(1),
-    zrangebyscore: jest.fn().mockResolvedValue([]),
-    ...overrides.redis,
+    get: jest.fn(async (_key: string): Promise<string | null> => JSON.stringify(context)),
+    set: jest.fn(async (_key: string, _value: string, ..._args: any[]): Promise<string | null> => 'OK'),
+    exists: jest.fn(async (_key: string): Promise<number> => 1),
+    incr: jest.fn(async (_key: string): Promise<number> => 1),
+    expire: jest.fn(async (_key: string, _seconds: number): Promise<number> => 1),
+    zadd: jest.fn(async (..._args: any[]): Promise<number> => 1),
+    zrem: jest.fn(async (..._args: any[]): Promise<number> => 1),
+    zrangebyscore: jest.fn(async (..._args: any[]): Promise<string[]> => []),
   };
+  Object.assign(redis, overrides.redis || {});
+
   const aiFeedbackService = {
-    create: jest.fn().mockResolvedValue({ id: 1 }),
+    create: jest.fn(async (_payload: any) => ({ id: 1 })),
   };
   const paywallService = {
-    adjustWeights: jest.fn().mockResolvedValue(undefined),
+    adjustWeights: jest.fn(async (..._args: any[]) => undefined),
   };
-  const httpService = {
-    post: jest.fn().mockReturnValue(of({ status: 200 })),
-  };
+  const httpPost = jest.fn((_url: string, _body: Record<string, any>) => of({ status: 200 }));
+  const httpService = { post: httpPost };
   const configService = {
     get: jest.fn((_key: string, fallback: string) => fallback),
   };
   const featureService = {
-    getUserFeatures: jest.fn().mockResolvedValue(featureSnapshot),
+    getUserFeatures: jest.fn(async () => featureSnapshot),
   };
   const userEventService = {
-    log: jest.fn().mockResolvedValue(undefined),
+    log: jest.fn(async (_payload: any) => undefined),
   };
 
   const service = new PromotionExposureService(
@@ -75,7 +76,7 @@ function makeService(overrides: Record<string, any> = {}) {
     redis,
     aiFeedbackService,
     paywallService,
-    httpService,
+    httpPost,
     featureService,
     userEventService,
     context,
@@ -84,13 +85,11 @@ function makeService(overrides: Record<string, any> = {}) {
 
 describe('PromotionExposureService event attribution', () => {
   it('records an actual impression once and starts the seven-day outcome window', async () => {
-    const { service, redis, userEventService } = makeService({
-      redis: {
-        set: jest.fn()
-          .mockResolvedValueOnce('OK')   // first impression marker
-          .mockResolvedValueOnce('OK'),  // refreshed attribution map
-      },
-    });
+    const { service, redis, userEventService } = makeService();
+    redis.set
+      .mockImplementationOnce(async () => 'OK')   // first impression marker
+      .mockImplementationOnce(async () => 'OK')   // refreshed attribution map
+      .mockImplementationOnce(async () => null);  // duplicate impression marker
 
     const first = await service.trackImpression(42, 'promotion-uuid');
     const second = await service.trackImpression(42, 'promotion-uuid');
@@ -105,14 +104,9 @@ describe('PromotionExposureService event attribution', () => {
     expect(redis.zadd).toHaveBeenCalledTimes(1);
   });
 
-  it('records click and dismiss as separate non-conversion engagement events', async () => {
-    const {
-      service,
-      httpService,
-      userEventService,
-      aiFeedbackService,
-      paywallService,
-    } = makeService();
+  it('records click and dismiss as separate engagement events without purchase labels', async () => {
+    const { service, httpPost, userEventService, aiFeedbackService, paywallService } =
+      makeService();
 
     await service.trackClick(42, 'promotion-uuid');
     await service.trackDismiss(42, 'promotion-uuid');
@@ -125,15 +119,15 @@ describe('PromotionExposureService event attribution', () => {
       type: EventType.PROMOTION_DISMISSED,
       idempotencyKey: 'promotion:promotion-uuid:dismiss',
     }));
-    const feedbackBodies = httpService.post.mock.calls.map((call: any[]) => call[1]);
-    expect(feedbackBodies.map((body: any) => body.event_type)).toEqual(['click', 'dismiss']);
-    expect(feedbackBodies.every((body: any) => body.label === undefined)).toBe(true);
+    const feedbackBodies = httpPost.mock.calls.map((call) => call[1]);
+    expect(feedbackBodies.map((body) => body.event_type)).toEqual(['click', 'dismiss']);
+    expect(feedbackBodies.every((body) => body.label === undefined)).toBe(true);
     expect(aiFeedbackService.create).toHaveBeenCalledTimes(1);
     expect(paywallService.adjustWeights).toHaveBeenCalledTimes(1);
   });
 
   it('attributes a purchase to the same visible promotion ID and sends a positive outcome', async () => {
-    const { service, httpService, redis, userEventService } = makeService();
+    const { service, httpPost, redis, userEventService } = makeService();
 
     const result = await service.trackConversion(
       42,
@@ -151,7 +145,7 @@ describe('PromotionExposureService event attribution', () => {
       }),
       idempotencyKey: 'promotion:promotion-uuid:conversion',
     }));
-    const feedback = httpService.post.mock.calls[0][1];
+    const feedback = httpPost.mock.calls[0][1];
     expect(feedback.event_type).toBe('conversion');
     expect(feedback.label).toBe(1);
     expect(feedback.promotion_id).toBe('promotion-uuid');
@@ -160,15 +154,15 @@ describe('PromotionExposureService event attribution', () => {
 
   it('refuses to attribute the same purchase idempotency key to a second promotion', async () => {
     const { service, redis, userEventService } = makeService();
-    redis.set.mockResolvedValue(null);
     redis.get
-      .mockResolvedValueOnce(JSON.stringify({
+      .mockImplementationOnce(async () => JSON.stringify({
         userId: 42,
         variant: 'vip',
         features: featureSnapshot,
         impressionAt: Date.now() - 1000,
       }))
-      .mockResolvedValueOnce('another-promotion-id');
+      .mockImplementationOnce(async () => 'another-promotion-id');
+    redis.set.mockImplementationOnce(async () => null);
 
     await expect(
       service.trackConversion(
@@ -190,7 +184,7 @@ describe('PromotionExposureService event attribution', () => {
       impressionAt: Date.now() - 8 * 24 * 60 * 60 * 1000,
     };
     const { service, userEventService } = makeService({
-      redis: { get: jest.fn().mockResolvedValue(JSON.stringify(expired)) },
+      redis: { get: jest.fn(async () => JSON.stringify(expired)) },
     });
 
     await expect(
@@ -200,19 +194,19 @@ describe('PromotionExposureService event attribution', () => {
   });
 
   it('matures an unconverted exposure as a negative outcome only after the window', async () => {
-    const { service, redis, httpService, userEventService } = makeService({
+    const { service, redis, httpPost, userEventService } = makeService({
       redis: {
-        zrangebyscore: jest.fn().mockResolvedValue(['promotion-uuid']),
+        zrangebyscore: jest.fn(async () => ['promotion-uuid']),
         get: jest.fn()
-          .mockResolvedValueOnce(JSON.stringify({
+          .mockImplementationOnce(async () => JSON.stringify({
             userId: 42,
             variant: 'vip',
             features: featureSnapshot,
-            experimentId: 'promotion-v2-staging',
+            experimentId: 'promotion-v3-staging',
             assignmentId: 'assignment-1',
             propensity: 0.5,
           }))
-          .mockResolvedValueOnce(null),
+          .mockImplementationOnce(async () => null),
       },
     });
 
@@ -222,7 +216,7 @@ describe('PromotionExposureService event attribution', () => {
       type: EventType.PROMOTION_NON_CONVERTED,
       idempotencyKey: 'promotion:promotion-uuid:non-conversion',
     }));
-    const feedback = httpService.post.mock.calls[0][1];
+    const feedback = httpPost.mock.calls[0][1];
     expect(feedback.event_type).toBe('non_conversion');
     expect(feedback.label).toBe(0);
     expect(feedback.outcome_window_complete).toBe(true);
@@ -232,7 +226,7 @@ describe('PromotionExposureService event attribution', () => {
   it('does not accept events from another user’s promotion ID', async () => {
     const foreign = { userId: 99, variant: 'vip' };
     const { service } = makeService({
-      redis: { get: jest.fn().mockResolvedValue(JSON.stringify(foreign)) },
+      redis: { get: jest.fn(async () => JSON.stringify(foreign)) },
     });
 
     await expect(service.trackClick(42, 'promotion-uuid')).rejects.toThrow(
