@@ -17,6 +17,7 @@ interface DecisionResult {
   experimentId?: string;
   assignmentId?: string;
   propensity?: number;
+  featuresSnapshot?: Record<string, number>;
 }
 
 interface VariantScore {
@@ -164,6 +165,7 @@ export class PromotionEngineService {
           ),
           assignmentId: randomUUID(),
           propensity: 1 / experimentCandidates.length,
+          featuresSnapshot: { ...features },
         };
       }
 
@@ -175,6 +177,7 @@ export class PromotionEngineService {
           score: bestScore,
           scoreKind: scoreKind as DecisionResult['scoreKind'],
           modelStatus,
+          featuresSnapshot: { ...features },
         };
       }
 
@@ -183,6 +186,7 @@ export class PromotionEngineService {
         score: bestScore,
         scoreKind: scoreKind as DecisionResult['scoreKind'],
         modelStatus,
+        featuresSnapshot: { ...features },
       };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
