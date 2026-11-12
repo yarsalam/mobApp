@@ -71,7 +71,7 @@ describe('AcquisitionGrowthService', () => {
       rate: 0.4545,
     });
     expect(users.query.mock.calls[1][1][0]).toEqual(new Date('2026-10-06T12:00:00.000Z'));
-    expect(users.query.mock.calls[1][1][1]).toEqual(new Date('2026-10-13T12:00:00.000Z'));
+    expect(users.query.mock.calls[1][1][1]).toEqual(new Date('2026-11-05T12:00:00.000Z'));
   });
 
   it('keeps revenue separated by currency and refuses to fabricate CAC', async () => {
