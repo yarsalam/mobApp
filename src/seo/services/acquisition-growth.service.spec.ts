@@ -32,13 +32,13 @@ describe('AcquisitionGrowthService', () => {
       }),
     };
     events = {
-      query: jest.fn().mockResolvedValue([
+      query: jest.fn(async () => [
         { source: 'google', activatedUsers: '4' },
         { source: 'unknown', activatedUsers: '1' },
       ]),
     };
     payments = {
-      query: jest.fn().mockResolvedValue([
+      query: jest.fn(async () => [
         { source: 'google', currency: 'IRT', paidTransactions: '3', payingUsers: '2', amountMinorUnits: '30000' },
         { source: 'unknown', currency: 'USD', paidTransactions: '1', payingUsers: '1', amountMinorUnits: '600' },
       ]),
