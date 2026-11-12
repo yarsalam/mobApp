@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -25,6 +26,7 @@ import { Payment } from 'src/payments/entities/payment.entity';
 import { SEOScoreEngine } from 'src/seo/services/seo-score-engine.service';
 import { SeoRecommenderService } from 'src/seo/services/seo-recommender.service';
 import { BacklinkQualityService } from 'src/seo/services/backlink-quality.service';
+import { AcquisitionGrowthService } from 'src/seo/services/acquisition-growth.service';
 
 @Controller('admin-api/seo')
 @UseGuards(AdminApiGuard)
@@ -33,6 +35,7 @@ export class AdminApiSeoController {
   private readonly aiSeoUrl: string;
 
   constructor(
+    private readonly acquisitionGrowth: AcquisitionGrowthService,
     private readonly seoCollector: SEOCollectorService,
     private readonly seoRetentionService: SEORetentionService,
     private readonly seoService: SEOService,
@@ -76,125 +79,18 @@ export class AdminApiSeoController {
     }
   }
 
+  @Get('acquisition')
+  async getAcquisition(@Query('days') days?: string) {
+    const parsedDays = days === undefined ? 30 : Number(days);
+    return this.acquisitionGrowth.getReport(parsedDays);
+  }
+
+  // Backward-compatible route: the old organic-only funnel now delegates to
+  // the same source-cohort report and no longer fabricates zero/organic data.
   @Get('funnel')
-  async getFunnel() {
-    try {
-      const since = new Date(Date.now() - 30 * 86_400_000);
-
-      const organicSources = ['organic', 'google', 'bing', 'yahoo', 'search'];
-
-      const [searchConsole, registrations, paidUsers, revenueRow] =
-        await Promise.all([
-          // Google Search Console
-          this.externalTools
-            .getSearchConsoleData(process.env.GOOGLE_SEARCH_CONSOLE_SITE, 30)
-            .catch(() => null),
-
-          // Organic registrations
-          this.userRepo
-            .createQueryBuilder('u')
-            .where('u.acquisitionSource IN (:...sources)', {
-              sources: organicSources,
-            })
-            .andWhere('u.createdAt > :since', {
-              since,
-            })
-            .getCount()
-            .catch(() => 0),
-
-          // Organic paying users
-          this.userRepo
-            .createQueryBuilder('u')
-            .where('u.acquisitionSource IN (:...sources)', {
-              sources: organicSources,
-            })
-            .andWhere('u.tier != :tier', {
-              tier: 'free',
-            })
-            .andWhere('u.createdAt > :since', {
-              since,
-            })
-            .getCount()
-            .catch(() => 0),
-
-          // Organic revenue
-          this.paymentRepo
-            .createQueryBuilder('p')
-            .innerJoin('p.user', 'u')
-            .where('u.acquisitionSource IN (:...sources)', {
-              sources: organicSources,
-            })
-            .andWhere('p.status = :status', {
-              status: 'paid',
-            })
-            .andWhere('p.createdAt > :since', {
-              since,
-            })
-            .select('COALESCE(SUM(p.amount),0)', 'total')
-            .getRawOne()
-            .catch(() => ({
-              total: '0',
-            })),
-        ]);
-
-      return {
-        steps: [
-          {
-            step: 'impressions',
-            label: 'نمایش در جستجو',
-            count: searchConsole?.totalImpressions ?? 0,
-          },
-          {
-            step: 'clicks',
-            label: 'کلیک',
-            count: searchConsole?.totalClicks ?? 0,
-          },
-          {
-            step: 'registrations',
-            label: 'ثبت‌نام (منبع ارگانیک)',
-            count: registrations,
-          },
-          {
-            step: 'paid',
-            label: 'کاربر پرداخت‌کننده',
-            count: paidUsers,
-          },
-        ],
-
-        revenue30d: Number(revenueRow?.total || 0),
-
-        impressionsClicksEstimated: !process.env.GOOGLE_API_KEY,
-      };
-    } catch (error) {
-      this.logger.error('SEO funnel failed', error);
-
-      return {
-        steps: [
-          {
-            step: 'impressions',
-            label: 'نمایش در جستجو',
-            count: 0,
-          },
-          {
-            step: 'clicks',
-            label: 'کلیک',
-            count: 0,
-          },
-          {
-            step: 'registrations',
-            label: 'ثبت‌نام (منبع ارگانیک)',
-            count: 0,
-          },
-          {
-            step: 'paid',
-            label: 'کاربر پرداخت‌کننده',
-            count: 0,
-          },
-        ],
-        revenue30d: 0,
-        impressionsClicksEstimated: true,
-      };
-    }
+  async getFunnel(@Query('days') days?: string) {
+    const parsedDays = days === undefined ? 30 : Number(days);
+    return this.acquisitionGrowth.getReport(parsedDays);
   }
 
   @Get('trends-mom')
