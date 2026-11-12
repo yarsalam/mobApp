@@ -76,6 +76,7 @@ export enum EventType {
   PROMOTION_CLICKED = 'promotion_clicked',
   PROMOTION_DISMISSED = 'promotion_dismissed',
   PROMOTION_CONVERTED = 'promotion_converted',
+  PROMOTION_NON_CONVERTED = 'promotion_non_converted',
   FEED_SHOWN = 'feed_shown',
   COLD_FEED_SHOWN = 'cold_feed_shown',
   PAYMENT_INITIATED = 'payment_initiated',
