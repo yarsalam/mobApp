@@ -44,6 +44,7 @@ export class PaymentsService {
       amountRials: number;
       source: 'wallet' | 'payment';
       idempotencyKey?: string;
+      promotionId?: string;
     },
   ) {
     try {
@@ -107,6 +108,9 @@ export class PaymentsService {
                 amountRials: purchaseContext.amountRials,
                 currency: 'IRT',
                 source: purchaseContext.source,
+                ...(purchaseContext.promotionId
+                  ? { promotionId: purchaseContext.promotionId }
+                  : {}),
               }
             : { source: 'admin_or_system_grant' }),
         },
