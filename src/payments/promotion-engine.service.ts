@@ -1,3 +1,4 @@
+import { randomInt, randomUUID } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
@@ -13,6 +14,9 @@ interface DecisionResult {
   score: number;
   scoreKind?: (typeof SCORE_KINDS)[number];
   modelStatus?: string;
+  experimentId?: string;
+  assignmentId?: string;
+  propensity?: number;
 }
 
 interface VariantScore {
@@ -129,6 +133,39 @@ export class PromotionEngineService {
       this.logger.debug(
         `Promotion decision user=${userId} best=${bestVariant} score=${bestScore.toFixed(3)} kind=${scoreKind} model=${modelStatus}`,
       );
+
+      // Optional randomized exploration is disabled by default. When
+      // explicitly enabled in isolated staging, it records assignment and
+      // propensity so only randomized outcomes can enter model training.
+      const experimentEnabled =
+        this.configService.get('PROMOTION_EXPERIMENT_ENABLED', 'false') === 'true';
+      const experimentRate = Number(
+        this.configService.get('PROMOTION_EXPERIMENT_RATE', '0'),
+      );
+      const experimentCandidates = allScores.filter((item) => item.score >= 0.3);
+      const enterExperiment =
+        experimentEnabled &&
+        Number.isFinite(experimentRate) &&
+        experimentRate > 0 &&
+        experimentRate <= 1 &&
+        experimentCandidates.length > 1 &&
+        randomInt(1_000_000) / 1_000_000 < experimentRate;
+
+      if (enterExperiment) {
+        const selected = experimentCandidates[randomInt(experimentCandidates.length)];
+        return {
+          variant: selected.variant,
+          score: selected.score,
+          scoreKind: scoreKind as DecisionResult['scoreKind'],
+          modelStatus,
+          experimentId: this.configService.get(
+            'PROMOTION_EXPERIMENT_ID',
+            'promotion-v2-staging',
+          ),
+          assignmentId: randomUUID(),
+          propensity: 1 / experimentCandidates.length,
+        };
+      }
 
       // This is an operational display guard, not a calibrated conversion
       // probability threshold when score_kind is heuristic_priority.
