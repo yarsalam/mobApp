@@ -220,8 +220,13 @@ export class FeedPromotionService {
         score: decision.score,
         phase: phase.phase,
         tone: 'soft_sell',
-        // Seven-day attribution window; conversion is accepted only for this
-        // exact user-owned exposure ID.
+        scoreKind: decision.scoreKind,
+        modelStatus: decision.modelStatus,
+        experimentId: decision.experimentId,
+        assignmentId: decision.assignmentId,
+        propensity: decision.propensity,
+        // Keep the exposure through the seven-day outcome window plus one
+        // worker interval so a matured negative outcome can be persisted.
         createdAt: new Date().toISOString(),
       }),
       'EX',
@@ -242,6 +247,11 @@ export class FeedPromotionService {
         score: decision.score,
         position: feedPosition,
         promotionId,
+        experimentId: decision.experimentId,
+        assignmentId: decision.assignmentId,
+        propensity: decision.propensity,
+        scoreKind: decision.scoreKind,
+        modelStatus: decision.modelStatus,
       },
       idempotencyKey: `promotion:${promotionId}:shown`,
     });
