@@ -63,7 +63,7 @@ export class FeedPromotionService {
       navigationParams: { type: 'credit' },
     },
     bundle: {
-      variant: 'credit',
+      variant: 'bundle',
       title: '🎁 بسته شروع',
       subtitle: '۲۰ اعتبار + ۲ بوست\n۵۰٪ تخفیف ویژه',
       ctaText: 'شروع کن',
