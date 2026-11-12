@@ -6,7 +6,7 @@ import { firstValueFrom, timeout } from 'rxjs';
 import { FeatureService } from '../user-metrics/feature.service';
 import { PromotionExposureService } from './promotion-exposure.service';
 
-const PROMOTION_FEATURE_SCHEMA_VERSION = 2;
+const PROMOTION_FEATURE_SCHEMA_VERSION = 3;
 const SCORE_KINDS = ['model_probability', 'heuristic_priority'] as const;
 
 interface DecisionResult {
