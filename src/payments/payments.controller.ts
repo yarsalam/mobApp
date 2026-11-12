@@ -113,14 +113,6 @@ export class PaymentsController {
     });
     if (!bundle) throw new NotFoundException('محصول یافت نشد');
 
-    // کسر از wallet به ریال
-    await this.walletService.debitOnce(
-      userId,
-      bundle.price,
-      `buy:${bundleCode}`,
-      `wallet-checkout:${stableKey}:debit`,
-    );
-
     const promotionId = body?.promotionId?.trim();
     if (
       promotionId &&
@@ -128,6 +120,14 @@ export class PaymentsController {
     ) {
       throw new BadRequestException('promotionId must be a valid promotion exposure ID');
     }
+
+    // Validate the optional attribution reference before mutating the wallet.
+    await this.walletService.debitOnce(
+      userId,
+      bundle.price,
+      `buy:${bundleCode}`,
+      `wallet-checkout:${stableKey}:debit`,
+    );
 
     // grant محصول; promotionId is captured in the durable PURCHASE event.
     await this.paymentsService.grantBundle(userId, bundleCode, {
