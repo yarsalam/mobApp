@@ -89,6 +89,7 @@ describe('PromotionExposureService event attribution', () => {
     redis.set
       .mockImplementationOnce(async () => 'OK')   // first impression marker
       .mockImplementationOnce(async () => 'OK')   // refreshed attribution map
+      .mockImplementationOnce(async () => 'OK')   // last-shown timestamp
       .mockImplementationOnce(async () => null);  // duplicate impression marker
 
     const first = await service.trackImpression(42, 'promotion-uuid');
