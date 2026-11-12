@@ -42,12 +42,11 @@ export class FeatureService {
       engagement_score: await this.calculateEngagementScore(userId, events),
       days_since_signup: daysSinceSignup,
       swipe_velocity: await this.calculateSwipeVelocity(userId, last7Days),
-      avg_session_time: await this.calculateAvgSessionTime(userId, last7Days),
       session_depth: events.length,
       dismiss_rate: await this.calculateDismissRate(userId, last30Days),
       promotion_ctr: await this.calculatePromotionCTR(userId, last30Days),
-      conversion_score: await this.calculateConversionScore(userId),
       last_purchase_days: await this.getLastPurchaseDays(userId),
+      profile_incomplete: user.isCompleted ? 0 : 1,
       hour_of_day: new Date().getHours(),
       is_weekend:
         new Date().getDay() === 6 || new Date().getDay() === 0 ? 1 : 0,
@@ -98,14 +97,6 @@ export class FeatureService {
     return count / 7;
   }
 
-  private async calculateAvgSessionTime(
-    userId: number,
-    since: Date,
-  ): Promise<number> {
-    // TODO: پیاده‌سازی session tracking
-    return 180;
-  }
-
   private async calculateDismissRate(
     userId: number,
     since: Date,
@@ -154,11 +145,6 @@ export class FeatureService {
 
     if (shown === 0) return 0.1;
     return clicked / shown;
-  }
-
-  private async calculateConversionScore(userId: number): Promise<number> {
-    // TODO: مدل پیش‌بینی احتمال خرید
-    return 0.3;
   }
 
   private async getLastPurchaseDays(userId: number): Promise<number> {
