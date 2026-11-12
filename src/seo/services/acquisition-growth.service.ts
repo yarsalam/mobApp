@@ -29,6 +29,7 @@ export class AcquisitionGrowthService {
     }
 
     const periodStart = new Date(now.getTime() - days * 86_400_000);
+    const activationCutoff = new Date(now.getTime() - 7 * 86_400_000);
     const d7CohortStart = new Date(now.getTime() - (days + 7) * 86_400_000);
     const d7CohortEnd = new Date(now.getTime() - 7 * 86_400_000);
     const d30CohortStart = new Date(now.getTime() - (days + 30) * 86_400_000);
@@ -38,13 +39,14 @@ export class AcquisitionGrowthService {
       'SELECT ' + SOURCE_SQL + ' AS source, COUNT(*) AS registrations, ' +
       'SUM(CASE WHEN u.isCompleted = 1 THEN 1 ELSE 0 END) AS completedProfiles, ' +
       'SUM(CASE WHEN u.isVerified = 1 THEN 1 ELSE 0 END) AS verifiedUsers, ' +
-      'SUM(CASE WHEN u.isFaceVerified = 1 THEN 1 ELSE 0 END) AS faceVerifiedUsers ' +
+      'SUM(CASE WHEN u.isFaceVerified = 1 THEN 1 ELSE 0 END) AS faceVerifiedUsers, ' +
+      'SUM(CASE WHEN u.createdAt < ? THEN 1 ELSE 0 END) AS activationEligibleUsers ' +
       'FROM `user` u WHERE u.createdAt >= ? AND u.createdAt <= ? GROUP BY source';
 
     const activationSql =
       'SELECT ' + SOURCE_SQL + ' AS source, COUNT(DISTINCT u.id) AS activatedUsers ' +
       'FROM `user` u INNER JOIN user_events e ON e.userId = u.id ' +
-      'WHERE u.createdAt >= ? AND u.createdAt <= ? ' +
+      'WHERE u.createdAt >= ? AND u.createdAt <= ? AND u.createdAt < ? ' +
       'AND e.createdAt >= u.createdAt AND e.createdAt < DATE_ADD(u.createdAt, INTERVAL 7 DAY) ' +
       "AND e.type IN ('like', 'match', 'message_sent') GROUP BY source";
 
@@ -68,8 +70,8 @@ export class AcquisitionGrowthService {
 
     const [registrationRows, activationRows, d7Rows, d30Rows, revenueRows] =
       await Promise.all([
-        this.users.query(registrationsSql, [periodStart, now]) as Promise<AggregateRow[]>,
-        this.events.query(activationSql, [periodStart, now]) as Promise<AggregateRow[]>,
+        this.users.query(registrationsSql, [activationCutoff, periodStart, now]) as Promise<AggregateRow[]>,
+        this.events.query(activationSql, [periodStart, now, activationCutoff]) as Promise<AggregateRow[]>,
         this.users.query(retentionSql(7), [d7CohortStart, d7CohortEnd]) as Promise<AggregateRow[]>,
         this.users.query(retentionSql(30), [d30CohortStart, d30CohortEnd]) as Promise<AggregateRow[]>,
         this.payments.query(revenueSql, [periodStart, now]) as Promise<AggregateRow[]>,
@@ -92,11 +94,12 @@ export class AcquisitionGrowthService {
           completedProfiles: this.count(row.completedProfiles),
           verifiedUsers: this.count(row.verifiedUsers),
           faceVerifiedUsers: this.count(row.faceVerifiedUsers),
+          activationEligibleUsers: this.count(row.activationEligibleUsers),
           firstWeekActivatedUsers: activatedUsers,
           profileCompletionRate: this.rate(this.count(row.completedProfiles), registrations),
           verificationRate: this.rate(this.count(row.verifiedUsers), registrations),
           faceVerificationRate: this.rate(this.count(row.faceVerifiedUsers), registrations),
-          firstWeekActivationRate: this.rate(activatedUsers, registrations),
+          firstWeekActivationRate: this.rate(activatedUsers, this.count(row.activationEligibleUsers)),
           retentionD7: this.retention(d7BySource.get(source)),
           retentionD30: this.retention(d30BySource.get(source)),
         };
@@ -105,6 +108,7 @@ export class AcquisitionGrowthService {
 
     const totalRegistrations = channels.reduce((sum, row) => sum + row.registrations, 0);
     const totalActivated = channels.reduce((sum, row) => sum + row.firstWeekActivatedUsers, 0);
+    const totalActivationEligible = channels.reduce((sum, row) => sum + row.activationEligibleUsers, 0);
     const totalCompleted = channels.reduce((sum, row) => sum + row.completedProfiles, 0);
     const totalVerified = channels.reduce((sum, row) => sum + row.verifiedUsers, 0);
 
@@ -124,16 +128,18 @@ export class AcquisitionGrowthService {
         registrations: totalRegistrations,
         completedProfiles: totalCompleted,
         verifiedUsers: totalVerified,
+        activationEligibleUsers: totalActivationEligible,
         firstWeekActivatedUsers: totalActivated,
         profileCompletionRate: this.rate(totalCompleted, totalRegistrations),
         verificationRate: this.rate(totalVerified, totalRegistrations),
-        firstWeekActivationRate: this.rate(totalActivated, totalRegistrations),
+        firstWeekActivationRate: this.rate(totalActivated, totalActivationEligible),
       },
       channels,
       retentionCohorts: {
         d7: this.aggregateRetention(d7Rows),
         d30: this.aggregateRetention(d30Rows),
       },
+      paidRevenueWindow: { from: periodStart.toISOString(), to: now.toISOString() },
       paidRevenue: revenueRows.map((row) => ({
         source: String(row.source || 'unknown'),
         currency: String(row.currency || 'unknown'),
