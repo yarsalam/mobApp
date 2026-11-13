@@ -21,8 +21,8 @@ describe('UserMetricsService lifecycle metrics', () => {
       { count: jest.fn(async () => 0) } as any,
       paymentRepo as any,
       { count: jest.fn(async () => 0) } as any,
-      { query: jest.fn(async () => [{ retention_count: 0 }]) } as any,
       userRepo as any,
+      { query: jest.fn(async () => [{ retention_count: 0 }]) } as any,
     );
 
     const metrics = await service.buildExtraMetrics(42);
@@ -38,8 +38,8 @@ describe('UserMetricsService lifecycle metrics', () => {
       { count: jest.fn(async () => 0) } as any,
       { count: jest.fn(async () => 0), findOne: jest.fn(async () => null) } as any,
       { count: jest.fn(async () => 0) } as any,
-      { query: jest.fn(async () => [{ retention_count: 0 }]) } as any,
       { findOne: jest.fn(async () => ({ createdAt: new Date(now - 5 * 86400000) })) } as any,
+      { query: jest.fn(async () => [{ retention_count: 0 }]) } as any,
     );
 
     const metrics = await service.buildExtraMetrics(42);
