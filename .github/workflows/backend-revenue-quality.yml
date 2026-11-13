@@ -17,6 +17,8 @@ on:
       - "src/redis/redis.service.ts"
       - "src/message/**"
       - "src/payments/**"
+      - "src/product/**"
+      - "src/pricing-experiments/**"
       - "src/user-event/**"
       - "python-ai/services/ml_service/**"
       - "python-ai/tests/test_matching_scoring.py"
@@ -64,6 +66,10 @@ jobs:
         run: >-
           npm test -- --runInBand
           revenue-analytics.service.spec.ts
+          admin-api/controllers/revenue/admin-api-revenue.controller.spec.ts
+          payments.controller.spec.ts
+          pricing-experiments/pricing-experiment.service.spec.ts
+          product/product.controller.spec.ts
           personality.service.spec.ts
           app.controller.spec.ts
           payments.service.spec.ts
