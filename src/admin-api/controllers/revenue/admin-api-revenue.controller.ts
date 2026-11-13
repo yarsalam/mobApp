@@ -75,7 +75,7 @@ export class AdminApiRevenueController {
 
   @Post('acquisition-costs')
   async createAcquisitionCost(@Body() body: CreateAcquisitionCostDto) {
-    return this.acquisitionGrowth.createCost(body, 'admin_panel');
+    return this.acquisitionGrowth.createCost(body, 'admin_api');
   }
 
   @Get('ltv-by-source')
