@@ -614,13 +614,13 @@ export class RevenueAnalyticsService {
       this.users
         .createQueryBuilder('customer')
         .leftJoin(
-        PartitionedEvent,
-        'purchase',
-        `purchase.userId = customer.id
-          AND purchase.type = :purchaseType
-          AND JSON_UNQUOTE(JSON_EXTRACT(purchase.metadata, '$.isCommercialPurchase')) = 'true'`,
-        { purchaseType: EventType.PURCHASE },
-      )
+          PartitionedEvent,
+          'purchase',
+          `purchase.userId = customer.id
+            AND purchase.type = :purchaseType
+            AND JSON_UNQUOTE(JSON_EXTRACT(purchase.metadata, '$.isCommercialPurchase')) = 'true'`,
+          { purchaseType: EventType.PURCHASE },
+        )
         .where('customer.status = :activeStatus', { activeStatus: 'active' })
         .andWhere('purchase.id IS NULL')
         .getCount(),
@@ -714,8 +714,8 @@ export class RevenueAnalyticsService {
     let activePurchasedInWindow = 0;
     let periodPurchases = 0;
     let periodRevenueRials = 0;
-    let lifetimeRepeatBuyers = 0;
-    let lifetimeFrequentBuyers = 0;
+    let lifetimeIrtRepeatBuyers = 0;
+    let lifetimeIrtFrequentBuyers = 0;
     let topQuartileAtRiskBuyers = 0;
 
     for (const row of validRows) {
@@ -756,8 +756,8 @@ export class RevenueAnalyticsService {
           topQuartileAtRiskBuyers += 1;
         }
       }
-      if (lifetimeFrequency >= 2) lifetimeRepeatBuyers += 1;
-      if (lifetimeFrequency >= 3) lifetimeFrequentBuyers += 1;
+      if (lifetimeFrequency >= 2) lifetimeIrtRepeatBuyers += 1;
+      if (lifetimeFrequency >= 3) lifetimeIrtFrequentBuyers += 1;
     }
 
     const activePreviouslyPurchasedCustomers = Math.max(
@@ -778,8 +778,8 @@ export class RevenueAnalyticsService {
         historicalDormantBuyers: grouped.historical_dormant.customers,
         purchasesInWindow: periodPurchases,
         fulfilledRevenueRialsInWindow: Math.round(periodRevenueRials),
-        lifetimeRepeatBuyers,
-        lifetimeFrequentBuyers,
+        lifetimeIrtRepeatBuyers,
+        lifetimeIrtFrequentBuyers,
         topQuartileAtRiskBuyers,
         activeNeverPurchasedUsers: neverPurchasedActiveUsers,
         invalidAggregateRows: invalidRows,
@@ -810,7 +810,7 @@ export class RevenueAnalyticsService {
       protection: {
         previouslyPurchasedUsersExcludedFromFirstPurchaseDiscounts: true,
         previouslyPurchasedUsersProtected: activePreviouslyPurchasedCustomers,
-        repeatBuyersProtected: lifetimeRepeatBuyers,
+        repeatIrtBuyersProtected: lifetimeIrtRepeatBuyers,
         firstPurchaseCandidatePool: neverPurchasedActiveUsers,
         eligibilityRule:
           'active account with no lifetime successfully fulfilled commercial PURCHASE event; past purchasers remain excluded even when they have no purchase in the selected window',
