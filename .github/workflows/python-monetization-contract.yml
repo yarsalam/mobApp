@@ -53,3 +53,140 @@ jobs:
         run: python python-ai/tests/test_ai_monetization_contract.py -v
       - name: Verify feedback idempotency, failure safety and atomic queue snapshot
         run: python python-ai/tests/test_ai_monetization_queue.py -v
+
+      - name: Build the isolated AI Monetization runtime image
+        run: |
+          bash scripts/staging/build-ai-base.sh ai_monetization
+          docker build \
+            -t yarsalam-ai-monetization-runtime-test \
+            -f python-ai/services/ai_monetization/Dockerfile \
+            python-ai/services/ai_monetization
+
+      - name: Start AI Monetization container against the isolated Redis service
+        run: |
+          docker run -d --name ai-monetization-runtime-test --network host \
+            --cpus=1 --memory=768m \
+            -e REDIS_URL=redis://127.0.0.1:6379/15 \
+            -e MODEL_PATH=/tmp/monetization-runtime-models \
+            yarsalam-ai-monetization-runtime-test
+
+      - name: Verify AI Monetization HTTP, fallback, feedback and training safety
+        run: |
+          set -euo pipefail
+          base="http://127.0.0.1:8015"
+          ready=false
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --output "$RUNNER_TEMP/monetization-health.json" "$base/health" &&
+              python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d.get("status") == "healthy" and d.get("service") == "ai_monetization" and d.get("model_status") == "missing" and d.get("model_available") is False and d.get("feature_schema_version") == 3' "$RUNNER_TEMP/monetization-health.json"
+            then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          [[ "$ready" == true ]] || { echo "AI Monetization health/model state did not become ready."; exit 1; }
+
+          cat > "$RUNNER_TEMP/monetization-predict.json" <<'JSON'
+          {
+            "user_id": 991001,
+            "features": {
+              "engagement_score": 0.8,
+              "days_since_signup": 30,
+              "dismiss_rate": 0.1,
+              "last_purchase_days": 7,
+              "swipe_velocity": 3,
+              "promotion_ctr": 0.15,
+              "hour_of_day": 18,
+              "is_weekend": 0,
+              "recent_event_count": 12,
+              "profile_incomplete": 0
+            },
+            "candidates": ["vip", "boost", "credit", "profile", "bundle"],
+            "feature_schema_version": 3
+          }
+          JSON
+          curl --fail --silent --show-error -H "Content-Type: application/json" \
+            --data-binary @"$RUNNER_TEMP/monetization-predict.json" \
+            "$base/api/predict-promotion" > "$RUNNER_TEMP/monetization-prediction.json"
+          python - "$RUNNER_TEMP/monetization-prediction.json" <<'PY'
+          import json, math, sys
+          data = json.load(open(sys.argv[1]))
+          assert data["score_kind"] == "heuristic_priority", data
+          assert data["model_status"] == "missing", data
+          assert data["feature_schema_version"] == 3, data
+          assert len(data["all_scores"]) == 5, data
+          assert {item["variant"] for item in data["all_scores"]} == {
+              "vip", "boost", "credit", "profile", "bundle"
+          }, data
+          assert all(math.isfinite(item["score"]) and 0 <= item["score"] <= 1
+                     for item in data["all_scores"]), data
+          assert data["variant"] == data["all_scores"][0]["variant"], data
+          assert abs(data["score"] - data["all_scores"][0]["score"]) < 1e-6, data
+          PY
+
+          cat > "$RUNNER_TEMP/monetization-invalid-features.json" <<'JSON'
+          {"user_id":991001,"features":{"engagement_score":0.8},"candidates":["vip"],"feature_schema_version":3}
+          JSON
+          invalid_code="$(curl --silent --show-error -o "$RUNNER_TEMP/monetization-invalid-features-response.json" -w '%{http_code}' \
+            -H "Content-Type: application/json" --data-binary @"$RUNNER_TEMP/monetization-invalid-features.json" \
+            "$base/api/predict-promotion")"
+          [[ "$invalid_code" == "422" ]]
+
+          cat > "$RUNNER_TEMP/monetization-feedback.json" <<'JSON'
+          {
+            "user_id": 991001,
+            "variant": "vip",
+            "features": {
+              "engagement_score": 0.8,
+              "days_since_signup": 30,
+              "dismiss_rate": 0.1,
+              "last_purchase_days": 7,
+              "swipe_velocity": 3,
+              "promotion_ctr": 0.15,
+              "hour_of_day": 18,
+              "is_weekend": 0,
+              "recent_event_count": 12,
+              "profile_incomplete": 0
+            },
+            "promotion_id": "runtime-promotion-991001",
+            "feedback_id": "runtime-feedback-idempotency-991001",
+            "event_type": "click"
+          }
+          JSON
+          curl --fail --silent --show-error -H "Content-Type: application/json" \
+            --data-binary @"$RUNNER_TEMP/monetization-feedback.json" \
+            "$base/api/feedback" > "$RUNNER_TEMP/monetization-feedback-first.json"
+          curl --fail --silent --show-error -H "Content-Type: application/json" \
+            --data-binary @"$RUNNER_TEMP/monetization-feedback.json" \
+            "$base/api/feedback" > "$RUNNER_TEMP/monetization-feedback-duplicate.json"
+          python - "$RUNNER_TEMP/monetization-feedback-first.json" "$RUNNER_TEMP/monetization-feedback-duplicate.json" <<'PY'
+          import json, sys
+          first, duplicate = [json.load(open(path)) for path in sys.argv[1:]]
+          assert first["status"] == "stored" and first["training_eligible"] is False, first
+          assert duplicate["status"] == "duplicate" and duplicate["training_eligible"] is False, duplicate
+          PY
+
+          curl --fail --silent --show-error "$base/api/feedback/count" > "$RUNNER_TEMP/monetization-feedback-count-before.json"
+          python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["total"] == 1, d' "$RUNNER_TEMP/monetization-feedback-count-before.json"
+
+          retrain_code="$(curl --silent --show-error -o "$RUNNER_TEMP/monetization-retrain-response.json" -w '%{http_code}' -X POST "$base/api/retrain-from-feedback")"
+          [[ "$retrain_code" == "400" ]]
+          python - "$RUNNER_TEMP/monetization-retrain-response.json" <<'PY'
+          import json, sys
+          detail = json.load(open(sys.argv[1]))["detail"]
+          assert detail["code"] == "NOT_ENOUGH_RANDOMIZED_OUTCOMES", detail
+          assert detail["eligible_samples"] == 0, detail
+          assert detail["required_samples"] == 100, detail
+          PY
+
+          curl --fail --silent --show-error "$base/api/feedback/count" > "$RUNNER_TEMP/monetization-feedback-count-after.json"
+          python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["total"] == 1, d' "$RUNNER_TEMP/monetization-feedback-count-after.json"
+          echo "AI Monetization runtime contract passed: honest heuristic fallback, strict features, idempotent feedback, and fail-closed training."
+
+      - name: Capture AI Monetization container logs on failure
+        if: failure()
+        run: docker logs --tail=160 ai-monetization-runtime-test || true
+
+      - name: Stop AI Monetization runtime container
+        if: always()
+        run: docker rm -f ai-monetization-runtime-test || true
