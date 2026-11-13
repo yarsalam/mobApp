@@ -637,16 +637,17 @@ export class PricingExperimentService {
       throw new ServiceUnavailableException('Calculated pricing quote is invalid');
     }
 
-    if (assignment.variant === 'treatment') {
-      const budget = await this.budgetSnapshot(
-        config.experimentId,
-        config.maxDiscountBudgetRials,
-      );
-      const requestedDiscount = bundle.price - payablePriceRials;
-      if (budget.remainingBudgetRials < requestedDiscount) {
-        // Stop showing a treatment price when the global allowance is exhausted.
-        return base;
-      }
+    const budget = await this.budgetSnapshot(
+      config.experimentId,
+      config.maxDiscountBudgetRials,
+    );
+    const maximumPossibleDiscount = Math.floor(
+      (bundle.price * config.discountBps) / 10_000,
+    );
+    if (budget.remainingBudgetRials < maximumPossibleDiscount) {
+      // Stop both arms for this product together. Showing control without
+      // a corresponding treatment opportunity would distort the experiment.
+      return base;
     }
 
     const issuedAt = Date.now();
