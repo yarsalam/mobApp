@@ -1,4 +1,4 @@
-import { Injectable, Logger, Inject } from '@nestjs/common';
+import { Injectable, Logger, Inject, NotFoundException } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { randomUUID } from 'crypto';
 import { REDIS_CLIENT } from '../../redis/redis.constants';
@@ -222,7 +222,7 @@ export class FeedPromotionService {
         tone: 'soft_sell',
       }),
       'EX',
-      3600,
+      604800,
     );
 
     // ردیابی و لاگ
@@ -244,6 +244,100 @@ export class FeedPromotionService {
       data: promotion,
       score: decision.score,
     };
+  }
+
+  private async recordPromotionInteraction(
+    userId: number,
+    promotionId: string,
+    interaction: 'click' | 'dismiss',
+  ): Promise<{ success: true; duplicate: boolean }> {
+    if (
+      !Number.isSafeInteger(userId) ||
+      userId <= 0 ||
+      typeof promotionId !== 'string' ||
+      promotionId.length < 16 ||
+      promotionId.length > 128
+    ) {
+      throw new NotFoundException('Promotion not found');
+    }
+
+    const raw = await this.redis.get(`promo:map:${promotionId}`);
+    if (!raw) throw new NotFoundException('Promotion not found');
+
+    let metadata: {
+      userId?: unknown;
+      variant?: unknown;
+      phase?: unknown;
+      score?: unknown;
+    };
+    try {
+      metadata = JSON.parse(raw) as typeof metadata;
+    } catch {
+      throw new NotFoundException('Promotion not found');
+    }
+
+    if (
+      Number(metadata.userId) !== userId ||
+      typeof metadata.variant !== 'string' ||
+      !/^[a-z][a-z0-9_-]{0,31}$/i.test(metadata.variant)
+    ) {
+      // Do not disclose whether another user's promotion ID exists.
+      throw new NotFoundException('Promotion not found');
+    }
+
+    const eventType =
+      interaction === 'click'
+        ? EventType.PROMOTION_CLICKED
+        : EventType.PROMOTION_DISMISSED;
+    const dedupeKey = `promo:interaction:${interaction}:${promotionId}`;
+    const claimed = await this.redis.set(
+      dedupeKey,
+      '1',
+      'EX',
+      30 * 24 * 60 * 60,
+      'NX',
+    );
+
+    if (claimed !== 'OK') return { success: true, duplicate: true };
+
+    try {
+      await this.userEventService.log({
+        userId,
+        type: eventType,
+        metadata: {
+          promotionId,
+          variant: metadata.variant,
+          phase: typeof metadata.phase === 'string' ? metadata.phase : null,
+          score:
+            typeof metadata.score === 'number' && Number.isFinite(metadata.score)
+              ? metadata.score
+              : null,
+        },
+        idempotencyKey: `promotion:${promotionId}:${interaction}`,
+      });
+
+      if (interaction === 'dismiss') {
+        await this.exposureService.trackDismiss(
+          userId,
+          metadata.variant,
+          promotionId,
+        );
+      }
+
+      return { success: true, duplicate: false };
+    } catch (error: unknown) {
+      // Allow a retry if durable event recording or feedback failed.
+      await this.redis.del(dedupeKey).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async trackPromotionClick(userId: number, promotionId: string) {
+    return this.recordPromotionInteraction(userId, promotionId, 'click');
+  }
+
+  async dismissPromotion(userId: number, promotionId: string) {
+    return this.recordPromotionInteraction(userId, promotionId, 'dismiss');
   }
 
   async decideBatch(

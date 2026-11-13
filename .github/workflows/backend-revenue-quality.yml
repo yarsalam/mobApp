@@ -17,6 +17,7 @@ on:
       - "src/redis/redis.service.ts"
       - "src/message/**"
       - "src/payments/**"
+      - "src/feed/**"
       - "src/user-event/**"
       - "python-ai/services/ml_service/**"
       - "python-ai/tests/test_matching_scoring.py"
@@ -76,6 +77,7 @@ jobs:
           ai-assistant/context/user-context.service.spec.ts
           moderation/moderation.service.spec.ts
           database.config.spec.ts
+          feed/services/feed-promotion.service.spec.ts
 
       - name: MySQL wallet concurrency and rollback integration tests
         env:
