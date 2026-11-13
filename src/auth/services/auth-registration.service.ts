@@ -102,21 +102,49 @@ export class AuthRegistrationService {
       else if (referer.includes('bing.com')) autoSource = 'bing_organic';
       else if (referer.includes('bale.ai')) autoSource = 'bale';
 
+      const previousMetadata =
+        existingUser?.metadata && typeof existingUser.metadata === 'object'
+          ? existingUser.metadata as Record<string, unknown>
+          : {};
+      const previousAcquisition =
+        previousMetadata.acquisition && typeof previousMetadata.acquisition === 'object'
+          ? previousMetadata.acquisition as Record<string, unknown>
+          : {};
+      const previousLegacyTouch =
+        previousMetadata.acquisitionMeta && typeof previousMetadata.acquisitionMeta === 'object'
+          ? previousMetadata.acquisitionMeta as Record<string, unknown>
+          : {};
+      const immutableSource =
+        existingUser?.acquisitionSource || userData.acquisitionSource || autoSource;
+      const immutableTerm =
+        existingUser?.acquisitionKeyword || userData.acquisitionKeyword;
       const suppliedFirstTouch = acquisition?.firstTouch ?? {
-        source: userData.acquisitionSource,
+        source: immutableSource,
+        term: immutableTerm,
+        referralCode:
+          previousAcquisition.referralCode ??
+          suppliedMetadata?.referralCode,
+        campaign: previousLegacyTouch.campaign ?? suppliedMetadata?.campaign,
+        campaignId: previousLegacyTouch.campaignId ?? (suppliedMetadata as any)?.campaignId,
+        medium: previousLegacyTouch.medium ?? suppliedMetadata?.medium,
+        landingPage: previousLegacyTouch.landingPage ?? suppliedMetadata?.landingPage,
+        referrer: previousLegacyTouch.referrer ?? suppliedMetadata?.referrer ?? referer,
+      };
+      const suppliedLastTouch = acquisition?.lastTouch ?? {
+        source: userData.acquisitionSource || autoSource,
         term: userData.acquisitionKeyword,
         referralCode: suppliedMetadata?.referralCode,
         campaign: suppliedMetadata?.campaign,
+        campaignId: (suppliedMetadata as any)?.campaignId,
         medium: suppliedMetadata?.medium,
         landingPage: suppliedMetadata?.landingPage,
         referrer: suppliedMetadata?.referrer ?? referer,
       };
-      const suppliedLastTouch = acquisition?.lastTouch ?? suppliedFirstTouch;
       const firstTouch = normalizeAcquisitionTouch(
         suppliedFirstTouch,
         {
-          source: userData.acquisitionSource || autoSource,
-          term: userData.acquisitionKeyword,
+          source: immutableSource,
+          term: immutableTerm,
           referrer: referer,
         },
       );
@@ -128,14 +156,6 @@ export class AuthRegistrationService {
           referrer: referer,
         },
       );
-      const previousMetadata =
-        existingUser?.metadata && typeof existingUser.metadata === 'object'
-          ? existingUser.metadata as Record<string, unknown>
-          : {};
-      const previousAcquisition =
-        previousMetadata.acquisition && typeof previousMetadata.acquisition === 'object'
-          ? previousMetadata.acquisition as Record<string, unknown>
-          : {};
       // First touch is immutable after it is captured. Later re-entry into an
       // incomplete registration may update last touch, never the original source.
       const storedFirstTouch =
