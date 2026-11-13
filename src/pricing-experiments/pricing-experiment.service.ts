@@ -23,9 +23,27 @@ type PricingVariant = 'control' | 'treatment';
 interface PricingExperimentConfig {
   experimentId: string;
   secret: string;
+  enabled: boolean;
   discountBps: number;
   treatmentRateBps: number;
+  maxDiscountBudgetRials: number;
   endsAt: number;
+}
+
+interface StoredPricingExperimentSettings {
+  enabled: boolean;
+  discountBps: number;
+  treatmentRateBps: number;
+  maxDiscountBudgetRials: number;
+  endsAt: string;
+}
+
+export interface PricingExperimentSettingsInput {
+  enabled: boolean;
+  discountBps: number;
+  treatmentRateBps: number;
+  maxDiscountBudgetRials: number;
+  endsAt: string;
 }
 
 interface PricingQuotePayload {
@@ -69,42 +87,404 @@ export class PricingExperimentService {
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
-  private experimentConfig(): PricingExperimentConfig | null {
-    if (this.config.get<string>('PRICING_EXPERIMENT_ENABLED') !== 'true') {
-      return null;
-    }
+  private readonly defaultExperimentId = 'pricing-first-purchase-v1';
+  private readonly defaultBudgetRials = 200_000;
+  private readonly maxBudgetRials = 100_000_000;
+  private readonly budgetReservationTtlMs = 48 * 60 * 60 * 1000;
+  private readonly budgetCommitTtlSeconds = 365 * 24 * 60 * 60;
 
-    const experimentId = this.config.get<string>('PRICING_EXPERIMENT_ID')?.trim() ?? '';
-    const secret = this.config.get<string>('PRICING_EXPERIMENT_SECRET') ?? '';
-    const discountBps = Number(this.config.get<string>('PRICING_EXPERIMENT_DISCOUNT_BPS'));
-    const treatmentRateBps = Number(
+  private validateExperimentId(experimentId: string): string {
+    const normalized = experimentId.trim();
+    if (!/^[A-Za-z0-9._:-]{1,96}$/.test(normalized)) {
+      throw new BadRequestException('experimentId is invalid');
+    }
+    return normalized;
+  }
+
+  private settingsKey(experimentId: string) {
+    return `pricing:settings:v1:${experimentId}`;
+  }
+
+  private startedKey(experimentId: string) {
+    return `pricing:started:v1:${experimentId}`;
+  }
+
+  private activeExperimentKey() {
+    return 'pricing:active-experiment:v1';
+  }
+
+  private budgetSpentKey(experimentId: string) {
+    return `pricing:budget:spent:v1:${experimentId}`;
+  }
+
+  private budgetReservationsKey(experimentId: string) {
+    return `pricing:budget:reservations:v1:${experimentId}`;
+  }
+
+  private budgetReservationAmountsKey(experimentId: string) {
+    return `pricing:budget:reservation-amounts:v1:${experimentId}`;
+  }
+
+  private budgetReservationMember(userId: number, idempotencyKey: string) {
+    const digest = createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 40);
+    return `${userId}:${digest}`;
+  }
+
+  private budgetCommitKey(experimentId: string, member: string) {
+    return `pricing:budget:committed:v1:${experimentId}:${member}`;
+  }
+
+  private fallbackSettings(): StoredPricingExperimentSettings {
+    const now = Date.now();
+    const envDiscount = Number(this.config.get<string>('PRICING_EXPERIMENT_DISCOUNT_BPS'));
+    const envTreatment = Number(
       this.config.get<string>('PRICING_EXPERIMENT_TREATMENT_RATE_BPS'),
     );
-    const endsAt = Date.parse(
+    const envBudget = Number(
+      this.config.get<string>('PRICING_EXPERIMENT_MAX_DISCOUNT_BUDGET_RIALS'),
+    );
+    const envEndsAt = Date.parse(
       this.config.get<string>('PRICING_EXPERIMENT_ENDS_AT') ?? '',
     );
-    const now = Date.now();
 
+    return {
+      enabled: this.config.get<string>('PRICING_EXPERIMENT_ENABLED') === 'true',
+      discountBps:
+        Number.isInteger(envDiscount) && envDiscount > 0 ? envDiscount : 1000,
+      treatmentRateBps:
+        Number.isInteger(envTreatment) && envTreatment > 0 ? envTreatment : 2000,
+      maxDiscountBudgetRials:
+        Number.isSafeInteger(envBudget) && envBudget > 0
+          ? envBudget
+          : this.defaultBudgetRials,
+      endsAt: Number.isFinite(envEndsAt)
+        ? new Date(envEndsAt).toISOString()
+        : new Date(now + 14 * 86_400_000).toISOString(),
+    };
+  }
+
+  private async readSettings(
+    experimentId: string,
+  ): Promise<StoredPricingExperimentSettings> {
+    const raw = await this.redis.get(this.settingsKey(experimentId));
+    if (!raw) return this.fallbackSettings();
+
+    try {
+      const stored = JSON.parse(raw) as StoredPricingExperimentSettings;
+      return {
+        enabled: stored.enabled === true,
+        discountBps: Number(stored.discountBps),
+        treatmentRateBps: Number(stored.treatmentRateBps),
+        maxDiscountBudgetRials: Number(stored.maxDiscountBudgetRials),
+        endsAt: String(stored.endsAt ?? ''),
+      };
+    } catch {
+      throw new ServiceUnavailableException(
+        'Stored pricing experiment settings are corrupt; experiment is disabled',
+      );
+    }
+  }
+
+  private async currentExperimentId(): Promise<string> {
+    const active = await this.redis.get(this.activeExperimentKey());
+    const configured = this.config.get<string>('PRICING_EXPERIMENT_ID')?.trim();
+    return this.validateExperimentId(active || configured || this.defaultExperimentId);
+  }
+
+  private validateSettings(
+    settings: StoredPricingExperimentSettings,
+    requireFutureEnd = true,
+  ): number {
+    const now = Date.now();
+    const endsAt = Date.parse(settings.endsAt);
     if (
-      !/^[A-Za-z0-9._:-]{1,96}$/.test(experimentId) ||
-      secret.length < 32 ||
-      !Number.isInteger(discountBps) ||
-      discountBps < 1 ||
-      discountBps > 3000 ||
-      !Number.isInteger(treatmentRateBps) ||
-      treatmentRateBps < 1 ||
-      treatmentRateBps > 9999 ||
+      typeof settings.enabled !== 'boolean' ||
+      !Number.isInteger(settings.discountBps) ||
+      settings.discountBps < 1 ||
+      settings.discountBps > 3000 ||
+      !Number.isInteger(settings.treatmentRateBps) ||
+      settings.treatmentRateBps < 1 ||
+      settings.treatmentRateBps > 9999 ||
+      !Number.isSafeInteger(settings.maxDiscountBudgetRials) ||
+      settings.maxDiscountBudgetRials < 1 ||
+      settings.maxDiscountBudgetRials > this.maxBudgetRials ||
       !Number.isFinite(endsAt) ||
-      endsAt <= now ||
+      (requireFutureEnd && endsAt <= now) ||
       endsAt > now + 90 * 86_400_000
     ) {
+      throw new BadRequestException(
+        'Pricing settings are outside safe bounds: discount 0.01-30%, treatment 0.01-99.99%, budget 1-100000000 rials and end within 90 days',
+      );
+    }
+    return endsAt;
+  }
+
+  private async experimentConfig(): Promise<PricingExperimentConfig | null> {
+    const experimentId = await this.currentExperimentId();
+    const settings = await this.readSettings(experimentId);
+    if (!settings.enabled) return null;
+
+    const secret = this.config.get<string>('PRICING_EXPERIMENT_SECRET') ?? '';
+    let endsAt: number;
+    try {
+      endsAt = this.validateSettings(settings);
+    } catch {
       throw new ServiceUnavailableException(
-        'Pricing experiment is enabled but its configuration is incomplete or outside safe bounds',
+        'Pricing experiment is enabled but its configuration is incomplete, expired or outside safe bounds',
       );
     }
 
-    return { experimentId, secret, discountBps, treatmentRateBps, endsAt };
+    if (secret.length < 32) {
+      throw new ServiceUnavailableException(
+        'Pricing experiment is enabled but PRICING_EXPERIMENT_SECRET is not configured',
+      );
+    }
+
+    return {
+      experimentId,
+      secret,
+      enabled: true,
+      discountBps: settings.discountBps,
+      treatmentRateBps: settings.treatmentRateBps,
+      maxDiscountBudgetRials: settings.maxDiscountBudgetRials,
+      endsAt,
+    };
   }
+
+  private async budgetSnapshot(experimentId: string, capRials: number) {
+    const reservationsKey = this.budgetReservationsKey(experimentId);
+    const amountsKey = this.budgetReservationAmountsKey(experimentId);
+    const cleanup = `
+      local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+      for _, member in ipairs(expired) do
+        redis.call('HDEL', KEYS[2], member)
+      end
+      redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+      return #expired
+    `;
+    await this.redis.eval(cleanup, 2, reservationsKey, amountsKey, String(Date.now()));
+
+    const [spentRaw, reservedRaw] = await Promise.all([
+      this.redis.get(this.budgetSpentKey(experimentId)),
+      this.redis.hvals(amountsKey),
+    ]);
+    const spentDiscountRials = Math.max(0, Number(spentRaw ?? 0) || 0);
+    const reservedDiscountRials = reservedRaw.reduce(
+      (sum, value) => sum + Math.max(0, Number(value) || 0),
+      0,
+    );
+    const used = spentDiscountRials + reservedDiscountRials;
+
+    return {
+      budgetCapRials: capRials,
+      spentDiscountRials,
+      reservedDiscountRials,
+      remainingBudgetRials: Math.max(0, capRials - used),
+      budgetExhausted: used >= capRials,
+    };
+  }
+
+  async getAdminSettings(experimentIdInput: string) {
+    const experimentId = this.validateExperimentId(experimentIdInput);
+    const settings = await this.readSettings(experimentId);
+    const secretConfigured =
+      (this.config.get<string>('PRICING_EXPERIMENT_SECRET') ?? '').length >= 32;
+    const [activeId, started, budget] = await Promise.all([
+      this.redis.get(this.activeExperimentKey()),
+      this.redis.get(this.startedKey(experimentId)),
+      this.budgetSnapshot(experimentId, settings.maxDiscountBudgetRials),
+    ]);
+
+    return {
+      experimentId,
+      ...settings,
+      secretConfigured,
+      started: Boolean(started),
+      isActive: activeId === experimentId,
+      ...budget,
+    };
+  }
+
+  async updateAdminSettings(
+    experimentIdInput: string,
+    input: PricingExperimentSettingsInput,
+  ) {
+    const experimentId = this.validateExperimentId(experimentIdInput);
+    if (
+      !input ||
+      typeof input.enabled !== 'boolean' ||
+      !Number.isInteger(input.discountBps) ||
+      !Number.isInteger(input.treatmentRateBps) ||
+      !Number.isSafeInteger(input.maxDiscountBudgetRials) ||
+      typeof input.endsAt !== 'string'
+    ) {
+      throw new BadRequestException('Invalid pricing experiment settings payload');
+    }
+
+    const next: StoredPricingExperimentSettings = {
+      enabled: input.enabled,
+      discountBps: input.discountBps,
+      treatmentRateBps: input.treatmentRateBps,
+      maxDiscountBudgetRials: input.maxDiscountBudgetRials,
+      endsAt: input.endsAt,
+    };
+    this.validateSettings(next);
+
+    const current = await this.readSettings(experimentId);
+    const started = Boolean(await this.redis.get(this.startedKey(experimentId)));
+    if (
+      started &&
+      (next.discountBps !== current.discountBps ||
+        next.treatmentRateBps !== current.treatmentRateBps)
+    ) {
+      throw new ConflictException(
+        'Discount and treatment allocation are immutable after the first real exposure; create a new experiment ID for a new variant configuration',
+      );
+    }
+
+    const secret = this.config.get<string>('PRICING_EXPERIMENT_SECRET') ?? '';
+    if (next.enabled && secret.length < 32) {
+      throw new ServiceUnavailableException(
+        'Configure PRICING_EXPERIMENT_SECRET (at least 32 characters) before enabling the experiment',
+      );
+    }
+
+    await this.redis.set(this.settingsKey(experimentId), JSON.stringify(next));
+    // The active pointer is the only switch consulted by the mobile quote path.
+    // Pointing it at a disabled config is also how an operator stops an experiment.
+    await this.redis.set(this.activeExperimentKey(), experimentId);
+
+    return this.getAdminSettings(experimentId);
+  }
+
+  private async reserveDiscountBudget(
+    experimentId: string,
+    userId: number,
+    idempotencyKey: string,
+    amountRials: number,
+    capRials: number,
+  ) {
+    if (amountRials <= 0) return;
+    const member = this.budgetReservationMember(userId, idempotencyKey);
+    const script = `
+      local now = tonumber(ARGV[1])
+      local expires = tonumber(ARGV[2])
+      local amount = tonumber(ARGV[3])
+      local cap = tonumber(ARGV[4])
+      local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now)
+      for _, item in ipairs(expired) do redis.call('HDEL', KEYS[2], item) end
+      redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
+
+      local committed = redis.call('GET', KEYS[4])
+      if committed then
+        if tonumber(committed) == amount then return 2 else return -2 end
+      end
+
+      local existing = redis.call('HGET', KEYS[2], ARGV[5])
+      if existing then
+        if tonumber(existing) == amount then return 2 else return -2 end
+      end
+
+      local spent = tonumber(redis.call('GET', KEYS[3]) or '0')
+      local reserved = 0
+      local values = redis.call('HVALS', KEYS[2])
+      for _, value in ipairs(values) do reserved = reserved + tonumber(value) end
+      if spent + reserved + amount > cap then return -1 end
+
+      redis.call('ZADD', KEYS[1], expires, ARGV[5])
+      redis.call('HSET', KEYS[2], ARGV[5], amount)
+      return 1
+    `;
+    const result = Number(
+      await this.redis.eval(
+        script,
+        4,
+        this.budgetReservationsKey(experimentId),
+        this.budgetReservationAmountsKey(experimentId),
+        this.budgetSpentKey(experimentId),
+        this.budgetCommitKey(experimentId, member),
+        String(Date.now()),
+        String(Date.now() + this.budgetReservationTtlMs),
+        String(amountRials),
+        String(capRials),
+        member,
+      ),
+    );
+
+    if (result === -1) {
+      throw new ConflictException('The shared pricing experiment discount budget has been exhausted');
+    }
+    if (result === -2) {
+      throw new ConflictException('This checkout idempotency key is already bound to a different discount amount');
+    }
+  }
+
+  private async releaseDiscountBudget(
+    experimentId: string,
+    userId: number,
+    idempotencyKey: string,
+  ) {
+    const member = this.budgetReservationMember(userId, idempotencyKey);
+    const script = `
+      if redis.call('GET', KEYS[3]) then return 0 end
+      local amount = redis.call('HGET', KEYS[2], ARGV[1])
+      if not amount then return 0 end
+      redis.call('ZREM', KEYS[1], ARGV[1])
+      redis.call('HDEL', KEYS[2], ARGV[1])
+      return tonumber(amount)
+    `;
+    await this.redis.eval(
+      script,
+      3,
+      this.budgetReservationsKey(experimentId),
+      this.budgetReservationAmountsKey(experimentId),
+      this.budgetCommitKey(experimentId, member),
+      member,
+    );
+  }
+
+  async commitCheckoutReservation(
+    userId: number,
+    checkout: PricingCheckout,
+    idempotencyKey: string,
+  ): Promise<void> {
+    const amountRials = checkout.basePriceRials - checkout.payablePriceRials;
+    if (checkout.variant !== 'treatment' || amountRials <= 0) return;
+
+    const member = this.budgetReservationMember(userId, idempotencyKey);
+    const script = `
+      local committed = redis.call('GET', KEYS[4])
+      if committed then
+        if tonumber(committed) == tonumber(ARGV[2]) then return 2 else return -2 end
+      end
+      local amount = redis.call('HGET', KEYS[2], ARGV[1])
+      if not amount or tonumber(amount) ~= tonumber(ARGV[2]) then return -1 end
+      redis.call('ZREM', KEYS[1], ARGV[1])
+      redis.call('HDEL', KEYS[2], ARGV[1])
+      redis.call('INCRBY', KEYS[3], amount)
+      redis.call('SET', KEYS[4], amount, 'EX', ARGV[3])
+      return 1
+    `;
+    const result = Number(
+      await this.redis.eval(
+        script,
+        4,
+        this.budgetReservationsKey(checkout.experimentId),
+        this.budgetReservationAmountsKey(checkout.experimentId),
+        this.budgetSpentKey(checkout.experimentId),
+        this.budgetCommitKey(checkout.experimentId, member),
+        member,
+        String(amountRials),
+        String(this.budgetCommitTtlSeconds),
+      ),
+    );
+    if (result === -1 || result === -2) {
+      throw new ServiceUnavailableException(
+        'Could not finalize the reserved experiment discount budget; retry the same checkout idempotency key',
+      );
+    }
+  }
+
 
   private mac(secret: string, value: string): Buffer {
     return createHmac('sha256', secret).update(value).digest();
@@ -238,7 +618,7 @@ export class PricingExperimentService {
       eligibleForExperiment: false,
     };
 
-    const config = this.experimentConfig();
+    const config = await this.experimentConfig();
     if (!config || !(await this.isFirstPurchaseEligible(userId))) {
       return base;
     }
@@ -255,6 +635,18 @@ export class PricingExperimentService {
       payablePriceRials > bundle.price
     ) {
       throw new ServiceUnavailableException('Calculated pricing quote is invalid');
+    }
+
+    if (assignment.variant === 'treatment') {
+      const budget = await this.budgetSnapshot(
+        config.experimentId,
+        config.maxDiscountBudgetRials,
+      );
+      const requestedDiscount = bundle.price - payablePriceRials;
+      if (budget.remainingBudgetRials < requestedDiscount) {
+        // Stop showing a treatment price when the global allowance is exhausted.
+        return base;
+      }
     }
 
     const issuedAt = Date.now();
@@ -291,7 +683,7 @@ export class PricingExperimentService {
     requireExposure: boolean,
     checkoutIdempotencyKey?: string,
   ): Promise<PricingQuotePayload> {
-    const config = this.experimentConfig();
+    const config = await this.experimentConfig();
     if (!config) {
       throw new ConflictException('Pricing experiment is not active');
     }
@@ -398,6 +790,7 @@ export class PricingExperimentService {
 
   async recordExposure(userId: number, quoteId: string) {
     const quote = await this.verifyQuote(userId, quoteId, false);
+    await this.redis.set(this.startedKey(quote.experimentId), '1');
     await this.userEvents.log({
       userId,
       type: EventType.PROMOTION_SHOWN,
@@ -440,6 +833,21 @@ export class PricingExperimentService {
       }
     }
 
+    try {
+      if (quote.variant === 'treatment') {
+        await this.reserveDiscountBudget(
+          quote.experimentId,
+          userId,
+          idempotencyKey,
+          quote.basePriceRials - quote.payablePriceRials,
+          (await this.readSettings(quote.experimentId)).maxDiscountBudgetRials,
+        );
+      }
+    } catch (error) {
+      await this.releaseCheckoutReservation(userId, quote.experimentId, idempotencyKey);
+      throw error;
+    }
+
     return {
       experimentId: quote.experimentId,
       assignmentId: quote.assignmentId,
@@ -460,6 +868,7 @@ export class PricingExperimentService {
     const script =
       "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end";
     await this.redis.eval(script, 1, key, idempotencyKey);
+    await this.releaseDiscountBudget(experimentId, userId, idempotencyKey);
   }
 
   async getExperimentReport(experimentId: string, days = 90) {
@@ -638,11 +1047,18 @@ export class PricingExperimentService {
       };
     });
 
+    const settings = await this.readSettings(experimentId);
+    const budget = await this.budgetSnapshot(
+      experimentId,
+      settings.maxDiscountBudgetRials,
+    );
+
     return {
       experimentId,
       currency: 'IRT',
       unit: 'rial',
       periodDays: days,
+      budget,
       variants,
       interpretation:
         'descriptive_only; conversion differences are not causal or statistically significant without adequate sample size, duration and pre-registered analysis',
