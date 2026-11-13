@@ -20,6 +20,8 @@ on:
       - "src/redis/redis.service.ts"
       - "src/message/**"
       - "src/payments/**"
+      - "src/pricing-experiments/**"
+      - ".env.example"
       - "src/feed/**"
       - "src/user-metrics/**"
       - "src/admin-api/controllers/growth/monetization.controller.ts"
@@ -78,6 +80,8 @@ jobs:
           app.controller.spec.ts
           payments.service.spec.ts
           payments.controller.spec.ts
+          pricing-experiments/pricing-experiment.service.spec.ts
+          product/product.controller.spec.ts
           promotion-exposure.service.spec.ts
           feed.controller.spec.ts
           wallet.service.spec.ts
