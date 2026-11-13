@@ -1,7 +1,9 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Get,
+  Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -12,6 +14,8 @@ import { RevenueAttributionService } from '../../../revenue/revenue-attribution.
 import { RevenueTrendService } from '../../../revenue/revenue-trend.service';
 import { RevenueAnalyticsService } from '../../../revenue/revenue-analytics.service';
 import { PaymentCurrency } from '../../../payments/entities/payment.entity';
+import { AcquisitionGrowthService } from '../../../revenue/acquisition-growth.service';
+import { CreateAcquisitionCostDto } from '../../../revenue/dto/create-acquisition-cost.dto';
 
 const SUPPORTED_CURRENCIES: PaymentCurrency[] = ['IRT', 'USDT', 'BTC', 'USD'];
 
@@ -23,6 +27,7 @@ export class AdminApiRevenueController {
     private readonly revenueIntelligence: RevenueIntelligenceService,
     private readonly revenueTrend: RevenueTrendService,
     private readonly revenueAnalytics: RevenueAnalyticsService,
+    private readonly acquisitionGrowth: AcquisitionGrowthService,
   ) {}
 
   private parseBoundedInt(
@@ -55,6 +60,22 @@ export class AdminApiRevenueController {
     }
 
     return currency as PaymentCurrency;
+  }
+
+  @Get('acquisition-growth')
+  async acquisitionGrowthReport(
+    @Query('days') days?: string,
+    @Query('currency') currencyInput?: string,
+  ) {
+    return this.acquisitionGrowth.getReport(
+      this.parseBoundedInt(days, 90, 1, 3650, 'days'),
+      this.parseCurrency(currencyInput),
+    );
+  }
+
+  @Post('acquisition-costs')
+  async createAcquisitionCost(@Body() body: CreateAcquisitionCostDto) {
+    return this.acquisitionGrowth.createCost(body, 'admin_panel');
   }
 
   @Get('ltv-by-source')
