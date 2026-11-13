@@ -288,6 +288,31 @@ describe('PricingExperimentService', () => {
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
+  it('reserves the control arm too so concurrent first purchases cannot contaminate conversion', async () => {
+    const userId = await findUserForVariant('control');
+    const h = makeService();
+    const quote = await h.service.getQuote(userId, 'vip-month');
+    const payload = decodeQuote(quote.quoteId!);
+    h.eventRepo.findOne.mockResolvedValue({
+      metadata: {
+        promotionKind: 'pricing_experiment',
+        experimentId: EXPERIMENT_ID,
+        assignmentId: payload.assignmentId,
+        variant: 'control',
+        payablePriceRials: 100_000,
+      },
+    });
+    h.redis.set.mockResolvedValueOnce('OK').mockResolvedValueOnce(null);
+    h.redis.get.mockResolvedValueOnce('checkout-A');
+
+    await expect(
+      h.service.prepareCheckout(userId, 'vip-month', quote.quoteId!, 'checkout-A'),
+    ).resolves.toMatchObject({ variant: 'control', payablePriceRials: 100_000 });
+    await expect(
+      h.service.prepareCheckout(userId, 'vip-month', quote.quoteId!, 'checkout-B'),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
   it('allows retry with the same idempotency key and releases only its own reservation', async () => {
     const userId = await findUserForVariant('treatment');
     const h = makeService();
@@ -310,7 +335,7 @@ describe('PricingExperimentService', () => {
       h.service.prepareCheckout(userId, 'vip-month', quote.quoteId!, 'checkout-A'),
     ).resolves.toMatchObject({ payablePriceRials: 90_000 });
 
-    await h.service.releaseTreatmentReservation(userId, EXPERIMENT_ID, 'checkout-A');
+    await h.service.releaseCheckoutReservation(userId, EXPERIMENT_ID, 'checkout-A');
     expect(h.redis.eval).toHaveBeenCalledWith(
       expect.stringContaining("redis.call('GET'"),
       1,
