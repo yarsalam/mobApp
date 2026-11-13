@@ -30,6 +30,60 @@ export class AcquisitionMetadataDto {
   referrer?: string;
 }
 
+export class AcquisitionTouchDto {
+  @IsOptional()
+  @IsString()
+  source?: string;
+
+  @IsOptional()
+  @IsString()
+  medium?: string;
+
+  @IsOptional()
+  @IsString()
+  campaign?: string;
+
+  @IsOptional()
+  @IsString()
+  campaignId?: string;
+
+  @IsOptional()
+  @IsString()
+  content?: string;
+
+  @IsOptional()
+  @IsString()
+  term?: string;
+
+  @IsOptional()
+  @IsString()
+  landingPage?: string;
+
+  @IsOptional()
+  @IsString()
+  referrer?: string;
+
+  @IsOptional()
+  @IsString()
+  referralCode?: string;
+
+  @IsOptional()
+  @IsString()
+  capturedAt?: string;
+}
+
+export class AcquisitionAttributionDto {
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AcquisitionTouchDto)
+  firstTouch?: AcquisitionTouchDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AcquisitionTouchDto)
+  lastTouch?: AcquisitionTouchDto;
+}
+
 export class CreateAuthDto {
   @IsString()
   @IsNotEmpty()
@@ -62,4 +116,9 @@ export class CreateAuthDto {
   @ValidateNested()
   @Type(() => AcquisitionMetadataDto)
   metadata?: AcquisitionMetadataDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AcquisitionAttributionDto)
+  acquisition?: AcquisitionAttributionDto;
 }
