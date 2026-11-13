@@ -19,7 +19,6 @@ import { SEOController } from './seo.controller';
 import { User } from 'src/users/entities/user.entity';
 import { ContentOpportunityService } from './services/intelligence/content-opportunity.service';
 import { Payment } from 'src/payments/entities/payment.entity';
-import { SocialListenerService } from 'src/social-listener/social-listener.service';
 import { SocialListenerModule } from 'src/social-listener/social-listener.module';
 import { BrandSentimentService } from './services/brand-sentiment.service';
 import { RevenueModule } from 'src/revenue/revenue.module';
@@ -50,7 +49,6 @@ import { getExternalHttpOptions } from 'src/config/http-client.config';
     SEOCollectorService,
     ExternalSEOToolsService,
     ContentOpportunityService,
-    SocialListenerService,
     BrandSentimentService,
     CampaignUpliftService,
     AEOTrackerService,
@@ -58,7 +56,6 @@ import { getExternalHttpOptions } from 'src/config/http-client.config';
   exports: [
     SEOCollectorService,
     ExternalSEOToolsService,
-    SocialListenerService,
     ContentOpportunityService,
     CampaignUpliftService,
     AEOTrackerService,
