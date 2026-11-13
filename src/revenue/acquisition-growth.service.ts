@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -13,7 +12,10 @@ import {
   AcquisitionCostCurrency,
 } from './entities/acquisition-cost.entity';
 import { CreateAcquisitionCostDto } from './dto/create-acquisition-cost.dto';
-import { acquisitionTouchFromUserMetadata } from './acquisition-attribution';
+import {
+  acquisitionTouchFromUserMetadata,
+  normalizeAcquisitionTouch,
+} from './acquisition-attribution';
 
 const SUPPORTED_CURRENCIES: AcquisitionCostCurrency[] = ['IRT', 'USDT', 'BTC', 'USD'];
 const ACTIVE_EVENTS: EventType[] = [
@@ -97,7 +99,19 @@ export class AcquisitionGrowthService {
 
     const idempotencyKey = input.idempotencyKey.trim();
     const existing = await this.costs.findOne({ where: { idempotencyKey } });
-    if (existing) return { success: true, duplicate: true, cost: existing };
+    if (existing) {
+      const samePayload =
+        existing.source === source &&
+        (existing.medium ?? null) === (input.medium?.trim().toLowerCase() || null) &&
+        (existing.campaignId ?? null) === (input.campaignId?.trim() || null) &&
+        Number(existing.amount) === Number(amount.toFixed(2)) &&
+        existing.currency === input.currency &&
+        existing.category === input.category;
+      if (!samePayload) {
+        throw new BadRequestException('idempotencyKey was already used for a different cost entry');
+      }
+      return { success: true, duplicate: true, cost: existing };
+    }
 
     const entity = this.costs.create({
       source,
