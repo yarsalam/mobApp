@@ -57,7 +57,7 @@ integrationDescribe('Pricing experiment report MySQL cohort integration', () => 
       createdAt,
       metadata,
       idempotencyKey,
-    });
+    } as any);
   }
 
   beforeAll(async () => {
@@ -352,7 +352,7 @@ integrationDescribe('Pricing experiment report MySQL cohort integration', () => 
           currency: 'IRT',
           pricingExperiment: checkout,
         },
-      });
+      } as any);
     }
 
     const report = await flowService.getExperimentReport(flowExperimentId, 30);
