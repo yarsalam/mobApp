@@ -43,7 +43,7 @@ function makeController() {
 }
 
 describe('PaymentsController pricing experiment checkout', () => {
-  it('charges the signed treatment price and commits only the actual discount after fulfillment', async () => {
+  it('charges the signed treatment price and commits its discount after the successful wallet debit', async () => {
     const h = makeController();
 
     const result = await h.controller.buyWithWallet(
@@ -88,6 +88,9 @@ describe('PaymentsController pricing experiment checkout', () => {
         variant: 'treatment',
       }),
       'checkout-key-1',
+    );
+    expect(h.commitCheckoutReservation.mock.invocationCallOrder[0]).toBeLessThan(
+      h.grantBundle.mock.invocationCallOrder[0],
     );
     expect(result).toMatchObject({
       success: true,
