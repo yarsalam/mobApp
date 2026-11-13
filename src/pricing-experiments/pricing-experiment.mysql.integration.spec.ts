@@ -5,6 +5,7 @@ import Redis from 'ioredis';
 import { PricingExperimentService } from './pricing-experiment.service';
 import { PartitionedEvent } from '../user-event/entities/partitioned-event.entity';
 import { EventType } from '../user-event/type/event-type.enum';
+import { User } from '../users/entities/user.entity';
 
 const mysqlUrl = process.env.MYSQL_INTEGRATION_URL;
 const redisUrl = process.env.REDIS_INTEGRATION_URL;
@@ -12,6 +13,16 @@ const integrationDescribe = mysqlUrl && redisUrl ? describe : describe.skip;
 
 const experimentId = `pricing-report-mysql-${process.pid}-${Date.now()}`;
 const now = Date.now();
+
+const userSchema = new EntitySchema({
+  name: 'User',
+  target: User,
+  tableName: 'users',
+  columns: {
+    id: { type: Number, primary: true, generated: true },
+    gender: { type: 'varchar', length: 30, nullable: true },
+  },
+});
 
 const eventSchema = new EntitySchema({
   name: 'PartitionedEvent',
@@ -52,7 +63,7 @@ integrationDescribe('Pricing experiment report MySQL cohort integration', () => 
     dataSource = new DataSource({
       type: 'mysql',
       url: mysqlUrl,
-      entities: [eventSchema],
+      entities: [eventSchema, userSchema],
       synchronize: true,
       dropSchema: true,
       logging: false,
