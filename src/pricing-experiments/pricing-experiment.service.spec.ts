@@ -504,7 +504,9 @@ describe('PricingExperimentService', () => {
       },
     });
     h.redis.set.mockResolvedValueOnce('OK').mockResolvedValueOnce(null);
-    h.redis.get.mockResolvedValueOnce('checkout-A');
+    h.redis.get.mockImplementation(async (key: string) =>
+      key === `pricing:redeemed:${EXPERIMENT_ID}:${userId}` ? 'checkout-A' : null,
+    );
 
     await h.service.prepareCheckout(userId, 'vip-month', quote.quoteId!, 'checkout-A');
     await expect(
