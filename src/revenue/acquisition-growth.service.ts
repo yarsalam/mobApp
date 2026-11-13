@@ -123,7 +123,7 @@ export class AcquisitionGrowthService {
       currency: input.currency,
       occurredAt,
       notes: input.notes?.trim() || null,
-      createdBy: createdBy.slice(0, 128),
+      createdBy: (input.createdBy || createdBy).slice(0, 128),
       idempotencyKey,
     });
     try {
