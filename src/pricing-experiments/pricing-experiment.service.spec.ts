@@ -23,6 +23,7 @@ function makeBuilder(rawRows: any[] = [], count = 0) {
   }
   builder.getCount = jest.fn(async () => count);
   builder.getRawMany = jest.fn(async () => rawRows);
+  builder.getRawOne = jest.fn(async () => ({ spentRials: '0' }));
   return builder;
 }
 
