@@ -568,4 +568,165 @@ export class RevenueAnalyticsService {
       evaluationSamples: evaluations.length,
     };
   }
+ 
+  /**
+   * RFM segmentation from successfully fulfilled commercial bundle purchases.
+   * Wallet deposits and non-commercial/admin grants are intentionally excluded.
+   * This purchase ledger currently records bundle value in IRT only.
+   */
+  async customerSegments(days = 90) {
+    if (!Number.isInteger(days) || days < 30 || days > 3650) {
+      throw new Error('days must be an integer between 30 and 3650');
+    }
+
+    const since = sinceDays(days);
+    const amountExpr =
+      "CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.amountRials')), '0') AS DECIMAL(20,0))";
+    const purchaseRows = await this.events
+      .createQueryBuilder('e')
+      .innerJoin('e.user', 'customer')
+      .select('e.userId', 'userId')
+      .addSelect('COUNT(*)', 'frequency')
+      .addSelect('MAX(e.createdAt)', 'lastPurchaseAt')
+      .addSelect(`SUM(${amountExpr})`, 'monetaryRials')
+      .addSelect(
+        "COUNT(DISTINCT JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.bundleCode')))",
+        'distinctProducts',
+      )
+      .where('e.type = :purchaseType', { purchaseType: EventType.PURCHASE })
+      .andWhere('customer.status = :activeStatus', { activeStatus: 'active' })
+      .andWhere("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.isCommercialPurchase')) = 'true'")
+      .andWhere("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.currency')) = 'IRT'")
+      .andWhere(`${amountExpr} > 0`)
+      .andWhere('e.createdAt >= :since', { since })
+      .groupBy('e.userId')
+      .getRawMany();
+
+    // This is a lifetime exclusion: first-purchase offers must never be
+    // assigned to someone who has already completed a commercial purchase.
+    const neverPurchasedActiveUsers = await this.users
+      .createQueryBuilder('customer')
+      .leftJoin(
+        PartitionedEvent,
+        'purchase',
+        `purchase.userId = customer.id
+          AND purchase.type = :purchaseType
+          AND JSON_UNQUOTE(JSON_EXTRACT(purchase.metadata, '$.isCommercialPurchase')) = 'true'`,
+        { purchaseType: EventType.PURCHASE },
+      )
+      .where('customer.status = :activeStatus', { activeStatus: 'active' })
+      .andWhere('purchase.id IS NULL')
+      .getCount();
+
+    const definitions = [
+      { key: 'frequent_active', frequency: '3+ purchases; last purchase within 30 days' },
+      { key: 'frequent_at_risk', frequency: '3+ purchases; last purchase more than 30 days ago' },
+      { key: 'repeat_active', frequency: '2 purchases; last purchase within 30 days' },
+      { key: 'repeat_at_risk', frequency: '2 purchases; last purchase more than 30 days ago' },
+      { key: 'first_purchase_recent', frequency: '1 purchase; last purchase within 30 days' },
+      { key: 'first_purchase_lapsed', frequency: '1 purchase; last purchase more than 30 days ago' },
+    ] as const;
+
+    const grouped = Object.fromEntries(
+      definitions.map(({ key }) => [
+        key,
+        { customers: 0, purchases: 0, revenueRials: 0 },
+      ]),
+    ) as Record<
+      (typeof definitions)[number]['key'],
+      { customers: number; purchases: number; revenueRials: number }
+    >;
+
+    let totalPurchases = 0;
+    let totalRevenueRials = 0;
+    let repeatBuyerCount = 0;
+    let frequentBuyerCount = 0;
+    let invalidRows = 0;
+
+    for (const row of purchaseRows) {
+      const userId = Number(row.userId);
+      const frequency = Math.trunc(finite(row.frequency));
+      const monetaryRials = finite(row.monetaryRials);
+      const lastPurchase = new Date(row.lastPurchaseAt);
+
+      if (
+        !Number.isSafeInteger(userId) ||
+        userId <= 0 ||
+        frequency <= 0 ||
+        !Number.isFinite(lastPurchase.getTime()) ||
+        !Number.isFinite(monetaryRials) ||
+        monetaryRials <= 0
+      ) {
+        invalidRows += 1;
+        continue;
+      }
+
+      const recencyDays = Math.max(
+        0,
+        Math.floor((Date.now() - lastPurchase.getTime()) / 86_400_000),
+      );
+      const segment =
+        frequency >= 3
+          ? recencyDays <= 30
+            ? 'frequent_active'
+            : 'frequent_at_risk'
+          : frequency === 2
+            ? recencyDays <= 30
+              ? 'repeat_active'
+              : 'repeat_at_risk'
+            : recencyDays <= 30
+              ? 'first_purchase_recent'
+              : 'first_purchase_lapsed';
+
+      grouped[segment].customers += 1;
+      grouped[segment].purchases += frequency;
+      grouped[segment].revenueRials += monetaryRials;
+      totalPurchases += frequency;
+      totalRevenueRials += monetaryRials;
+      if (frequency >= 2) repeatBuyerCount += 1;
+      if (frequency >= 3) frequentBuyerCount += 1;
+    }
+
+    return {
+      currency: 'IRT',
+      unit: 'rial',
+      periodDays: days,
+      source:
+        "active users' PURCHASE events with isCommercialPurchase=true, currency=IRT and positive amountRials; written after bundle fulfilment succeeds",
+      metrics: {
+        activePayingCustomers: definitions.reduce(
+          (sum, { key }) => sum + grouped[key].customers,
+          0,
+        ),
+        purchases: totalPurchases,
+        fulfilledRevenueRials: Math.round(totalRevenueRials),
+        repeatBuyers: repeatBuyerCount,
+        frequentBuyers: frequentBuyerCount,
+        activeNeverPurchasedUsers: neverPurchasedActiveUsers,
+        invalidAggregateRows: invalidRows,
+      },
+      segments: definitions.map(({ key, frequency }) => ({
+        key,
+        rule: frequency,
+        ...grouped[key],
+        revenueRials: Math.round(grouped[key].revenueRials),
+      })),
+      protection: {
+        repeatBuyersExcludedFromFirstPurchaseDiscounts: true,
+        protectedRepeatBuyers: repeatBuyerCount,
+        firstPurchaseCandidatePool: neverPurchasedActiveUsers,
+        eligibilityRule:
+          'active account with no lifetime successfully fulfilled commercial PURCHASE event; existing buyers are excluded regardless of recency',
+        status: 'analytics_only_no_discount_is_applied',
+      },
+      rfmDefinitions: {
+        recency: 'whole days since the latest successfully fulfilled commercial purchase',
+        frequency: 'number of successfully fulfilled commercial purchases in the selected rolling window',
+        monetary: 'sum of amountRials on those purchases, kept in IRT only',
+        segmentBoundaryDays: 30,
+        frequentPurchaseThreshold: 3,
+      },
+    };
+  }
+
 }
