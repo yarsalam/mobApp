@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { UserMetricsService } from './user-metrics.service';
 
 describe('UserMetricsService lifecycle metrics', () => {
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => { jest.restoreAllMocks(); });
 
   it('calculates signup and latest paid-purchase age from persisted timestamps', async () => {
     const now = new Date('2026-11-13T00:00:00.000Z').getTime();
