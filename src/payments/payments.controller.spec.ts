@@ -20,6 +20,7 @@ function makeController() {
     currency: 'IRT' as const,
   }));
   const releaseCheckoutReservation = jest.fn(async () => undefined);
+  const commitCheckoutReservation = jest.fn(async () => undefined);
 
   const controller = new PaymentsController(
     { grantBundle } as any,
@@ -29,10 +30,10 @@ function makeController() {
     { debitOnce } as any,
     { trackConversion } as any,
     { findOne } as any,
-    { prepareCheckout, releaseCheckoutReservation } as any,
+    { prepareCheckout, releaseCheckoutReservation, commitCheckoutReservation } as any,
   );
 
-  return { controller, grantBundle, debitOnce, trackConversion, findOne, prepareCheckout, releaseCheckoutReservation };
+  return { controller, grantBundle, debitOnce, trackConversion, findOne, prepareCheckout, releaseCheckoutReservation, commitCheckoutReservation };
 }
 
 describe('PaymentsController promotion purchase attribution', () => {
@@ -110,7 +111,7 @@ describe('PaymentsController promotion purchase attribution', () => {
 
 describe('PaymentsController signed pricing experiment checkout', () => {
   it('debits the server-signed treatment price and stores the same assignment on purchase', async () => {
-    const { controller, debitOnce, grantBundle, prepareCheckout } = makeController();
+    const { controller, debitOnce, grantBundle, prepareCheckout, commitCheckoutReservation } = makeController();
 
     const result = await controller.buyWithWallet(
       42,
@@ -155,6 +156,16 @@ describe('PaymentsController signed pricing experiment checkout', () => {
         discountRials: 500,
       },
     });
+    expect(commitCheckoutReservation).toHaveBeenCalledWith(
+      42,
+      expect.objectContaining({
+        experimentId: 'pricing-2026-01',
+        variant: 'treatment',
+        basePriceRials: 2500,
+        payablePriceRials: 2000,
+      }),
+      'pricing-idempotency-1',
+    );
   });
 
   it('does not debit when the signed quote cannot be verified', async () => {
