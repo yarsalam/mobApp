@@ -3,7 +3,6 @@ import {
   Controller,
   Headers,
   BadRequestException,
-  Body,
   Get,
   NotFoundException,
   Param,
