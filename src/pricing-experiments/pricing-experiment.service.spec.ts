@@ -69,6 +69,7 @@ function makeService(options?: {
     set: jest.fn(options?.redisSet ?? (async () => 'OK')),
     get: jest.fn(options?.redisGet ?? (async () => null)),
     eval: jest.fn(async () => 1),
+    hvals: jest.fn(async () => []),
   };
   const service = new PricingExperimentService(
     bundleRepo,
