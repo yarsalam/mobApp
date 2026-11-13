@@ -245,7 +245,7 @@ export class AcquisitionGrowthService {
       const user = userById.get(event.userId);
       const key = userGroups.get(event.userId);
       const row = key ? grouped.get(key) : undefined;
-      if (!user || !row) continue;
+      if (!user || !key || !row) continue;
       const createdAt = new Date(user.createdAt).getTime();
       const eventAt = new Date(event.createdAt).getTime();
       if (!Number.isFinite(eventAt) || eventAt < createdAt) continue;
