@@ -1,6 +1,7 @@
 import {
   IsDateString,
   IsEnum,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
@@ -15,6 +16,7 @@ import {
 
 export class CreateAcquisitionCostDto {
   @IsString()
+  @IsNotEmpty()
   @MaxLength(80)
   source!: string;
 
