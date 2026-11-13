@@ -279,7 +279,7 @@ export class PricingExperimentService {
       const ledger = await this.events
         .createQueryBuilder('event')
         .select(
-          "COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.discountRials')) AS DECIMAL(20,0))), 0)",
+          "COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.basePriceRials')) AS DECIMAL(20,0)) - CAST(JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.payablePriceRials')) AS DECIMAL(20,0))), 0)",
           'spentRials',
         )
         .where('event.type = :purchaseType', {
@@ -373,6 +373,19 @@ export class PricingExperimentService {
     if (next.enabled && secret.length < 32) {
       throw new ServiceUnavailableException(
         'Configure PRICING_EXPERIMENT_SECRET (at least 32 characters) before enabling the experiment',
+      );
+    }
+
+    const currentBudget = await this.budgetSnapshot(
+      experimentId,
+      next.maxDiscountBudgetRials,
+    );
+    if (
+      currentBudget.spentDiscountRials + currentBudget.reservedDiscountRials >
+      next.maxDiscountBudgetRials
+    ) {
+      throw new ConflictException(
+        'The new budget cap cannot be lower than discounts already spent plus in-flight reservations',
       );
     }
 
