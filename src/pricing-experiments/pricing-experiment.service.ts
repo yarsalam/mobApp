@@ -380,20 +380,21 @@ export class PricingExperimentService {
       throw new ConflictException('Pricing quote belongs to a different product');
     }
 
-    if (quote.variant === 'treatment') {
-      const reservationKey = `pricing:redeemed:${quote.experimentId}:${userId}`;
-      const result = await this.redis.set(
-        reservationKey,
-        idempotencyKey,
-        'EX',
-        this.reservationTtlSeconds,
-        'NX',
-      );
-      if (result !== 'OK') {
-        const existing = await this.redis.get(reservationKey);
-        if (existing !== idempotencyKey) {
-          throw new ConflictException('First-purchase offer is already reserved by another checkout');
-        }
+    // Reserve both arms. Control users also need one first-purchase checkout
+    // per user; otherwise concurrent purchases would distort the experiment's
+    // conversion and revenue cohorts even though no discount is applied.
+    const reservationKey = `pricing:redeemed:${quote.experimentId}:${userId}`;
+    const result = await this.redis.set(
+      reservationKey,
+      idempotencyKey,
+      'EX',
+      this.reservationTtlSeconds,
+      'NX',
+    );
+    if (result !== 'OK') {
+      const existing = await this.redis.get(reservationKey);
+      if (existing !== idempotencyKey) {
+        throw new ConflictException('First-purchase checkout is already reserved by another request');
       }
     }
 
@@ -408,7 +409,7 @@ export class PricingExperimentService {
     };
   }
 
-  async releaseTreatmentReservation(
+  async releaseCheckoutReservation(
     userId: number,
     experimentId: string,
     idempotencyKey: string,
