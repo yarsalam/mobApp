@@ -174,6 +174,10 @@ export class AiAssistantService {
     // ۴. Response
     let response: string;
     let usedLLM = false;
+    let responseSource: 'rule' | 'llm' | 'fallback' | 'context_unavailable' =
+      'rule';
+    let llmProvider: string | null = null;
+    let fallbackReason: string | null = null;
 
     if (!intent.needsLLM && context) {
       const ruleResponse = this.intentDetector.buildRuleBasedResponse(
@@ -182,24 +186,40 @@ export class AiAssistantService {
       );
       if (ruleResponse) {
         response = ruleResponse;
+        responseSource = 'rule';
       } else {
-        response = await this.callLLM(message, context, conv.messages);
-        usedLLM = true;
+        const result = await this.callLLM(message, context, conv.messages);
+        response = result.text;
+        usedLLM = result.usedProvider;
+        llmProvider = result.provider;
+        fallbackReason = result.fallbackReason;
+        responseSource = result.usedProvider ? 'llm' : 'fallback';
       }
     } else if (context) {
-      response = await this.callLLM(message, context, conv.messages);
-      usedLLM = true;
+      const result = await this.callLLM(message, context, conv.messages);
+      response = result.text;
+      usedLLM = result.usedProvider;
+      llmProvider = result.provider;
+      fallbackReason = result.fallbackReason;
+      responseSource = result.usedProvider ? 'llm' : 'fallback';
     } else {
       response =
         'متأسفم، در حال حاضر قادر به دریافت اطلاعات پروفایل شما نیستم. لطفاً دوباره تلاش کنید.';
+      responseSource = 'context_unavailable';
+      fallbackReason = 'user_context_unavailable';
     }
 
-    // ۵. ذخیره پاسخ
     const assistantMsg = this.msgRepo.create({
       conversation: conv,
       sender: 'assistant',
       content: response,
-      meta: { intent: intent.type, usedLLM },
+      meta: {
+        intent: intent.type,
+        usedLLM,
+        responseSource,
+        llmProvider,
+        fallbackReason,
+      },
     });
     await this.msgRepo.save(assistantMsg);
 
@@ -212,19 +232,31 @@ export class AiAssistantService {
       })
       .catch(() => {});
 
-    return { message: response, intent: intent.type, usedLLM };
+    return {
+      message: response,
+      intent: intent.type,
+      usedLLM,
+      responseSource,
+      llmProvider,
+      fallbackReason,
+    };
   }
 
   private async callLLM(
     userMessage: string,
     context: Awaited<ReturnType<UserContextService['build']>>,
     history: AssistantMessage[],
-  ): Promise<string> {
+  ): Promise<{
+    text: string;
+    usedProvider: boolean;
+    provider: string | null;
+    fallbackReason: 'no_provider_configured' | 'provider_request_failed' | null;
+  }> {
     const recentHistory = history.slice(-5).map((m) => ({
       role: m.sender === 'user' ? ('user' as const) : ('assistant' as const),
       content: m.content,
     }));
-    return this.openRouter.ask({
+    return this.openRouter.askWithMetadata({
       userMessage,
       contextString: this.userContextService.toPromptString(context),
       conversationHistory: recentHistory,

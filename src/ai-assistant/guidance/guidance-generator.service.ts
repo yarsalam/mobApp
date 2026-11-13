@@ -151,11 +151,9 @@ export class GuidanceGeneratorService {
         break;
       case 'payment':
         action = {
-          type: 'offer_discount',
-          data: {
-            product: 'credits',
-            discount: phase.phase === 'hot' ? 20 : 0,
-          },
+          type: 'navigate',
+          target: 'Payment',
+          data: { product: 'credits' },
         };
         break;
       case 'engagement':
@@ -182,27 +180,27 @@ export class GuidanceGeneratorService {
   private createMessage(problem: UserProblem): string {
     if (problem.category === 'profile') {
       if (problem.description.includes('ناقص'))
-        return `🚀 پروفایلت ناقصه! با تکمیلش ${problem.impact}`;
+        return '🚀 پروفایلت هنوز کامل نشده؛ بخش‌های ناقص را تکمیل کن.';
       if (problem.description.includes('شهر'))
         return '📍 شهرت رو اضافه کن تا با همشهری‌ها آشنا شی';
       if (problem.description.includes('کوتاه'))
-        return `📝 درباره‌ات رو بیشتر بنویس — ${problem.impact}`;
+        return '📝 چند جمله واقعی درباره علایق و انتظاراتت به بخش درباره‌من اضافه کن.';
     }
     if (problem.category === 'image') {
       if (problem.description.includes('هیچ عکسی'))
-        return '📸 عکس نداری! ۱۰ برابر کمتر دیده می‌شی';
+        return '📸 هنوز عکسی در پروفایلت ثبت نشده؛ یک عکس واضح و متعلق به خودت اضافه کن.';
       if (problem.description.includes('کم است'))
-        return '🖼️ فقط ۲ عکس داری، حداقل ۳ تا بذار';
+        return '🖼️ می‌توانی عکس‌های واقعی بیشتری از موقعیت‌های متفاوت اضافه کنی.';
       if (problem.description.includes('کیفیت'))
-        return '🔍 کیفیت عکس‌هات پایینه، عکس‌های واضح‌تر بذار';
+        return '🔍 امتیاز داخلی کیفیت یک یا چند عکس پایین است؛ وضوح و نور آن‌ها را بازبینی کن.';
     }
     if (problem.category === 'engagement') {
       if (problem.description.includes('لایک کافی'))
-        return '❤️ روزانه ۵ نفر رو لایک کن';
+        return '❤️ پروفایل‌های متناسب با معیارهایت را مرور کن و فقط در صورت علاقه تعامل ثبت کن.';
       if (problem.description.includes('هیچ پیامی'))
-        return '💬 هنوز پیامی نفرستادی! با ۳ نفر شروع کن';
+        return '💬 اگر فردی با علایق مشترک دیدی، می‌توانی گفتگو را با یک پیام محترمانه شروع کنی.';
       if (problem.description.includes('نرخ تبدیل'))
-        return '📊 بازدید به لایک کمه، عکس اصلی رو عوض کن';
+        return '📊 برای تحلیل بازدید و لایک به بازه‌های زمانی یکسان و داده کامل نیاز داریم؛ فعلاً علت قطعی مشخص نیست.';
     }
     return problem.description;
   }
@@ -253,7 +251,7 @@ export class GuidanceGeneratorService {
     return next;
   }
 
-  async getCompletionRate(_userId: number): Promise<number> {
-    return 0.7; // TODO: implement
+  async getCompletionRate(_userId: number): Promise<number | null> {
+    return null;
   }
 }

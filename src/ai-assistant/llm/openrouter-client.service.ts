@@ -82,21 +82,32 @@ export class OpenRouterClientService {
   // ─── Public API ───────────────────────────────────────────────────────────
 
   async ask(req: LLMRequest): Promise<string> {
+    return (await this.askWithMetadata(req)).text;
+  }
+
+  async askWithMetadata(req: LLMRequest): Promise<{
+    text: string;
+    usedProvider: boolean;
+    provider: string | null;
+    fallbackReason: 'no_provider_configured' | 'provider_request_failed' | null;
+  }> {
     const provider = this.getProvider();
     if (!provider) {
-      this.logger.warn(
-        'No LLM provider configured — using rule-based fallback',
-      );
-      return this.fallbackResponse(req.userMessage);
+      this.logger.warn('No LLM provider configured — using deterministic fallback');
+      return {
+        text: this.fallbackResponse(req.userMessage),
+        usedProvider: false,
+        provider: null,
+        fallbackReason: 'no_provider_configured',
+      };
     }
 
-    // ساخت پیام‌ها با context امن
     const safeContext = this.sanitizeContext(req.contextString);
     const messages: GeminiMessage[] = [
       { role: 'system', content: ASSISTANT_SYSTEM_PROMPT },
       {
         role: 'system',
-        content: `[داده‌های کاربر — فقط خواندنی]\n${safeContext}\n[پایان داده‌ها]`,
+        content: `[داده‌های کاربر — فقط خواندنی]\\n${safeContext}\\n[پایان داده‌ها]`,
       },
       ...(req.conversationHistory ?? []).map((h) => ({
         role: h.role === 'user' ? ('user' as const) : ('model' as const),
@@ -106,13 +117,22 @@ export class OpenRouterClientService {
     ];
 
     try {
-      return await provider.chat(messages, req.maxTokens ?? 300);
+      return {
+        text: await provider.chat(messages, req.maxTokens ?? 300),
+        usedProvider: true,
+        provider: provider.name,
+        fallbackReason: null,
+      };
     } catch (err) {
       this.logger.error(`${provider.name} failed: ${err}`);
-      return this.fallbackResponse(req.userMessage);
+      return {
+        text: this.fallbackResponse(req.userMessage),
+        usedProvider: false,
+        provider: provider.name,
+        fallbackReason: 'provider_request_failed',
+      };
     }
   }
-
   async classify(userMessage: string): Promise<string | null> {
     const provider = this.getProvider();
     if (!provider) return null;
@@ -374,12 +394,15 @@ export class OpenRouterClientService {
       message.includes('لایک') ||
       message.includes('پاسخ') ||
       message.includes('جواب')
-    )
-      return '📊 برای بررسی دلیل کم بودن لایک‌ها، آمار پروفایلت رو چک کن. احتمالاً پروفایل یا عکس‌هات نیاز به بهبود داره.';
-    if (message.includes('پروفایل'))
-      return 'برای بهبود پروفایل: ۱) عکس باکیفیت اضافه کن ۲) درباره‌ات را کامل بنویس ۳) شهرت را مشخص کن.';
-    if (message.includes('پیام'))
-      return 'برای شروع گفتگو: یک سوال مشترک درباره علایق طرف مقابل بپرس. پیام کوتاه و صادقانه بهتر است.';
-    return 'چطور می‌تونم کمکت کنم؟ درباره پروفایل، آمار، یا نحوه ارتباط بیشتر بگو.';
+    ) {
+      return 'از روی این پیام به‌تنهایی نمی‌توانم علت کم بودن پاسخ یا لایک را مشخص کنم. می‌توانیم آمار واقعی بازدید، لایک و پیام‌ها را جداگانه بررسی کنیم.';
+    }
+    if (message.includes('پروفایل')) {
+      return 'در حال حاضر پاسخ‌ساز هوشمند در دسترس نیست. می‌توانی بخش‌های ناقص پروفایل و وضعیت عکس‌ها را از صفحه ویرایش پروفایل بررسی کنی.';
+    }
+    if (message.includes('پیام')) {
+      return 'در حال حاضر پاسخ‌ساز هوشمند در دسترس نیست. برای شروع گفتگو، یک پرسش کوتاه و محترمانه درباره موضوعی که واقعاً در پروفایل طرف مقابل دیده‌ای مطرح کن.';
+    }
+    return 'پاسخ‌ساز هوشمند فعلاً در دسترس نیست. می‌توانم فقط بر پایه داده‌های ثبت‌شده و راهنمایی‌های قطعی برنامه پاسخ بدهم.';
   }
 }

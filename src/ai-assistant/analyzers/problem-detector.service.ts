@@ -1,110 +1,87 @@
-import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PhaseService } from '../../phase/phase.service';
 import { AiImageService } from '../../ai-image/ai-image.service';
 import { InteractionsService } from '../../interaction/interaction.service';
-import { ProfileVisitorsService } from '../../profile-visitors/profile-visitors.service';
 import { UserMetricsService } from '../../user-metrics/user-metrics.service';
-import { PersonalityService } from '../../personality/personality.service';
-import { TicketService } from 'src/ai-support/services/ticket.service';
 import { UserProblem } from '../types/user-problem.interface';
 import { ProblemDetectorPhase } from '../types/problem-detector-phase.interface';
 import { UserImageAnalysis } from '../types/user-image-analysis.interface';
 import { InteractionAnalysis } from '../types/interaction-analysis.interface';
 import { UserMetricsSnapshot } from '../types/user-metrics-snapshot.interface';
-import { PersonalityProfile } from '../types/personality-profile.interface';
-import { FeedAssemblerService } from 'src/feed/services/feed-assembler.service';
 
 @Injectable()
 export class ProblemDetectorService {
-  private readonly logger = new Logger(ProblemDetectorService.name);
-
   constructor(
     private readonly phaseService: PhaseService,
     private readonly aiImageService: AiImageService,
     private readonly interactionsService: InteractionsService,
-    private readonly profileVisitorsService: ProfileVisitorsService,
     private readonly userMetricsService: UserMetricsService,
-    private readonly personalityService: PersonalityService,
-    private readonly feedAssembler: FeedAssemblerService,
-    private readonly ticketService: TicketService,
   ) {}
 
   async detectProblems(userId: number): Promise<UserProblem[]> {
-    const problems: UserProblem[] = [];
+    const [phaseResult, imageResult, interactionsResult, metricsResult] =
+      await Promise.allSettled([
+        this.phaseService.getPhaseMetrics(userId),
+        this.aiImageService.findByUser(userId),
+        this.interactionsService.getUserInteractions(userId),
+        this.userMetricsService.buildExtraMetrics(userId),
+      ]);
 
-    const [
-      phase,
-      images,
-      interactions,
-      visitors,
-      rawMetrics,
-      rawPersonality,
-      feed,
-      supportTickets,
-    ] = await Promise.all([
-      this.phaseService.getPhaseMetrics(userId).catch(() => null),
-      this.aiImageService.findByUser(userId).catch(() => []),
-      this.interactionsService.getUserInteractions(userId).catch(() => []),
-      this.profileVisitorsService.getProfileVisitors(userId).catch(() => []),
-      this.userMetricsService.buildExtraMetrics(userId).catch(() => null),
-      this.personalityService.analyzePersonality(userId).catch(() => null),
-      this.feedAssembler.buildFeed(userId, { limit: 5 }).catch(() => []),
-      this.ticketService.getUserTickets(userId).catch(() => []),
-    ]);
-
-    // مقدار پیش‌فرض برای phase (ممکن است null باشد)
-    const safePhase: ProblemDetectorPhase = {
-      isCompleted: false, // مقدار پیش‌فرض
-      city: null,
-      bio: null,
-      phase: 'cold' as const,
-      everPaid: false,
-      suggestedActions: [],
-      ...phase, // فیلدهای واقعی (مثل phase و score) روی پیش‌فرض‌ها نوشته می‌شوند
-    } as ProblemDetectorPhase;
-
-    // تبدیل عکس‌ها به UserImageAnalysis[]
-    const userImages: UserImageAnalysis[] = images.map((img) => ({
-      id: img.id,
-      url: img.url,
-      qualityScore: img.qualityScore ?? 0,
-    }));
-
-    // مقدار پیش‌فرض برای metrics و personality
-    const metrics: UserMetricsSnapshot = {
-      daysSinceSignup: (rawMetrics as any)?.daysSinceSignup ?? 0,
-      lastPurchaseDays: (rawMetrics as any)?.lastPurchaseDays ?? 0,
-    };
-
-    // Advice must not infer a personality trait from a missing or legacy
-    // unverified record. Only an explicitly consented, validated questionnaire
-    // is eligible for this rule-based personality hint.
-    const personality =
-      rawPersonality?.matchingEligible === true &&
-      rawPersonality?.oceanSource === 'validated_questionnaire'
-        ? (rawPersonality as PersonalityProfile)
+    const phase =
+      phaseResult.status === 'fulfilled' && phaseResult.value
+        ? (phaseResult.value as ProblemDetectorPhase)
+        : null;
+    const images =
+      imageResult.status === 'fulfilled' && Array.isArray(imageResult.value)
+        ? imageResult.value
+        : null;
+    const interactions =
+      interactionsResult.status === 'fulfilled' &&
+      Array.isArray(interactionsResult.value)
+        ? (interactionsResult.value as InteractionAnalysis[])
+        : null;
+    const rawMetrics =
+      metricsResult.status === 'fulfilled' && metricsResult.value
+        ? metricsResult.value
         : null;
 
-    problems.push(
-      ...(await this.detectProfileProblems(userId, safePhase, userImages)),
-    );
-    problems.push(...(await this.detectImageProblems(userId, userImages)));
-    problems.push(
-      ...(await this.detectEngagementProblems(
-        userId,
-        interactions,
-        visitors,
-        metrics,
-      )),
-    );
-    problems.push(
-      ...(await this.detectPersonalityProblems(
-        userId,
-        personality,
-        interactions,
-      )),
-    );
-    problems.push(...(await this.detectPhaseProblems(safePhase, metrics)));
+    const metrics: UserMetricsSnapshot | null = rawMetrics
+      ? {
+          daysSinceSignup:
+            typeof (rawMetrics as any).daysSinceSignup === 'number' &&
+            Number.isFinite((rawMetrics as any).daysSinceSignup)
+              ? (rawMetrics as any).daysSinceSignup
+              : undefined,
+          lastPurchaseDays:
+            typeof (rawMetrics as any).lastPurchaseDays === 'number' &&
+            Number.isFinite((rawMetrics as any).lastPurchaseDays)
+              ? (rawMetrics as any).lastPurchaseDays
+              : undefined,
+        }
+      : null;
+
+    const userImages: UserImageAnalysis[] = (images ?? []).map((img) => ({
+      id: img.id,
+      url: img.url,
+      qualityScore:
+        typeof img.qualityScore === 'number' && Number.isFinite(img.qualityScore)
+          ? img.qualityScore
+          : null,
+    }));
+
+    const problems: UserProblem[] = [];
+    if (phase) {
+      problems.push(...(await this.detectProfileProblems(userId, phase, userImages)));
+    }
+    if (images) {
+      problems.push(...(await this.detectImageProblems(userImages)));
+    }
+    if (interactions && metrics) {
+      problems.push(...(await this.detectEngagementProblems(userId, interactions, metrics)));
+    }
+    if (phase && metrics) {
+      problems.push(...(await this.detectPhaseProblems(phase, metrics)));
+    }
 
     return problems.sort((a, b) => {
       const severityWeight = { critical: 4, high: 3, medium: 2, low: 1 };
@@ -122,68 +99,70 @@ export class ProblemDetectorService {
       problems.push({
         category: 'profile',
         severity: 'high',
-        description: 'پروفایل شما ناقص است',
-        reason: 'کاربران با پروفایل کامل ۵ برابر بیشتر دیده می‌شوند',
-        solution: 'به بخش ویرایش پروفایل برو و اطلاعات خود را تکمیل کن',
-        impact: '۵ برابر افزایش بازدید پروفایل',
+        description: 'پروفایل شما هنوز کامل نشده است',
+        reason: 'وضعیت ثبت‌شده پروفایل نشان می‌دهد بخشی از اطلاعات اصلی تکمیل نشده است.',
+        solution: 'بخش‌های ناقص را در صفحه ویرایش پروفایل تکمیل کن.',
+        impact: 'اطلاعات بیشتری برای شناخت اولیه در اختیار بازدیدکننده قرار می‌گیرد؛ اثر عددی آن هنوز اندازه‌گیری نشده است.',
       });
     }
     if (!phase.city) {
       problems.push({
         category: 'profile',
         severity: 'medium',
-        description: 'شهر خود را مشخص نکرده‌ای',
-        reason: 'کاربران همشهری راحت‌تر با هم ارتباط برقرار می‌کنند',
-        solution: 'شهر خود را در پروفایل اضافه کن',
-        impact: '۲ برابر افزایش مچ شدن با همشهری‌ها',
+        description: 'شهر در پروفایل ثبت نشده است',
+        reason: 'اطلاعات مکانی پروفایل ناقص است.',
+        solution: 'در صورت تمایل، شهر خود را در پروفایل ثبت کن.',
+        impact: 'اطلاعات لازم برای تجربه‌ها و پیشنهادهای مکانی فراهم می‌شود؛ افزایش Match تضمین‌شده نیست.',
       });
     }
-    if (!phase.bio || phase.bio.length < 50) {
+    if (!phase.bio || phase.bio.trim().length < 50) {
       problems.push({
         category: 'profile',
         severity: 'medium',
-        description: 'درباره من کوتاه است',
-        reason: 'کاربران دوست دارند قبل از شروع گفتگو، کمی از طرف مقابل بدانند',
-        solution: 'حداقل ۵۰ کلمه درباره خودت بنویس',
-        impact: '۳ برابر افزایش پیام دریافتی',
+        description: 'بخش درباره‌من خالی یا کوتاه است',
+        reason: 'بخش درباره‌من اطلاعات کمی برای شناخت علایق و ارزش‌های تو ارائه می‌کند.',
+        solution: 'چند جمله واقعی درباره علایق، ارزش‌ها و انتظاراتت اضافه کن.',
+        impact: 'توضیحات پروفایل کامل‌تر می‌شود؛ اثر آن بر تعداد پیام یا Match هنوز اندازه‌گیری نشده است.',
       });
     }
     return problems;
   }
 
-  private async detectImageProblems(
-    _userId: number,
-    images: UserImageAnalysis[],
-  ): Promise<UserProblem[]> {
+  private async detectImageProblems(images: UserImageAnalysis[]): Promise<UserProblem[]> {
     const problems: UserProblem[] = [];
     if (images.length === 0) {
       problems.push({
         category: 'image',
-        severity: 'critical',
-        description: 'هیچ عکسی آپلود نکرده‌ای',
-        reason: 'پروفایل‌های بدون عکس معمولاً دیده نمی‌شوند',
-        solution: 'حداقل ۳ عکس با کیفیت از خودت آپلود کن',
-        impact: '۱۰ برابر افزایش بازدید',
+        severity: 'high',
+        description: 'هنوز عکسی برای پروفایل ثبت نشده است',
+        reason: 'در حال حاضر تصویری برای نمایش در پروفایل وجود ندارد.',
+        solution: 'یک عکس واضح و متعلق به خودت اضافه کن.',
+        impact: 'پروفایل دارای محتوای تصویری می‌شود؛ اثر عددی آن بر بازدید یا لایک هنوز اندازه‌گیری نشده است.',
       });
     } else if (images.length < 3) {
       problems.push({
         category: 'image',
-        severity: 'medium',
-        description: 'تعداد عکس‌ها کم است',
-        reason: 'کاربران با حداقل ۳ عکس، اعتماد بیشتری جلب می‌کنند',
-        solution: 'حداقل ۳ عکس آپلود کن (ترجیحاً در محیط‌های مختلف)',
-        impact: '۳ برابر افزایش لایک',
+        severity: 'low',
+        description: 'تعداد عکس‌های پروفایل محدود است',
+        reason: 'با عکس‌های بیشتر می‌توانی جنبه‌های بیشتری از خودت را نشان بدهی.',
+        solution: 'در صورت تمایل عکس‌های واقعی دیگری از موقعیت‌های متفاوت اضافه کن.',
+        impact: 'محتوای تصویری پروفایل متنوع‌تر می‌شود؛ افزایش لایک یا بازدید تضمین‌شده نیست.',
       });
     }
-    const lowQualityImages = images.filter((img) => img.qualityScore < 0.5);
-    if (lowQualityImages.length > 0) {
+    const hasLowScoredImages = images.some(
+      (image) =>
+        typeof image.qualityScore === 'number' &&
+        Number.isFinite(image.qualityScore) &&
+        image.qualityScore < 0.5,
+    );
+    if (hasLowScoredImages) {
       problems.push({
         category: 'image',
         severity: 'medium',
-        description: 'بعضی عکس‌ها کیفیت پایینی دارند',
-        reason: 'عکس‌های باکیفیت بیشتر جلب توجه می‌کنند',
-        solution: 'عکس‌های با کیفیت‌تر و واضح‌تر آپلود کن',
-        impact: '۲ برابر افزایش نرخ لایک',
+        description: 'امتیاز داخلی کیفیت بعضی عکس‌ها پایین است',
+        reason: 'سامانه ارزیابی داخلی برای دست‌کم یک عکس امتیاز کمتر از آستانه ثبت کرده است.',
+        solution: 'عکس را از نظر وضوح، نور و مشخص‌بودن سوژه بازبینی کن.',
+        impact: 'کیفیت تصویری قابل‌مشاهده بهتر می‌شود؛ اثر آن بر تعامل هنوز اندازه‌گیری نشده است.',
       });
     }
     return problems;
@@ -192,87 +171,19 @@ export class ProblemDetectorService {
   private async detectEngagementProblems(
     _userId: number,
     interactions: InteractionAnalysis[],
-    visitors: unknown[],
     metrics: UserMetricsSnapshot,
   ): Promise<UserProblem[]> {
     const problems: UserProblem[] = [];
-    const likeCount = interactions.filter((i) => i.type === 'like').length;
-    const messageCount = interactions.filter(
-      (i) => i.type === 'message',
-    ).length;
-    const viewCount = visitors.length;
-
-    const daysSinceSignup = metrics.daysSinceSignup ?? 0;
-    if (likeCount < 5 && daysSinceSignup > 3) {
-      problems.push({
-        category: 'engagement',
-        severity: 'high',
-        description: 'لایک کافی نداری',
-        reason: 'کاربران فعال‌تر بیشتر دیده می‌شوند',
-        solution: 'روزانه حداقل ۵ نفر رو لایک کن',
-        impact: 'افزایش ۳ برابری بازدید از پروفایل تو',
-      });
-    }
-    if (messageCount === 0 && daysSinceSignup > 7) {
-      problems.push({
-        category: 'engagement',
-        severity: 'critical',
-        description: 'هنوز هیچ پیامی نفرستاده‌ای',
-        reason: 'هدف اصلی آشنایی، گفتگوست',
-        solution: 'به ۳ نفری که لایک کردی پیام بده',
-        impact: 'شروع ارتباطات واقعی',
-      });
-    }
-    const viewToLikeRatio = viewCount > 0 ? likeCount / viewCount : 0;
-    if (viewCount > 20 && viewToLikeRatio < 0.1) {
+    const messageCount = interactions.filter((item) => item.type === 'message').length;
+    const daysSinceSignup = metrics.daysSinceSignup;
+    if (messageCount === 0 && typeof daysSinceSignup === 'number' && daysSinceSignup > 7) {
       problems.push({
         category: 'engagement',
         severity: 'medium',
-        description: 'نرخ تبدیل بازدید به لایک پایین است',
-        reason: 'احتمالاً پروفایل یا عکس‌ها جذاب نیستند',
-        solution: 'عکس اصلی را عوض کن یا درباره‌ات را جذاب‌تر بنویس',
-        impact: '۲ برابر افزایش لایک',
-      });
-    }
-    return problems;
-  }
-
-  private async detectPersonalityProblems(
-    _userId: number,
-    personality: PersonalityProfile | null,
-    interactions: InteractionAnalysis[],
-  ): Promise<UserProblem[]> {
-    const problems: UserProblem[] = [];
-    const messages = interactions.filter((i) => i.type === 'message');
-    if (messages.length > 0) {
-      const negativeMessages = messages.filter(
-        (m) => m.sentiment === 'negative',
-      );
-      if (negativeMessages.length / messages.length > 0.3) {
-        problems.push({
-          category: 'personality',
-          severity: 'high',
-          description: 'لحن پیام‌هایت ممکن است کمی تند باشد',
-          reason: 'پیام‌های منفی باعث کاهش پاسخگویی می‌شوند',
-          solution: 'سعی کن با لحن مهربان‌تر و مثبت‌تر صحبت کنی',
-          impact: '۳ برابر افزایش پاسخگویی',
-        });
-      }
-    }
-
-    const extraversion = personality?.ocean?.extraversion;
-    if (
-      typeof extraversion === 'number' &&
-      Number.isFinite(extraversion) &&
-      extraversion < 0.3
-    ) {
-      problems.push({
-        category: 'personality',
-        severity: 'low',
-        description: 'به نظر می‌رسد کمی خجالتی هستی',
-        reason: 'افراد خجالتی معمولاً دیرتر ارتباط برقرار می‌کنند',
-        solution: 'با پیام‌های کوتاه و ساده شروع کن، مثلاً "سلام، حالت چطوره؟"',
-        impact: 'افزایش ۵۰٪ شروع مکالمه',
+        description: 'هنوز پیام ارسالی ثبت نشده است',
+        reason: 'در تاریخچه تعاملات ثبت‌شده پیامی از طرف کاربر دیده نمی‌شود.',
+        solution: 'اگر فردی با علایق مشترک دیدی، می‌توانی گفتگو را با یک پیام محترمانه شروع کنی.',
+        impact: 'شروع گفتگو می‌تواند تجربه آشنایی را آغاز کند؛ نرخ پاسخ یا نتیجه آن هنوز قابل پیش‌بینی نیست.',
       });
     }
     return problems;
@@ -283,45 +194,30 @@ export class ProblemDetectorService {
     metrics: UserMetricsSnapshot,
   ): Promise<UserProblem[]> {
     const problems: UserProblem[] = [];
-    if (!phase) return problems;
-
-    const lastPurchaseDays = metrics.lastPurchaseDays ?? 0;
-
-    switch (phase.phase) {
-      case 'cold':
-        problems.push({
-          category: 'phase',
-          severity: 'high',
-          description: 'در فاز اولیه هستی',
-          reason: 'با تکمیل پروفایل و چند تعامل ساده، وارد فاز گرم می‌شی',
-          solution: phase.suggestedActions?.[0] || 'پروفایلت رو کامل کن',
-          impact: 'وارد شدن به فاز گرم و دیده شدن بیشتر',
-        });
-        break;
-      case 'warm':
-        if (!phase.everPaid) {
-          problems.push({
-            category: 'payment',
-            severity: 'medium',
-            description: 'زمان خرید نزدیک است',
-            reason: 'کاربران فعال معمولاً برای امکانات بیشتر خرید می‌کنند',
-            solution: 'با خرید اعتبار، می‌تونی پیام‌های بیشتری بفرستی',
-            impact: 'دسترسی به امکانات ویژه',
-          });
-        }
-        break;
-      case 'hot':
-        if (phase.everPaid && lastPurchaseDays > 30) {
-          problems.push({
-            category: 'payment',
-            severity: 'medium',
-            description: 'مدتی است خریدی نداشته‌ای',
-            reason: 'کاربران وفادار با خرید مکرر، امکانات بیشتری دارن',
-            solution: 'پکیج VIP با ۲۰٪ تخفیف ویژه تو',
-            impact: 'لایک نامحدود و اولویت در نمایش',
-          });
-        }
-        break;
+    if (phase.phase === 'cold' && !phase.isCompleted) {
+      problems.push({
+        category: 'phase',
+        severity: 'medium',
+        description: 'حساب در فاز اولیه ثبت شده است',
+        reason: 'فاز فعلی سامانه Cold ثبت شده است؛ این طبقه‌بندی به‌تنهایی نتیجه تعامل را پیش‌بینی نمی‌کند.',
+        solution: 'ابتدا اطلاعات واقعی پروفایل را تکمیل کن.',
+        impact: 'تکمیل اطلاعات، ورودی‌های پروفایل را کامل‌تر می‌کند؛ زمان تغییر فاز تضمین‌شده نیست.',
+      });
+    }
+    if (
+      phase.phase === 'hot' &&
+      phase.everPaid &&
+      typeof metrics.lastPurchaseDays === 'number' &&
+      metrics.lastPurchaseDays > 30
+    ) {
+      problems.push({
+        category: 'payment',
+        severity: 'medium',
+        description: 'بیش از ۳۰ روز از آخرین خرید ثبت‌شده گذشته است',
+        reason: 'فاصله از آخرین خرید یک نشانه رفتاری است و به‌تنهایی دلیل خرید مجدد نیست.',
+        solution: 'در صورت نیاز، محصولات و شرایط فعلی را بررسی کن.',
+        impact: 'قیمت یا تخفیف واجدشرایط باید از پیشنهاد فعال و معتبر دریافت شود.',
+      });
     }
     return problems;
   }
