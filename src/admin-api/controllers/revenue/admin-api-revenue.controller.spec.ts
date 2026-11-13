@@ -46,12 +46,74 @@ describe('AdminApiRevenueController customer segments', () => {
   );
 });
 
+
+describe('AdminApiRevenueController pricing experiment settings', () => {
+  function createController() {
+    const pricingExperiments = {
+      getAdminSettings: jest.fn(async (experimentId: string) => ({
+        experimentId,
+        enabled: false,
+        maxDiscountBudgetRials: 200_000,
+      })),
+      updateAdminSettings: jest.fn(async (experimentId: string, input: any) => ({
+        experimentId,
+        ...input,
+      })),
+    };
+    const controller = new AdminApiRevenueController(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      pricingExperiments as any,
+    );
+    return { controller, pricingExperiments };
+  }
+
+  it('loads dynamic settings without exposing the signing secret', async () => {
+    const { controller, pricingExperiments } = createController();
+    await expect(controller.pricingExperimentSettings('pricing-first-purchase-v1')).resolves.toMatchObject({
+      experimentId: 'pricing-first-purchase-v1',
+      enabled: false,
+      maxDiscountBudgetRials: 200_000,
+    });
+    expect(pricingExperiments.getAdminSettings).toHaveBeenCalledWith('pricing-first-purchase-v1');
+  });
+
+  it('forwards dynamic settings changes to the pricing service', async () => {
+    const { controller, pricingExperiments } = createController();
+    const input = {
+      enabled: false,
+      discountBps: 1000,
+      treatmentRateBps: 2000,
+      maxDiscountBudgetRials: 200_000,
+      endsAt: new Date(Date.now() + 14 * 86_400_000).toISOString(),
+    };
+    await expect(
+      controller.updatePricingExperimentSettings('pricing-first-purchase-v1', input),
+    ).resolves.toMatchObject({ experimentId: 'pricing-first-purchase-v1', ...input });
+    expect(pricingExperiments.updateAdminSettings).toHaveBeenCalledWith(
+      'pricing-first-purchase-v1',
+      input,
+    );
+  });
+});
+
 describe('AdminApiRevenueController pricing experiment report', () => {
   function createController() {
     const pricingExperiments = {
       getExperimentReport: jest.fn(async (experimentId: string, days: number) => ({
         experimentId,
         periodDays: days,
+      })),
+      getAdminSettings: jest.fn(async (experimentId: string) => ({
+        experimentId,
+        enabled: false,
+        maxDiscountBudgetRials: 200_000,
+      })),
+      updateAdminSettings: jest.fn(async (experimentId: string, input: any) => ({
+        experimentId,
+        ...input,
       })),
     };
     const controller = new AdminApiRevenueController(
