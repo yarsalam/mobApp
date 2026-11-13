@@ -46,6 +46,7 @@ function makeService() {
     { userId: 1, type: EventType.APP_OPEN, createdAt: new Date(now - 33 * 86_400_000), metadata: {} },
     { userId: 1, type: EventType.MESSAGE_SENT, createdAt: new Date(now - 5 * 86_400_000), metadata: {} },
     { userId: 1, type: EventType.PURCHASE, createdAt: new Date(now - 4 * 86_400_000), metadata: { isCommercialPurchase: true, currency: 'IRT', amountRials: 300_000 } },
+    { userId: 1, type: EventType.LOGIN, createdAt: new Date(now - 2 * 86_400_000), metadata: { kind: 'acquisition_touch', acquisitionTouch: { source: 'instagram', medium: 'social', campaign: 'return-link', campaignId: 'ig-r1', capturedAt: new Date(now - 2 * 86_400_000).toISOString() } } },
     { userId: 1, type: EventType.WALLET_CHARGED, createdAt: new Date(now - 3 * 86_400_000), metadata: { amountRials: 900_000 } },
     { userId: 2, type: EventType.LOGIN, createdAt: new Date(now - 5 * 86_400_000), metadata: {} },
     { userId: 2, type: EventType.PURCHASE, createdAt: new Date(now - 4 * 86_400_000), metadata: { isCommercialPurchase: false, currency: 'IRT', amountRials: 500_000 } },
@@ -90,6 +91,10 @@ describe('AcquisitionGrowthService', () => {
     });
     expect(unattributed).toMatchObject({ newUsers: 1, cac: null });
     expect(instagram).toMatchObject({ newUsers: 1, costAmount: 0, cac: 0, ltvOverCac: null });
+    expect(report.lastTouchTrackedUsers).toBe(1);
+    expect(report.lastTouchSummary).toMatchObject([
+      {source: 'instagram', medium: 'social', campaignId: 'ig-r1', users: 1},
+    ]);
     expect(report.interpretation).toContain('observational_descriptive_only');
     expect(report.interpretation).toContain('wallet top-ups');
   });
