@@ -132,6 +132,8 @@ export default registerAs('database', (): TypeOrmModuleOptions => ({
     ArchiveRequest,
     RequestLog,
     EventOutbox,
+    AcquisitionCost,
+import { AcquisitionCost } from '../revenue/entities/acquisition-cost.entity';
   ],
   synchronize: resolveSynchronize(),
   // logging: resolveLogging(),
