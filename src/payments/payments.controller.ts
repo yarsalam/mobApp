@@ -144,14 +144,9 @@ export class PaymentsController {
       throw error;
     }
 
-    await this.paymentsService.grantBundle(userId, bundleCode, {
-      amountRials: payablePriceRials,
-      source: 'wallet',
-      idempotencyKey: `wallet-checkout:${stableKey}`,
-      ...(pricingCheckout ? { pricingExperiment: pricingCheckout } : {}),
-    });
-
-    // Commit real discount spend only after the fulfilled PURCHASE event exists.
+    // Once the wallet debit succeeds, the lower amount has been charged and
+    // the discount budget is consumed even if entitlement fulfillment needs a
+    // retry. Commit before grantBundle so a later retry cannot free this spend.
     if (pricingCheckout) {
       await this.pricingExperiment.commitCheckoutReservation(
         userId,
@@ -159,6 +154,13 @@ export class PaymentsController {
         stableKey,
       );
     }
+
+    await this.paymentsService.grantBundle(userId, bundleCode, {
+      amountRials: payablePriceRials,
+      source: 'wallet',
+      idempotencyKey: `wallet-checkout:${stableKey}`,
+      ...(pricingCheckout ? { pricingExperiment: pricingCheckout } : {}),
+    });
 
     return {
       success: true,
