@@ -60,6 +60,7 @@ function makeService(options?: {
     PRICING_EXPERIMENT_DISCOUNT_BPS: options?.discountBps ?? '1000',
     PRICING_EXPERIMENT_TREATMENT_RATE_BPS:
       options?.treatmentRateBps ?? '5000',
+    PRICING_EXPERIMENT_ENDS_AT: new Date(Date.now() + 14 * 86_400_000).toISOString(),
   };
   const config: any = {
     get: jest.fn((key: string) => configValues[key]),
@@ -171,6 +172,42 @@ describe('PricingExperimentService', () => {
     expect(quote.quoteId).toBeNull();
     expect(quote.payablePriceRials).toBe(100_000);
     expect(h.eligibilityBuilder.getCount).toHaveBeenCalled();
+  });
+
+  it('fails closed when an enabled experiment has expired or exceeds the 90-day window', async () => {
+    const expired = makeService();
+    expired.config.get.mockImplementation((key: string) => {
+      if (key === 'PRICING_EXPERIMENT_ENDS_AT') {
+        return new Date(Date.now() - 1000).toISOString();
+      }
+      return {
+        PRICING_EXPERIMENT_ENABLED: 'true',
+        PRICING_EXPERIMENT_ID: EXPERIMENT_ID,
+        PRICING_EXPERIMENT_SECRET: SECRET,
+        PRICING_EXPERIMENT_DISCOUNT_BPS: '1000',
+        PRICING_EXPERIMENT_TREATMENT_RATE_BPS: '5000',
+      }[key];
+    });
+    await expect(expired.service.getQuote(7, 'vip-month')).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+
+    const tooLong = makeService();
+    tooLong.config.get.mockImplementation((key: string) => {
+      if (key === 'PRICING_EXPERIMENT_ENDS_AT') {
+        return new Date(Date.now() + 91 * 86_400_000).toISOString();
+      }
+      return {
+        PRICING_EXPERIMENT_ENABLED: 'true',
+        PRICING_EXPERIMENT_ID: EXPERIMENT_ID,
+        PRICING_EXPERIMENT_SECRET: SECRET,
+        PRICING_EXPERIMENT_DISCOUNT_BPS: '1000',
+        PRICING_EXPERIMENT_TREATMENT_RATE_BPS: '5000',
+      }[key];
+    });
+    await expect(tooLong.service.getQuote(7, 'vip-month')).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
   });
 
   it('rejects enabled experiments whose secret or assignment settings are missing', async () => {
