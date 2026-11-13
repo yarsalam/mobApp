@@ -96,7 +96,8 @@ describe('AdminApiRevenueController pricing experiment', () => {
       remainingBudgetRials: 200_000,
       secretConfigured: false,
     });
-    expect(JSON.stringify(settings)).not.toContain('secret');
+    expect(settings).not.toHaveProperty('secret');
+    expect(settings).not.toHaveProperty('signingSecret');
     expect(h.pricingExperiments.getAdminSettings).toHaveBeenCalledWith(
       'pricing-first-purchase-v1',
     );
