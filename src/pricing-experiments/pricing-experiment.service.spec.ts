@@ -228,6 +228,66 @@ describe('PricingExperimentService', () => {
     );
   });
 
+
+  it('returns the shared budget defaults and does not include the HMAC key', async () => {
+    const h = makeService({ enabled: 'false' });
+    const settings = await h.service.getAdminSettings(EXPERIMENT_ID);
+    expect(settings).toMatchObject({
+      experimentId: EXPERIMENT_ID,
+      enabled: false,
+      discountBps: 1000,
+      treatmentRateBps: 5000,
+      maxDiscountBudgetRials: 200_000,
+      secretConfigured: true,
+      budgetCapRials: 200_000,
+      remainingBudgetRials: 200_000,
+    });
+    expect(JSON.stringify(settings)).not.toContain(SECRET);
+  });
+
+  it('prevents editing discount and allocation after first exposure', async () => {
+    const h = makeService({ enabled: 'false' });
+    h.redis.get.mockImplementation(async (key: string) =>
+      key === `pricing:started:v1:${EXPERIMENT_ID}` ? '1' : null,
+    );
+    await expect(
+      h.service.updateAdminSettings(EXPERIMENT_ID, {
+        enabled: false,
+        discountBps: 1500,
+        treatmentRateBps: 2000,
+        maxDiscountBudgetRials: 200_000,
+        endsAt: new Date(Date.now() + 14 * 86_400_000).toISOString(),
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('does not enable the experiment unless the backend HMAC key is configured', async () => {
+    const h = makeService({ enabled: 'false' });
+    h.config.get.mockImplementation((key: string) => {
+      if (key === 'PRICING_EXPERIMENT_SECRET') return '';
+      if (key === 'PRICING_EXPERIMENT_ID') return EXPERIMENT_ID;
+      return undefined;
+    });
+    await expect(
+      h.service.updateAdminSettings(EXPERIMENT_ID, {
+        enabled: true,
+        discountBps: 1000,
+        treatmentRateBps: 2000,
+        maxDiscountBudgetRials: 200_000,
+        endsAt: new Date(Date.now() + 14 * 86_400_000).toISOString(),
+      }),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it('stops treatment quotes when the remaining shared budget is insufficient', async () => {
+    const userId = await findUserForVariant('treatment');
+    const h = makeService();
+    h.redis.hvals.mockResolvedValue(['199999']);
+    const quote = await h.service.getQuote(userId, 'vip-month');
+    expect(quote.eligibleForExperiment).toBe(false);
+    expect(quote.payablePriceRials).toBe(100_000);
+  });
+
   it('records a real price exposure idempotently with the exact assigned price', async () => {
     const userId = await findUserForVariant('treatment');
     const h = makeService();
