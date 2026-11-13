@@ -25,6 +25,7 @@ interface PricingExperimentConfig {
   secret: string;
   discountBps: number;
   treatmentRateBps: number;
+  endsAt: number;
 }
 
 interface PricingQuotePayload {
@@ -79,6 +80,10 @@ export class PricingExperimentService {
     const treatmentRateBps = Number(
       this.config.get<string>('PRICING_EXPERIMENT_TREATMENT_RATE_BPS'),
     );
+    const endsAt = Date.parse(
+      this.config.get<string>('PRICING_EXPERIMENT_ENDS_AT') ?? '',
+    );
+    const now = Date.now();
 
     if (
       !/^[A-Za-z0-9._:-]{1,96}$/.test(experimentId) ||
@@ -88,14 +93,17 @@ export class PricingExperimentService {
       discountBps > 3000 ||
       !Number.isInteger(treatmentRateBps) ||
       treatmentRateBps < 1 ||
-      treatmentRateBps > 9999
+      treatmentRateBps > 9999 ||
+      !Number.isFinite(endsAt) ||
+      endsAt <= now ||
+      endsAt > now + 90 * 86_400_000
     ) {
       throw new ServiceUnavailableException(
         'Pricing experiment is enabled but its configuration is incomplete or outside safe bounds',
       );
     }
 
-    return { experimentId, secret, discountBps, treatmentRateBps };
+    return { experimentId, secret, discountBps, treatmentRateBps, endsAt };
   }
 
   private mac(secret: string, value: string): Buffer {
