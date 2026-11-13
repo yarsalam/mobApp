@@ -10,7 +10,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { CreateAuthDto } from './dto/create-auth.dto';
+import { AcquisitionAttributionDto, CreateAuthDto } from './dto/create-auth.dto';
 import { Response, Request } from 'express';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { RecaptchaService } from 'src/recaptcha/recaptcha.service';
@@ -62,6 +62,16 @@ export class AuthController {
     );
     res.cookie('auth_token', token, authCookieOptions);
     return res.send({ message: 'پروفایل با موفقیت کامل شد', token });
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('acquisition-touch')
+  async updateAcquisitionTouch(
+    @CurrentUser('sub') userId: number,
+    @Body() body: AcquisitionAttributionDto,
+  ) {
+    if (!body.lastTouch) throw new BadRequestException('lastTouch is required');
+    return this.authService.updateAcquisitionLastTouch(userId, body.lastTouch);
   }
 
   @Post('login')

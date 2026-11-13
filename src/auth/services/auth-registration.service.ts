@@ -21,13 +21,14 @@ import { DevicePhoneService } from '../device-phone/device-phone.service';
 import { DevicePhoneEvent } from '../device-phone/entities/device-phone.entity';
 import { UserEventService } from '../../user-event/user-event.service';
 import { PhaseService } from '../../phase/phase.service';
-import { CreateAuthDto } from '../dto/create-auth.dto';
+import { AcquisitionTouchDto, CreateAuthDto } from '../dto/create-auth.dto';
 import { CompleteProfileDto } from '../dto/complete-profile.dto';
 import { UpdateUserDto } from '../../users/dto/update-user.dto';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { RequestHelper } from 'src/helpers/RequestHelper';
 import { EventType } from 'src/user-event/type/event-type.enum';
+import { normalizeAcquisitionTouch } from '../../revenue/acquisition-attribution';
 
 type InternalUpdateData = Partial<UpdateUserDto> & {
   password?: string;
@@ -80,45 +81,137 @@ export class AuthRegistrationService {
       }
 
       // ── ۲) create یا update user ─────────────────────────────────────
-      const { recaptchaToken, platform, ...userData } = createAuthDto;
+      const {
+        recaptchaToken,
+        platform,
+        acquisition,
+        metadata: suppliedMetadata,
+        ...userData
+      } = createAuthDto;
 
-      const referer = req.headers['referer'] || req.headers['referrer'] || '';
-      const ua = (req.headers['user-agent'] as string) || '';
-
-      // تشخیص خودکار source اگه فرانت نفرستاده باشه
-      let autoSource = 'direct';
+      const referer = String(
+        req.headers['referer'] || req.headers['referrer'] || '',
+      );
+      // Legacy clients can still be classified from a referrer, but the
+      // normalized helper stores only the referrer host, never a full URL.
+      let autoSource = 'unattributed';
       if (referer.includes('instagram.com')) autoSource = 'instagram';
-      else if (referer.includes('t.me') || referer.includes('telegram'))
-        autoSource = 'telegram';
-      else if (referer.includes('web.whatsapp.com')) autoSource = 'whatsapp';
+      else if (referer.includes('t.me') || referer.includes('telegram')) autoSource = 'telegram';
+      else if (referer.includes('whatsapp.com')) autoSource = 'whatsapp';
       else if (referer.includes('google.com')) autoSource = 'google';
+      else if (referer.includes('bing.com')) autoSource = 'bing_organic';
       else if (referer.includes('bale.ai')) autoSource = 'bale';
-      else if (referer.includes('myket.ir')) autoSource = 'myket';
-      else if (referer.includes('cafebazaar.ir')) autoSource = 'bazaar';
+
+      const previousMetadata =
+        existingUser?.metadata && typeof existingUser.metadata === 'object'
+          ? existingUser.metadata as Record<string, unknown>
+          : {};
+      const previousAcquisition =
+        previousMetadata.acquisition && typeof previousMetadata.acquisition === 'object'
+          ? previousMetadata.acquisition as Record<string, unknown>
+          : {};
+      const previousLegacyTouch =
+        previousMetadata.acquisitionMeta && typeof previousMetadata.acquisitionMeta === 'object'
+          ? previousMetadata.acquisitionMeta as Record<string, unknown>
+          : {};
+      const immutableSource =
+        existingUser?.acquisitionSource || userData.acquisitionSource || autoSource;
+      const immutableTerm =
+        existingUser?.acquisitionKeyword || userData.acquisitionKeyword;
+      const suppliedFirstTouch = acquisition?.firstTouch ?? {
+        source: immutableSource,
+        term: immutableTerm,
+        referralCode:
+          previousAcquisition.referralCode ??
+          suppliedMetadata?.referralCode,
+        campaign: previousLegacyTouch.campaign ?? suppliedMetadata?.campaign,
+        campaignId: previousLegacyTouch.campaignId ?? (suppliedMetadata as any)?.campaignId,
+        medium: previousLegacyTouch.medium ?? suppliedMetadata?.medium,
+        landingPage: previousLegacyTouch.landingPage ?? suppliedMetadata?.landingPage,
+        referrer: previousLegacyTouch.referrer ?? suppliedMetadata?.referrer ?? referer,
+      };
+      const suppliedLastTouch = acquisition?.lastTouch ?? {
+        source: userData.acquisitionSource || autoSource,
+        term: userData.acquisitionKeyword,
+        referralCode: suppliedMetadata?.referralCode,
+        campaign: suppliedMetadata?.campaign,
+        campaignId: (suppliedMetadata as any)?.campaignId,
+        medium: suppliedMetadata?.medium,
+        landingPage: suppliedMetadata?.landingPage,
+        referrer: suppliedMetadata?.referrer ?? referer,
+      };
+      const firstTouch = normalizeAcquisitionTouch(
+        suppliedFirstTouch,
+        {
+          source: immutableSource,
+          term: immutableTerm,
+          referrer: referer,
+        },
+      );
+      const lastTouch = normalizeAcquisitionTouch(
+        suppliedLastTouch,
+        {
+          source: userData.acquisitionSource || autoSource,
+          term: userData.acquisitionKeyword,
+          referrer: referer,
+        },
+      );
+      // First touch is immutable after it is captured. Later re-entry into an
+      // incomplete registration may update last touch, never the original source.
+      const storedFirstTouch =
+        previousAcquisition.firstTouch && typeof previousAcquisition.firstTouch === 'object'
+          ? previousAcquisition.firstTouch
+          : firstTouch;
+      const acquisitionMetadata = {
+        ...previousAcquisition,
+        firstTouch: storedFirstTouch,
+        firstTouchAt: previousAcquisition.firstTouchAt ?? firstTouch.capturedAt,
+        lastTouch,
+        referralCode:
+          previousAcquisition.referralCode ??
+          firstTouch.referralCode ??
+          lastTouch.referralCode ??
+          null,
+      };
+      const mergedMetadata = {
+        ...previousMetadata,
+        ...(suppliedMetadata ?? {}),
+        referralCode: acquisitionMetadata.referralCode,
+        acquisition: acquisitionMetadata,
+        acquisitionMeta: {
+          campaign: (storedFirstTouch as any).campaign ?? null,
+          campaignId: (storedFirstTouch as any).campaignId ?? null,
+          medium: (storedFirstTouch as any).medium ?? null,
+          landingPage: (storedFirstTouch as any).landingPage ?? null,
+          referrer: (storedFirstTouch as any).referrer ?? null,
+        },
+      };
 
       let user;
       if (existingUser) {
-        const updateData: any = { ...userData };
-        if (
-          !existingUser.acquisitionSource &&
-          (userData.acquisitionSource || autoSource)
-        ) {
-          updateData.acquisitionSource =
-            userData.acquisitionSource || autoSource;
+        const updateData: any = {
+          ...userData,
+          metadata: mergedMetadata,
+        };
+        if (existingUser.acquisitionSource) {
+          // Never overwrite the immutable first-touch source on a returning
+          // incomplete registration.
+          delete updateData.acquisitionSource;
+        } else {
+          updateData.acquisitionSource = (storedFirstTouch as any).source;
         }
-
+        if (existingUser.acquisitionKeyword) {
+          delete updateData.acquisitionKeyword;
+        } else if ((storedFirstTouch as any).term) {
+          updateData.acquisitionKeyword = (storedFirstTouch as any).term;
+        }
         user = await this.usersService.update(existingUser.id, updateData);
       } else {
         user = await this.usersService.create({
           ...userData,
-          acquisitionSource: userData.acquisitionSource || autoSource,
-          acquisitionKeyword: userData.acquisitionKeyword || undefined,
-          metadata: {
-            ...userData,
-            acquisitionMeta: {
-              userAgent: ua.substring(0, 200),
-            },
-          },
+          acquisitionSource: firstTouch.source,
+          acquisitionKeyword: firstTouch.term || undefined,
+          metadata: mergedMetadata,
         });
       }
       t = mark(existingUser ? 'updateUser' : 'createUser', t);
@@ -159,6 +252,19 @@ export class AuthRegistrationService {
           type: EventType.LOGIN,
           metadata: { via: 'signup', platform: createAuthDto.platform },
         }),
+        this.userEventService.log({
+          userId: user.id,
+          type: EventType.USER_REGISTERED,
+          metadata: {
+            source: firstTouch.source,
+            medium: firstTouch.medium,
+            campaign: firstTouch.campaign,
+            campaignId: firstTouch.campaignId,
+            lastTouch,
+            attributionModel: 'first_touch',
+          },
+          idempotencyKey: `acquisition:user_registered:${user.id}`,
+        }),
       ]);
       t = mark('Promise.all (device, phone, event)', t);
 
@@ -181,6 +287,84 @@ export class AuthRegistrationService {
       this.logger.error(`step1 failed for ${createAuthDto.phone}: ${msg}`);
       throw new InternalServerErrorException('خطا در پردازش درخواست');
     }
+  }
+
+  async updateAcquisitionLastTouch(
+    userId: number,
+    touchInput: AcquisitionTouchDto,
+  ) {
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      throw new BadRequestException('Invalid user id');
+    }
+    const user = await this.usersService.findById(userId);
+    if (!user) throw new UnauthorizedException('کاربر یافت نشد');
+
+    const metadata =
+      user.metadata && typeof user.metadata === 'object'
+        ? user.metadata as Record<string, unknown>
+        : {};
+    const previousAcquisition =
+      metadata.acquisition && typeof metadata.acquisition === 'object'
+        ? metadata.acquisition as Record<string, unknown>
+        : {};
+    const firstTouch =
+      previousAcquisition.firstTouch &&
+      typeof previousAcquisition.firstTouch === 'object'
+        ? previousAcquisition.firstTouch
+        : normalizeAcquisitionTouch({
+            source: user.acquisitionSource,
+            term: user.acquisitionKeyword,
+            capturedAt:
+              user.createdAt instanceof Date
+                ? user.createdAt.toISOString()
+                : undefined,
+          });
+    const lastTouch = normalizeAcquisitionTouch(touchInput);
+
+    // Record the event first. If the profile update then fails, a retry uses
+    // the same event key and UserEventService keeps the append-only receipt.
+    const touchDigest = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(lastTouch))
+      .digest('hex')
+      .slice(0, 48);
+    await this.userEventService.log({
+      userId,
+      type: EventType.LOGIN,
+      metadata: {
+        via: 'acquisition_touch_sync',
+        kind: 'acquisition_touch',
+        acquisitionTouch: lastTouch,
+      },
+      idempotencyKey: `acquisition:last_touch:${touchDigest}`,
+    });
+
+    const previousLastTouch =
+      previousAcquisition.lastTouch &&
+      typeof previousAcquisition.lastTouch === 'object'
+        ? previousAcquisition.lastTouch
+        : null;
+    if (
+      previousLastTouch &&
+      JSON.stringify(previousLastTouch) === JSON.stringify(lastTouch)
+    ) {
+      return { success: true, unchanged: true };
+    }
+
+    await this.usersService.update(userId, {
+      metadata: {
+        ...metadata,
+        acquisition: {
+          ...previousAcquisition,
+          firstTouch,
+          firstTouchAt:
+            previousAcquisition.firstTouchAt ?? (firstTouch as any).capturedAt,
+          lastTouch,
+        },
+      },
+    } as any);
+
+    return { success: true, unchanged: false };
   }
 
   async completeVerification(phone: string, clientDeviceId: string) {
@@ -309,15 +493,19 @@ export class AuthRegistrationService {
         this.phaseService.learnFromFeedback(userId, 'profile_completed'),
         this.userPhonesService.markAsActived(userId, updatedUser.phone),
       ];
-      if (changedFields.length > 0) {
-        events.push(
-          this.userEventService.log({
-            userId,
-            type: EventType.PROFILE_UPDATE,
-            metadata: { fields: changedFields, source: 'complete_profile' },
-          }),
-        );
-      }
+      events.push(
+        this.userEventService.log({
+          userId,
+          type: EventType.PROFILE_UPDATE,
+          metadata: {
+            kind: 'profile_completed',
+            fields: changedFields,
+            source: 'complete_profile',
+            completedAt: new Date().toISOString(),
+          },
+          idempotencyKey: `acquisition:profile_completed:${userId}`,
+        }),
+      );
       if (dto.password?.trim()) {
         events.push(
           this.userEventService.log({
