@@ -19,7 +19,7 @@ function makeController() {
     discountBps: 2000,
     currency: 'IRT' as const,
   }));
-  const releaseTreatmentReservation = jest.fn(async () => undefined);
+  const releaseCheckoutReservation = jest.fn(async () => undefined);
 
   const controller = new PaymentsController(
     { grantBundle } as any,
@@ -29,10 +29,10 @@ function makeController() {
     { debitOnce } as any,
     { trackConversion } as any,
     { findOne } as any,
-    { prepareCheckout, releaseTreatmentReservation } as any,
+    { prepareCheckout, releaseCheckoutReservation } as any,
   );
 
-  return { controller, grantBundle, debitOnce, trackConversion, findOne, prepareCheckout, releaseTreatmentReservation };
+  return { controller, grantBundle, debitOnce, trackConversion, findOne, prepareCheckout, releaseCheckoutReservation };
 }
 
 describe('PaymentsController promotion purchase attribution', () => {
@@ -174,8 +174,8 @@ describe('PaymentsController signed pricing experiment checkout', () => {
     expect(grantBundle).not.toHaveBeenCalled();
   });
 
-  it('releases the treatment reservation only for a confirmed insufficient-balance failure', async () => {
-    const { controller, debitOnce, releaseTreatmentReservation, grantBundle } = makeController();
+  it('releases the first-purchase reservation only for a confirmed insufficient-balance failure', async () => {
+    const { controller, debitOnce, releaseCheckoutReservation, grantBundle } = makeController();
     debitOnce.mockRejectedValueOnce({ code: 'INSUFFICIENT_BALANCE' });
 
     await expect(
@@ -187,7 +187,7 @@ describe('PaymentsController signed pricing experiment checkout', () => {
       ),
     ).rejects.toMatchObject({ code: 'INSUFFICIENT_BALANCE' });
 
-    expect(releaseTreatmentReservation).toHaveBeenCalledWith(
+    expect(releaseCheckoutReservation).toHaveBeenCalledWith(
       42,
       'pricing-2026-01',
       'pricing-idempotency-3',
@@ -195,8 +195,8 @@ describe('PaymentsController signed pricing experiment checkout', () => {
     expect(grantBundle).not.toHaveBeenCalled();
   });
 
-  it('does not release a treatment reservation after an ambiguous debit failure', async () => {
-    const { controller, debitOnce, releaseTreatmentReservation } = makeController();
+  it('does not release a first-purchase reservation after an ambiguous debit failure', async () => {
+    const { controller, debitOnce, releaseCheckoutReservation } = makeController();
     debitOnce.mockRejectedValueOnce(new Error('connection reset'));
 
     await expect(
@@ -208,6 +208,6 @@ describe('PaymentsController signed pricing experiment checkout', () => {
       ),
     ).rejects.toThrow('connection reset');
 
-    expect(releaseTreatmentReservation).not.toHaveBeenCalled();
+    expect(releaseCheckoutReservation).not.toHaveBeenCalled();
   });
 });
