@@ -98,16 +98,18 @@ export class AcquisitionGrowthService {
     }
 
     const idempotencyKey = input.idempotencyKey.trim();
+    const matchesExisting = (existing: AcquisitionCost) =>
+      existing.source === source &&
+      (existing.medium ?? null) === (input.medium?.trim().toLowerCase() || null) &&
+      (existing.campaign ?? null) === (input.campaign?.trim() || null) &&
+      (existing.campaignId ?? null) === (input.campaignId?.trim() || null) &&
+      Number(existing.amount) === Number(amount.toFixed(2)) &&
+      existing.currency === input.currency &&
+      existing.category === input.category &&
+      new Date(existing.occurredAt).getTime() === occurredAt.getTime();
     const existing = await this.costs.findOne({ where: { idempotencyKey } });
     if (existing) {
-      const samePayload =
-        existing.source === source &&
-        (existing.medium ?? null) === (input.medium?.trim().toLowerCase() || null) &&
-        (existing.campaignId ?? null) === (input.campaignId?.trim() || null) &&
-        Number(existing.amount) === Number(amount.toFixed(2)) &&
-        existing.currency === input.currency &&
-        existing.category === input.category;
-      if (!samePayload) {
+      if (!matchesExisting(existing)) {
         throw new BadRequestException('idempotencyKey was already used for a different cost entry');
       }
       return { success: true, duplicate: true, cost: existing };
@@ -133,7 +135,12 @@ export class AcquisitionGrowthService {
       // A concurrent retry may win the unique idempotency-key race.
       if (error?.code === 'ER_DUP_ENTRY' || error?.errno === 1062) {
         const duplicate = await this.costs.findOne({ where: { idempotencyKey } });
-        if (duplicate) return { success: true, duplicate: true, cost: duplicate };
+        if (duplicate && matchesExisting(duplicate)) {
+          return { success: true, duplicate: true, cost: duplicate };
+        }
+        if (duplicate) {
+          throw new BadRequestException('idempotencyKey was already used for a different cost entry');
+        }
       }
       throw error;
     }
