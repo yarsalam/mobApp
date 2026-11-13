@@ -73,6 +73,7 @@ jobs:
         run: >-
           npm test -- --runInBand
           revenue-analytics.service.spec.ts
+          admin-api/controllers/revenue/admin-api-revenue.controller.spec.ts
           personality.service.spec.ts
           app.controller.spec.ts
           payments.service.spec.ts
