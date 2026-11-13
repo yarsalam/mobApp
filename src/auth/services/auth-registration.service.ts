@@ -240,6 +240,7 @@ export class AuthRegistrationService {
             medium: firstTouch.medium,
             campaign: firstTouch.campaign,
             campaignId: firstTouch.campaignId,
+            lastTouch,
             attributionModel: 'first_touch',
           },
           idempotencyKey: `acquisition:user_registered:${user.id}`,
