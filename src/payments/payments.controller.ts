@@ -148,11 +148,8 @@ export class PaymentsController {
         `wallet-checkout:${stableKey}:debit`,
       );
     } catch (error: unknown) {
-      if (
-        pricingCheckout?.variant === 'treatment' &&
-        this.isInsufficientBalance(error)
-      ) {
-        await this.pricingExperiment.releaseTreatmentReservation(
+      if (pricingCheckout && this.isInsufficientBalance(error)) {
+        await this.pricingExperiment.releaseCheckoutReservation(
           userId,
           pricingCheckout.experimentId,
           stableKey,
