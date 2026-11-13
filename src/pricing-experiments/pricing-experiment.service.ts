@@ -352,6 +352,9 @@ export class PricingExperimentService {
       if (
         !completedPurchase ||
         purchaseMetadata.bundleCode !== quote.bundleCode ||
+        purchaseMetadata.isCommercialPurchase !== true ||
+        Number(purchaseMetadata.amountRials) !== quote.payablePriceRials ||
+        purchaseMetadata.currency !== 'IRT' ||
         completedExperiment.experimentId !== quote.experimentId ||
         completedExperiment.assignmentId !== quote.assignmentId ||
         completedExperiment.variant !== quote.variant ||
