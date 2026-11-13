@@ -280,6 +280,40 @@ describe('PricingExperimentService', () => {
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
+
+  it('reconstructs committed discount spend from the immutable purchase ledger if Redis loses its counter', async () => {
+    const h = makeService({ enabled: 'false' });
+    h.eligibilityBuilder.getRawOne.mockResolvedValue({ spentRials: '15000' });
+
+    const settings = await h.service.getAdminSettings(EXPERIMENT_ID);
+
+    expect(settings.spentDiscountRials).toBe(15_000);
+    expect(settings.remainingBudgetRials).toBe(185_000);
+    expect(h.redis.set).toHaveBeenCalledWith(
+      `pricing:budget:spent:v1:${EXPERIMENT_ID}`,
+      '15000',
+      'NX',
+    );
+  });
+
+  it('refuses to lower the shared cap below committed spend plus in-flight reservations', async () => {
+    const h = makeService({ enabled: 'false' });
+    h.redis.get.mockImplementation(async (key: string) =>
+      key === `pricing:budget:spent:v1:${EXPERIMENT_ID}` ? '190000' : null,
+    );
+    h.redis.hvals.mockResolvedValue(['10000']);
+
+    await expect(
+      h.service.updateAdminSettings(EXPERIMENT_ID, {
+        enabled: false,
+        discountBps: 1000,
+        treatmentRateBps: 2000,
+        maxDiscountBudgetRials: 199_999,
+        endsAt: new Date(Date.now() + 14 * 86_400_000).toISOString(),
+      }),
+    ).rejects.toThrow('new budget cap cannot be lower');
+  });
+
   it('stops treatment quotes when the remaining shared budget is insufficient', async () => {
     const userId = await findUserForVariant('treatment');
     const h = makeService();
