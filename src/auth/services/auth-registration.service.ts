@@ -173,10 +173,16 @@ export class AuthRegistrationService {
           ...userData,
           metadata: mergedMetadata,
         };
-        if (!existingUser.acquisitionSource) {
+        if (existingUser.acquisitionSource) {
+          // Never overwrite the immutable first-touch source on a returning
+          // incomplete registration.
+          delete updateData.acquisitionSource;
+        } else {
           updateData.acquisitionSource = (storedFirstTouch as any).source;
         }
-        if (!existingUser.acquisitionKeyword && (storedFirstTouch as any).term) {
+        if (existingUser.acquisitionKeyword) {
+          delete updateData.acquisitionKeyword;
+        } else if ((storedFirstTouch as any).term) {
           updateData.acquisitionKeyword = (storedFirstTouch as any).term;
         }
         user = await this.usersService.update(existingUser.id, updateData);
