@@ -387,6 +387,79 @@ describe('PricingExperimentService', () => {
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
+
+  it('does not reserve a treatment purchase when the shared budget is exhausted', async () => {
+    const userId = await findUserForVariant('treatment');
+    const h = makeService({
+      exposure: {
+        metadata: {
+          promotionKind: 'pricing_experiment',
+          experimentId: EXPERIMENT_ID,
+          assignmentId: 'fixture',
+          variant: 'treatment',
+          payablePriceRials: 90_000,
+        },
+      },
+    });
+    const quote = await h.service.getQuote(userId, 'vip-month');
+    const payload = decodeQuote(quote.quoteId!);
+    h.eventRepo.findOne.mockResolvedValue({
+      metadata: {
+        promotionKind: 'pricing_experiment',
+        experimentId: EXPERIMENT_ID,
+        assignmentId: payload.assignmentId,
+        variant: 'treatment',
+        payablePriceRials: 90_000,
+      },
+    });
+    h.redis.eval.mockResolvedValueOnce(-1);
+
+    await expect(
+      h.service.prepareCheckout(userId, 'vip-month', quote.quoteId!, 'cap-hit'),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(h.redis.eval).toHaveBeenCalledWith(
+      expect.stringContaining('spent + reserved + amount > cap'),
+      4,
+      `pricing:budget:reservations:v1:${EXPERIMENT_ID}`,
+      `pricing:budget:reservation-amounts:v1:${EXPERIMENT_ID}`,
+      `pricing:budget:spent:v1:${EXPERIMENT_ID}`,
+      expect.stringContaining(`pricing:budget:committed:v1:${EXPERIMENT_ID}:`),
+      expect.any(String),
+      expect.any(String),
+      '10000',
+      '200000',
+      expect.any(String),
+    );
+  });
+
+  it('moves the actual discount from reserved to spent after the purchase event succeeds', async () => {
+    const h = makeService({ enabled: 'false' });
+    await h.service.commitCheckoutReservation(
+      42,
+      {
+        experimentId: EXPERIMENT_ID,
+        assignmentId: 'px_fixture',
+        variant: 'treatment',
+        basePriceRials: 100_000,
+        payablePriceRials: 90_000,
+        discountBps: 1000,
+        currency: 'IRT',
+      },
+      'checkout-commit',
+    );
+    expect(h.redis.eval).toHaveBeenCalledWith(
+      expect.stringContaining("redis.call('INCRBY'"),
+      4,
+      `pricing:budget:reservations:v1:${EXPERIMENT_ID}`,
+      `pricing:budget:reservation-amounts:v1:${EXPERIMENT_ID}`,
+      `pricing:budget:spent:v1:${EXPERIMENT_ID}`,
+      expect.stringContaining(`pricing:budget:committed:v1:${EXPERIMENT_ID}:`),
+      expect.any(String),
+      '10000',
+      '31536000',
+    );
+  });
+
   it('reserves the control arm too so concurrent first purchases cannot contaminate conversion', async () => {
     const userId = await findUserForVariant('control');
     const h = makeService();
