@@ -281,6 +281,7 @@ export class PricingExperimentService {
     userId: number,
     quoteId: string,
     requireExposure: boolean,
+    checkoutIdempotencyKey?: string,
   ): Promise<PricingQuotePayload> {
     const config = this.experimentConfig();
     if (!config) {
@@ -327,7 +328,37 @@ export class PricingExperimentService {
     }
 
     if (!(await this.isFirstPurchaseEligible(userId))) {
-      throw new ConflictException('First-purchase pricing is no longer available');
+      // An ambiguous network failure can happen after the purchase event was
+      // committed but before the app received the response. Permit only an
+      // exact idempotent replay of that same fulfilled experiment purchase.
+      if (!checkoutIdempotencyKey) {
+        throw new ConflictException('First-purchase pricing is no longer available');
+      }
+      const purchaseEventKey =
+        'purchase:' +
+        createHash('sha256')
+          .update(`wallet-checkout:${checkoutIdempotencyKey}`)
+          .digest('hex')
+          .slice(0, 56);
+      const completedPurchase = await this.events.findOne({
+        where: {
+          userId,
+          type: EventType.PURCHASE,
+          idempotencyKey: purchaseEventKey,
+        },
+      });
+      const purchaseMetadata = completedPurchase?.metadata ?? {};
+      const completedExperiment = purchaseMetadata.pricingExperiment ?? {};
+      if (
+        !completedPurchase ||
+        purchaseMetadata.bundleCode !== quote.bundleCode ||
+        completedExperiment.experimentId !== quote.experimentId ||
+        completedExperiment.assignmentId !== quote.assignmentId ||
+        completedExperiment.variant !== quote.variant ||
+        Number(completedExperiment.payablePriceRials) !== quote.payablePriceRials
+      ) {
+        throw new ConflictException('First-purchase pricing is no longer available');
+      }
     }
 
     if (requireExposure) {
@@ -375,7 +406,7 @@ export class PricingExperimentService {
     quoteId: string,
     idempotencyKey: string,
   ): Promise<PricingCheckout> {
-    const quote = await this.verifyQuote(userId, quoteId, true);
+    const quote = await this.verifyQuote(userId, quoteId, true, idempotencyKey);
     if (quote.bundleCode !== bundleCode) {
       throw new ConflictException('Pricing quote belongs to a different product');
     }
