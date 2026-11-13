@@ -12,7 +12,7 @@ describe('FeedPromotionService interaction attribution', () => {
       FeedPromotionService.prototype,
     ) as FeedPromotionService;
     const redis = {
-      get: jest.fn().mockResolvedValue(
+      get: jest.fn<(key: string) => Promise<string | null>>().mockResolvedValue(
         JSON.stringify({
           userId,
           variant: 'boost',
@@ -20,11 +20,21 @@ describe('FeedPromotionService interaction attribution', () => {
           score: 0.81,
         }),
       ),
-      set: jest.fn().mockResolvedValue('OK'),
-      del: jest.fn().mockResolvedValue(1),
+      set: jest
+        .fn<
+          (key: string, value: string, ...args: (string | number)[]) => Promise<'OK' | null>
+        >()
+        .mockResolvedValue('OK'),
+      del: jest.fn<(key: string) => Promise<number>>().mockResolvedValue(1),
     };
-    const exposureService = { trackDismiss: jest.fn().mockResolvedValue(undefined) };
-    const userEventService = { log: jest.fn().mockResolvedValue(undefined) };
+    const exposureService = {
+      trackDismiss: jest
+        .fn<(userId: number, variant: string, promotionId: string) => Promise<void>>()
+        .mockResolvedValue(undefined),
+    };
+    const userEventService = {
+      log: jest.fn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+    };
 
     Object.assign(service, { redis, exposureService, userEventService });
     return { service, redis, exposureService, userEventService };
