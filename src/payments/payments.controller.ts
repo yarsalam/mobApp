@@ -23,6 +23,7 @@ import { CryptoProvider } from './wallet/providers/crypto.provider';
 import { ManualVerifierService } from './wallet/verification/manual-verifier.service';
 import { ProductBundle } from 'src/product/entities/product-bundle.entity';
 import { PromotionExposureService } from './promotion-exposure.service';
+import { PricingExperimentService, PricingCheckout } from 'src/pricing-experiments/pricing-experiment.service';
 
 @Controller('payments')
 export class PaymentsController {
@@ -37,6 +38,7 @@ export class PaymentsController {
     private readonly promotionExposure: PromotionExposureService,
     @InjectRepository(ProductBundle)
     private readonly bundleRepo: Repository<ProductBundle>,
+    private readonly pricingExperiment: PricingExperimentService,
   ) {}
 
   // ─── کاربر: دریافت موجودی wallet ────────────────────────────
@@ -98,7 +100,7 @@ export class PaymentsController {
   async buyWithWallet(
     @CurrentUser('sub') userId: number,
     @Param('bundleCode') bundleCode: string,
-    @Body() body?: { promotionId?: string },
+    @Body() body?: { promotionId?: string; pricingQuoteId?: string },
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     const stableKey = idempotencyKey?.trim();
@@ -121,20 +123,51 @@ export class PaymentsController {
       throw new BadRequestException('promotionId must be a valid promotion exposure ID');
     }
 
-    // Validate the optional attribution reference before mutating the wallet.
-    await this.walletService.debitOnce(
-      userId,
-      bundle.price,
-      `buy:${bundleCode}`,
-      `wallet-checkout:${stableKey}:debit`,
-    );
+    const pricingQuoteId = body?.pricingQuoteId?.trim();
+    if (pricingQuoteId && pricingQuoteId.length > 4096) {
+      throw new BadRequestException('pricingQuoteId is too long');
+    }
 
-    // grant محصول; promotionId is captured in the durable PURCHASE event.
+    let pricingCheckout: PricingCheckout | undefined;
+    if (pricingQuoteId) {
+      pricingCheckout = await this.pricingExperiment.prepareCheckout(
+        userId,
+        bundleCode,
+        pricingQuoteId,
+        stableKey,
+      );
+    }
+    const payablePriceRials =
+      pricingCheckout?.payablePriceRials ?? bundle.price;
+
+    try {
+      await this.walletService.debitOnce(
+        userId,
+        payablePriceRials,
+        `buy:${bundleCode}`,
+        `wallet-checkout:${stableKey}:debit`,
+      );
+    } catch (error: unknown) {
+      if (
+        pricingCheckout?.variant === 'treatment' &&
+        this.isInsufficientBalance(error)
+      ) {
+        await this.pricingExperiment.releaseTreatmentReservation(
+          userId,
+          pricingCheckout.experimentId,
+          stableKey,
+        );
+      }
+      throw error;
+    }
+
+    // grant محصول؛ قیمت واقعی و انتساب آزمایش در رویداد PURCHASE ثبت می‌شود.
     await this.paymentsService.grantBundle(userId, bundleCode, {
-      amountRials: bundle.price,
+      amountRials: payablePriceRials,
       source: 'wallet',
       idempotencyKey: `wallet-checkout:${stableKey}`,
       ...(promotionId ? { promotionId } : {}),
+      ...(pricingCheckout ? { pricingExperiment: pricingCheckout } : {}),
     });
 
     let promotionAttribution: 'not_supplied' | 'recorded' | 'failed' = 'not_supplied';
@@ -158,7 +191,37 @@ export class PaymentsController {
       success: true,
       message: 'خرید با موفقیت انجام شد',
       promotionAttribution,
+      ...(pricingCheckout
+        ? {
+            pricingExperiment: {
+              experimentId: pricingCheckout.experimentId,
+              variant: pricingCheckout.variant,
+              discountRials:
+                pricingCheckout.basePriceRials - pricingCheckout.payablePriceRials,
+            },
+          }
+        : {}),
     };
+  }
+
+  private isInsufficientBalance(error: unknown): boolean {
+    const candidate = error as {
+      code?: string;
+      response?: { code?: string };
+      getResponse?: () => unknown;
+    };
+    if (candidate?.code === 'INSUFFICIENT_BALANCE') return true;
+    if (candidate?.response?.code === 'INSUFFICIENT_BALANCE') return true;
+    if (typeof candidate?.getResponse === 'function') {
+      const response = candidate.getResponse();
+      return (
+        typeof response === 'object' &&
+        response !== null &&
+        'code' in response &&
+        (response as { code?: unknown }).code === 'INSUFFICIENT_BALANCE'
+      );
+    }
+    return false;
   }
 
   // ─── کاربر: آپلود رسید ───────────────────────────────────────
