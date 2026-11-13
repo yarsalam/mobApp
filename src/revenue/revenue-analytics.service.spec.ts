@@ -227,3 +227,110 @@ describe('RevenueAnalyticsService historical gender attribution', () => {
     expect(result.walletDebitGenderBasis).toContain('current user profile');
   });
 });
+
+
+describe('RevenueAnalyticsService customer RFM segmentation', () => {
+  const makeBuilder = (rows: any[] = [], count = 0) => {
+    const builder: any = {};
+    for (const method of [
+      'innerJoin',
+      'leftJoin',
+      'select',
+      'addSelect',
+      'where',
+      'andWhere',
+      'groupBy',
+      'orderBy',
+    ]) {
+      builder[method] = jest.fn(() => builder);
+    }
+    builder.getRawMany = jest.fn(async () => rows);
+    builder.getCount = jest.fn(async () => count);
+    return builder;
+  };
+
+  it('segments only fulfilled commercial IRT purchases and protects repeat customers', async () => {
+    const now = Date.now();
+    const purchaseRows = [
+      { userId: '1', frequency: '3', lastPurchaseAt: new Date(now - 2 * 86400000), monetaryRials: '9000' },
+      { userId: '2', frequency: '4', lastPurchaseAt: new Date(now - 60 * 86400000), monetaryRials: '12000' },
+      { userId: '3', frequency: '2', lastPurchaseAt: new Date(now - 5 * 86400000), monetaryRials: '5000' },
+      { userId: '4', frequency: '2', lastPurchaseAt: new Date(now - 45 * 86400000), monetaryRials: '3000' },
+      { userId: '5', frequency: '1', lastPurchaseAt: new Date(now - 1 * 86400000), monetaryRials: '1000' },
+      { userId: '6', frequency: '1', lastPurchaseAt: new Date(now - 90 * 86400000), monetaryRials: '1500' },
+    ];
+    const purchaseBuilder = makeBuilder(purchaseRows);
+    const neverPurchasedBuilder = makeBuilder([], 17);
+    const events: any = {
+      createQueryBuilder: jest.fn(() => purchaseBuilder),
+    };
+    const users: any = {
+      createQueryBuilder: jest.fn(() => neverPurchasedBuilder),
+    };
+    const service = new RevenueAnalyticsService(
+      {} as any,
+      users,
+      {} as any,
+      events,
+    );
+
+    const result = await service.customerSegments(90);
+    const byKey = Object.fromEntries(result.segments.map((row) => [row.key, row]));
+
+    expect(result.currency).toBe('IRT');
+    expect(result.metrics).toMatchObject({
+      activePayingCustomers: 6,
+      purchases: 13,
+      fulfilledRevenueRials: 31500,
+      repeatBuyers: 4,
+      frequentBuyers: 2,
+      activeNeverPurchasedUsers: 17,
+      invalidAggregateRows: 0,
+    });
+    expect(byKey.frequent_active.customers).toBe(1);
+    expect(byKey.frequent_at_risk.customers).toBe(1);
+    expect(byKey.repeat_active.customers).toBe(1);
+    expect(byKey.repeat_at_risk.customers).toBe(1);
+    expect(byKey.first_purchase_recent.customers).toBe(1);
+    expect(byKey.first_purchase_lapsed.customers).toBe(1);
+    expect(result.protection).toMatchObject({
+      repeatBuyersExcludedFromFirstPurchaseDiscounts: true,
+      protectedRepeatBuyers: 4,
+      firstPurchaseCandidatePool: 17,
+      status: 'analytics_only_no_discount_is_applied',
+    });
+
+    expect(purchaseBuilder.where).toHaveBeenCalledWith(
+      'e.type = :purchaseType',
+      { purchaseType: expect.any(String) },
+    );
+    expect(purchaseBuilder.andWhere).toHaveBeenCalledWith(
+      "JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.isCommercialPurchase')) = 'true'",
+    );
+    expect(purchaseBuilder.andWhere).toHaveBeenCalledWith(
+      "JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.currency')) = 'IRT'",
+    );
+    expect(purchaseBuilder.andWhere).toHaveBeenCalledWith(
+      expect.stringContaining('amountRials'),
+    );
+    expect(neverPurchasedBuilder.leftJoin).toHaveBeenCalled();
+    expect(neverPurchasedBuilder.andWhere).toHaveBeenCalledWith(
+      'purchase.id IS NULL',
+    );
+  });
+
+  it('rejects invalid windows rather than silently changing the cohort definition', async () => {
+    const events: any = { createQueryBuilder: jest.fn() };
+    const service = new RevenueAnalyticsService(
+      {} as any,
+      {} as any,
+      {} as any,
+      events,
+    );
+
+    await expect(service.customerSegments(7)).rejects.toThrow(
+      'days must be an integer between 30 and 3650',
+    );
+    expect(events.createQueryBuilder).not.toHaveBeenCalled();
+  });
+});
