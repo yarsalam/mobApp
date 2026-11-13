@@ -41,6 +41,7 @@ import { Personality } from 'src/personality/entities/personality.entity';
 import { UserDailyMetrics } from 'src/user-metrics/entities/user-daily-metrics.entity';
 import { UserWallet } from 'src/payments/wallet/entities/user-wallet.entity';
 import { EventOutbox } from 'src/user-event/entities/event-outbox.entity';
+import { AcquisitionCost } from '../revenue/entities/acquisition-cost.entity';
 
 const logger = new Logger('DatabaseConfig');
 
@@ -133,7 +134,6 @@ export default registerAs('database', (): TypeOrmModuleOptions => ({
     RequestLog,
     EventOutbox,
     AcquisitionCost,
-import { AcquisitionCost } from '../revenue/entities/acquisition-cost.entity';
   ],
   synchronize: resolveSynchronize(),
   // logging: resolveLogging(),
