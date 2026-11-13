@@ -348,10 +348,23 @@ describe('PricingExperimentService', () => {
       { variant: 'control', purchasedUsers: '2', revenueRials: '200000', discountRials: '0' },
       { variant: 'treatment', purchasedUsers: '3', revenueRials: '270000', discountRials: '30000' },
     ]);
+    const now = Date.now();
+    const cohortPurchases = makeBuilder([
+      { userId: '1', variant: 'control', createdAt: new Date(now - 86_400_000) },
+      { userId: '2', variant: 'treatment', createdAt: new Date(now - 86_400_000) },
+      { userId: '3', variant: 'treatment', createdAt: new Date(now - 86_400_000) },
+      { userId: '4', variant: 'treatment', createdAt: new Date(now - 86_400_000) },
+    ]);
+    const repeatPurchases = makeBuilder([
+      { userId: '3', createdAt: new Date(now - 43_200_000), amountRials: '100000' },
+      { userId: '3', createdAt: new Date(now - 21_600_000), amountRials: '200000' },
+    ]);
     const h = makeService();
     h.eventRepo.createQueryBuilder
       .mockReturnValueOnce(exposures)
-      .mockReturnValueOnce(purchases);
+      .mockReturnValueOnce(purchases)
+      .mockReturnValueOnce(cohortPurchases)
+      .mockReturnValueOnce(repeatPurchases);
 
     const report = await h.service.getExperimentReport(EXPERIMENT_ID, 30);
 
@@ -363,6 +376,12 @@ describe('PricingExperimentService', () => {
         conversionRatePercent: 16.67,
         revenueRials: 200_000,
         discountRials: 0,
+        repeatPurchasedUsers: 0,
+        repeatPurchaseCount: 0,
+        repeatPurchaseRatePercent: 0,
+        repeatRevenueRials: 0,
+        totalObservedRevenueRials: 200_000,
+        observedRevenuePerExposedUserRials: 16_667,
       },
       {
         variant: 'treatment',
@@ -371,6 +390,12 @@ describe('PricingExperimentService', () => {
         conversionRatePercent: 30,
         revenueRials: 270_000,
         discountRials: 30_000,
+        repeatPurchasedUsers: 1,
+        repeatPurchaseCount: 2,
+        repeatPurchaseRatePercent: 33.33,
+        repeatRevenueRials: 300_000,
+        totalObservedRevenueRials: 570_000,
+        observedRevenuePerExposedUserRials: 57_000,
       },
     ]);
     expect(report.interpretation).toContain('descriptive_only');
