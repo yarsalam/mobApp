@@ -322,6 +322,16 @@ describe('PricingExperimentService', () => {
   it('rejects a quote after the user purchases in the meantime', async () => {
     const h = makeService();
     const quote = await h.service.getQuote(7, 'vip-month');
+    const payload = decodeQuote(quote.quoteId!);
+    h.eventRepo.findOne.mockResolvedValue({
+      metadata: {
+        promotionKind: 'pricing_experiment',
+        experimentId: EXPERIMENT_ID,
+        assignmentId: payload.assignmentId,
+        variant: payload.variant,
+        payablePriceRials: payload.payablePriceRials,
+      },
+    });
     h.eligibilityBuilder.getCount.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
 
     await expect(
