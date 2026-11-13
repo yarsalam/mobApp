@@ -164,6 +164,10 @@ export class AcquisitionGrowthService {
     const d30Retained = new Set<number>();
     const firstPurchasers = new Set<number>();
     const purchaseRevenueByGroup = new Map<string, number>();
+    const lastTouchByUser = new Map<number, {
+      touch: ReturnType<typeof normalizeAcquisitionTouch>;
+      eventAt: number;
+    }>();
 
     for (const user of cohortUsers) {
       const touch = acquisitionTouchFromUserMetadata(user.acquisitionSource, user.metadata);
@@ -239,6 +243,24 @@ export class AcquisitionGrowthService {
       const eventAt = new Date(event.createdAt).getTime();
       if (!Number.isFinite(eventAt) || eventAt < createdAt) continue;
       const daysSinceRegistration = Math.floor((eventAt - createdAt) / DAY_MS);
+      const eventMetadata = event.metadata && typeof event.metadata === 'object'
+        ? event.metadata as Record<string, unknown>
+        : {};
+
+      if (
+        event.type === EventType.LOGIN &&
+        eventMetadata.kind === 'acquisition_touch' &&
+        eventMetadata.acquisitionTouch &&
+        typeof eventMetadata.acquisitionTouch === 'object'
+      ) {
+        const touch = normalizeAcquisitionTouch(
+          eventMetadata.acquisitionTouch as Record<string, unknown>,
+        );
+        const previous = lastTouchByUser.get(event.userId);
+        if (!previous || eventAt > previous.eventAt) {
+          lastTouchByUser.set(event.userId, { touch, eventAt });
+        }
+      }
 
       if (MEANINGFUL_EVENTS.includes(event.type) && daysSinceRegistration <= 30) {
         firstInteractionUsers.add(event.userId);
@@ -286,6 +308,28 @@ export class AcquisitionGrowthService {
     for (const [key, revenue] of purchaseRevenueByGroup) {
       const row = grouped.get(key);
       if (row) row.grossPurchaseRevenueRials = revenue;
+    }
+
+    const lastTouchGroups = new Map<string, {
+      source: string;
+      medium: string | null;
+      campaign: string | null;
+      campaignId: string | null;
+      users: number;
+    }>();
+    for (const { touch } of lastTouchByUser.values()) {
+      const key = groupKey(touch.source, touch.medium, touch.campaignId, touch.campaign);
+      const current = lastTouchGroups.get(key);
+      if (current) current.users += 1;
+      else {
+        lastTouchGroups.set(key, {
+          source: touch.source,
+          medium: touch.medium,
+          campaign: touch.campaign,
+          campaignId: touch.campaignId,
+          users: 1,
+        });
+      }
     }
 
     const costRows = await this.costs.find({
@@ -364,6 +408,8 @@ export class AcquisitionGrowthService {
       attributionModel: 'first_touch',
       costCoverage: costRows.length > 0 ? 'cost_data_present_completeness_unverified' : 'no_cost_data',
       rows,
+      lastTouchSummary: [...lastTouchGroups.values()].sort((a, b) => b.users - a.users),
+      lastTouchTrackedUsers: lastTouchByUser.size,
       interpretation: 'observational_descriptive_only; CAC is null unless explicit cost entries exist for the same source, medium, campaign and currency; gross product purchase revenue is based on fulfilled commercial purchase events and excludes wallet top-ups; refunds and chargebacks are not yet reconciled; no causal lift or LTV improvement is inferred',
       limitations: [
         'D7 retention is measured in days 7–13 after registration and only among cohorts at least 14 days old (fully matured window).',
