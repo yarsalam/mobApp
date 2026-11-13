@@ -1,3 +1,4 @@
+import { describe, expect, it, jest } from '@jest/globals';
 import { NotFoundException } from '@nestjs/common';
 import { EventType } from 'src/user-event/type/event-type.enum';
 import { FeedPromotionService } from './feed-promotion.service';
