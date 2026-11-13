@@ -921,10 +921,12 @@ export class PricingExperimentService {
     }
 
     const since = new Date(Date.now() - days * 86_400_000);
-    const exposures = await this.events
+    const exposureEvents = await this.events
       .createQueryBuilder('event')
-      .select("JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.variant'))", 'variant')
-      .addSelect('COUNT(DISTINCT event.userId)', 'exposedUsers')
+      .select('event.userId', 'userId')
+      .addSelect('event.createdAt', 'createdAt')
+      .addSelect("JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.variant'))", 'variant')
+      .addSelect("JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.assignmentId'))", 'assignmentId')
       .where('event.type = :exposureType', {
         exposureType: EventType.PROMOTION_SHOWN,
       })
@@ -933,70 +935,137 @@ export class PricingExperimentService {
         experimentId,
       })
       .andWhere('event.createdAt >= :since', { since })
-      .groupBy("JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.variant'))")
       .getRawMany();
 
-    const purchases = await this.events
-      .createQueryBuilder('event')
-      .select(
-        "JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.variant'))",
-        'variant',
-      )
-      .addSelect('COUNT(DISTINCT event.userId)', 'purchasedUsers')
-      .addSelect(
-        "COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.amountRials')) AS DECIMAL(20,0))), 0)",
-        'revenueRials',
-      )
-      .addSelect(
-        "COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.basePriceRials')) AS DECIMAL(20,0)) - CAST(JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.amountRials')) AS DECIMAL(20,0))), 0)",
-        'discountRials',
-      )
-      .where('event.type = :purchaseType', {
-        purchaseType: EventType.PURCHASE,
-      })
-      .andWhere("JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.experimentId')) = :experimentId", {
-        experimentId,
-      })
-      .andWhere('event.createdAt >= :since', { since })
-      .groupBy("JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.variant'))")
-      .getRawMany();
-
-    // Keep the first experiment-attributed purchase as the cohort anchor.
-    // Later commercial PURCHASE events are counted as repeat purchases for that
-    // original randomized assignment, even though the first-purchase quote is
-    // no longer eligible on subsequent checkouts.
-    const cohortPurchases = await this.events
-      .createQueryBuilder('event')
-      .select('event.userId', 'userId')
-      .addSelect('event.createdAt', 'createdAt')
-      .addSelect(
-        "JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.variant'))",
-        'variant',
-      )
-      .where('event.type = :purchaseType', {
-        purchaseType: EventType.PURCHASE,
-      })
-      .andWhere("JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.experimentId')) = :experimentId", {
-        experimentId,
-      })
-      .andWhere('event.createdAt >= :since', { since })
-      .getRawMany();
-
-    const firstPurchaseByUser = new Map<number, { variant: string; at: number }>();
-    for (const row of cohortPurchases) {
+    // Use the earliest valid exposure per user as the cohort anchor. This
+    // prevents purchases from an earlier reporting period being divided by
+    // exposures from the current period, and avoids counting one user twice
+    // when they inspect several product bundles.
+    const exposureByUser = new Map<number, {
+      variant: 'control' | 'treatment';
+      assignmentId: string;
+      at: number;
+    }>();
+    for (const row of exposureEvents) {
       const userId = Number(row.userId);
       const at = new Date(row.createdAt).getTime();
-      const existing = firstPurchaseByUser.get(userId);
+      const variant = row.variant;
+      const assignmentId = String(row.assignmentId ?? '');
       if (
-        Number.isSafeInteger(userId) &&
-        Number.isFinite(at) &&
-        (row.variant === 'control' || row.variant === 'treatment') &&
-        (!existing || at < existing.at)
+        !Number.isSafeInteger(userId) ||
+        !Number.isFinite(at) ||
+        !assignmentId ||
+        (variant !== 'control' && variant !== 'treatment')
       ) {
-        firstPurchaseByUser.set(userId, { variant: row.variant, at });
+        continue;
+      }
+      const existing = exposureByUser.get(userId);
+      if (!existing || at < existing.at) {
+        exposureByUser.set(userId, { variant, assignmentId, at });
       }
     }
 
+    const purchaseByUser = new Map<number, {
+      variant: 'control' | 'treatment';
+      at: number;
+      amountRials: number;
+      discountRials: number;
+    }>();
+    const exposedUserIds = [...exposureByUser.keys()];
+    for (let offset = 0; offset < exposedUserIds.length; offset += 500) {
+      const userIds = exposedUserIds.slice(offset, offset + 500);
+      const purchaseEvents = await this.events
+        .createQueryBuilder('event')
+        .select('event.userId', 'userId')
+        .addSelect('event.createdAt', 'createdAt')
+        .addSelect(
+          "JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.assignmentId'))",
+          'assignmentId',
+        )
+        .addSelect(
+          "JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.variant'))",
+          'variant',
+        )
+        .addSelect(
+          "CAST(JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.amountRials')) AS DECIMAL(20,0))",
+          'amountRials',
+        )
+        .addSelect(
+          "CAST(JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.basePriceRials')) AS DECIMAL(20,0))",
+          'basePriceRials',
+        )
+        .where('event.type = :purchaseType', {
+          purchaseType: EventType.PURCHASE,
+        })
+        .andWhere('event.userId IN (:...userIds)', { userIds })
+        .andWhere('event.createdAt >= :since', { since })
+        .andWhere("JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.isCommercialPurchase')) = 'true'")
+        .andWhere("JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.currency')) = 'IRT'")
+        .andWhere("JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.experimentId')) = :experimentId", {
+          experimentId,
+        })
+        .getRawMany();
+
+      for (const row of purchaseEvents) {
+        const userId = Number(row.userId);
+        const exposure = exposureByUser.get(userId);
+        const at = new Date(row.createdAt).getTime();
+        if (
+          !exposure ||
+          !Number.isFinite(at) ||
+          at < exposure.at ||
+          row.assignmentId !== exposure.assignmentId ||
+          row.variant !== exposure.variant
+        ) {
+          continue;
+        }
+
+        const existing = purchaseByUser.get(userId);
+        if (existing && existing.at <= at) continue;
+        const amountRials = Number(row.amountRials);
+        const basePriceRials = Number(row.basePriceRials);
+        if (
+          !Number.isSafeInteger(amountRials) ||
+          !Number.isSafeInteger(basePriceRials) ||
+          amountRials <= 0 ||
+          basePriceRials < amountRials
+        ) {
+          continue;
+        }
+        purchaseByUser.set(userId, {
+          variant: exposure.variant,
+          at,
+          amountRials,
+          discountRials: basePriceRials - amountRials,
+        });
+      }
+    }
+
+    const exposureCounts = new Map<string, number>([
+      ['control', 0],
+      ['treatment', 0],
+    ]);
+    for (const exposure of exposureByUser.values()) {
+      exposureCounts.set(exposure.variant, (exposureCounts.get(exposure.variant) ?? 0) + 1);
+    }
+
+    const purchaseTotals = new Map<string, {
+      purchasedUsers: number;
+      revenueRials: number;
+      discountRials: number;
+    }>([
+      ['control', { purchasedUsers: 0, revenueRials: 0, discountRials: 0 }],
+      ['treatment', { purchasedUsers: 0, revenueRials: 0, discountRials: 0 }],
+    ]);
+    for (const purchase of purchaseByUser.values()) {
+      const totals = purchaseTotals.get(purchase.variant)!;
+      totals.purchasedUsers += 1;
+      totals.revenueRials += purchase.amountRials;
+      totals.discountRials += purchase.discountRials;
+    }
+
+    // Keep the first experiment-attributed purchase as the cohort anchor.
+    // Later commercial purchases belong to that original randomized assignment.
     const repeatByVariant = new Map<string, {
       repeatPurchasedUsers: Set<number>;
       repeatPurchaseCount: number;
@@ -1006,7 +1075,7 @@ export class PricingExperimentService {
       ['treatment', { repeatPurchasedUsers: new Set<number>(), repeatPurchaseCount: 0, repeatRevenueRials: 0 }],
     ]);
 
-    const cohortUserIds = [...firstPurchaseByUser.keys()];
+    const cohortUserIds = [...purchaseByUser.keys()];
     for (let offset = 0; offset < cohortUserIds.length; offset += 500) {
       const userIds = cohortUserIds.slice(offset, offset + 500);
       const laterPurchases = await this.events
@@ -1025,11 +1094,12 @@ export class PricingExperimentService {
         .andWhere(
           "JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.isCommercialPurchase')) = 'true'",
         )
+        .andWhere("JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.currency')) = 'IRT'")
         .getRawMany();
 
       for (const row of laterPurchases) {
         const userId = Number(row.userId);
-        const cohort = firstPurchaseByUser.get(userId);
+        const cohort = purchaseByUser.get(userId);
         const at = new Date(row.createdAt).getTime();
         if (!cohort || !Number.isFinite(at) || at <= cohort.at) continue;
         const bucket = repeatByVariant.get(cohort.variant);
@@ -1043,19 +1113,12 @@ export class PricingExperimentService {
       }
     }
 
-    const exposureByVariant = new Map<string, any>(
-      exposures.map((row) => [row.variant, row]),
-    );
-    const purchaseByVariant = new Map<string, any>(
-      purchases.map((row) => [row.variant, row]),
-    );
     const variants = (['control', 'treatment'] as const).map((variant) => {
-      const exposure = exposureByVariant.get(variant);
-      const purchase = purchaseByVariant.get(variant);
-      const exposedUsers = Number(exposure?.exposedUsers ?? 0);
-      const purchasedUsers = Number(purchase?.purchasedUsers ?? 0);
-      const revenueRials = Number(purchase?.revenueRials ?? 0);
-      const discountRials = Number(purchase?.discountRials ?? 0);
+      const exposedUsers = exposureCounts.get(variant) ?? 0;
+      const purchase = purchaseTotals.get(variant)!;
+      const purchasedUsers = purchase.purchasedUsers;
+      const revenueRials = purchase.revenueRials;
+      const discountRials = purchase.discountRials;
       const repeat = repeatByVariant.get(variant)!;
       const repeatPurchasedUsers = repeat.repeatPurchasedUsers.size;
       const repeatRevenueRials = repeat.repeatRevenueRials;
@@ -1102,6 +1165,7 @@ export class PricingExperimentService {
       budget,
       variants,
       interpretation:
-        'descriptive_only; conversion differences are not causal or statistically significant without adequate sample size, duration and pre-registered analysis',
+        'descriptive_only; conversion uses purchases after a matching exposure in the selected exposure cohort. Differences are not causal or statistically significant without adequate sample size, duration and pre-registered analysis',
     };
-  }}
+  }
+}
