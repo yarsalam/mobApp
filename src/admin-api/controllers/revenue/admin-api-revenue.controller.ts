@@ -1,7 +1,9 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Get,
+  Patch,
   Query,
   Param,
   UseGuards,
@@ -282,6 +284,27 @@ export class AdminApiRevenueController {
       experimentId,
       this.parseBoundedInt(days, 90, 1, 3650, 'days'),
     );
+  }
+
+  @Get('pricing-experiments/:experimentId/config')
+  async pricingExperimentSettings(
+    @Param('experimentId') experimentId: string,
+  ) {
+    return this.pricingExperiments.getAdminSettings(experimentId);
+  }
+
+  @Patch('pricing-experiments/:experimentId/config')
+  async updatePricingExperimentSettings(
+    @Param('experimentId') experimentId: string,
+    @Body() body: {
+      enabled: boolean;
+      discountBps: number;
+      treatmentRateBps: number;
+      maxDiscountBudgetRials: number;
+      endsAt: string;
+    },
+  ) {
+    return this.pricingExperiments.updateAdminSettings(experimentId, body);
   }
 
   @Get('forecast-accuracy')
