@@ -3,6 +3,7 @@ import {
   Controller,
   Headers,
   BadRequestException,
+  Body,
   Get,
   NotFoundException,
   Param,
@@ -21,6 +22,7 @@ import { CardTransferProvider } from './wallet/providers/card-transfer.provider'
 import { CryptoProvider } from './wallet/providers/crypto.provider';
 import { ManualVerifierService } from './wallet/verification/manual-verifier.service';
 import { ProductBundle } from 'src/product/entities/product-bundle.entity';
+import { PricingExperimentService, PricingCheckout } from 'src/pricing-experiments/pricing-experiment.service';
 
 @Controller('payments')
 export class PaymentsController {
@@ -32,6 +34,7 @@ export class PaymentsController {
     private readonly walletService: WalletService,
     @InjectRepository(ProductBundle)
     private readonly bundleRepo: Repository<ProductBundle>,
+    private readonly pricingExperiment: PricingExperimentService,
   ) {}
 
   // ─── کاربر: دریافت موجودی wallet ────────────────────────────
@@ -93,6 +96,7 @@ export class PaymentsController {
   async buyWithWallet(
     @CurrentUser('sub') userId: number,
     @Param('bundleCode') bundleCode: string,
+    @Body() body?: { pricingQuoteId?: string },
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     const stableKey = idempotencyKey?.trim();
@@ -107,22 +111,90 @@ export class PaymentsController {
     });
     if (!bundle) throw new NotFoundException('محصول یافت نشد');
 
-    // کسر از wallet به ریال
-    await this.walletService.debitOnce(
-      userId,
-      bundle.price,
-      `buy:${bundleCode}`,
-      `wallet-checkout:${stableKey}:debit`,
-    );
+    const pricingQuoteId = body?.pricingQuoteId?.trim();
+    if (pricingQuoteId && pricingQuoteId.length > 4096) {
+      throw new BadRequestException('pricingQuoteId is too long');
+    }
 
-    // grant محصول
+    let pricingCheckout: PricingCheckout | undefined;
+    if (pricingQuoteId) {
+      pricingCheckout = await this.pricingExperiment.prepareCheckout(
+        userId,
+        bundleCode,
+        pricingQuoteId,
+        stableKey,
+      );
+    }
+    const payablePriceRials = pricingCheckout?.payablePriceRials ?? bundle.price;
+
+    try {
+      await this.walletService.debitOnce(
+        userId,
+        payablePriceRials,
+        `buy:${bundleCode}`,
+        `wallet-checkout:${stableKey}:debit`,
+      );
+    } catch (error: unknown) {
+      if (pricingCheckout && this.isInsufficientBalance(error)) {
+        await this.pricingExperiment.releaseCheckoutReservation(
+          userId,
+          pricingCheckout.experimentId,
+          stableKey,
+        );
+      }
+      throw error;
+    }
+
     await this.paymentsService.grantBundle(userId, bundleCode, {
-      amountRials: bundle.price,
+      amountRials: payablePriceRials,
       source: 'wallet',
       idempotencyKey: `wallet-checkout:${stableKey}`,
+      ...(pricingCheckout ? { pricingExperiment: pricingCheckout } : {}),
     });
 
-    return { success: true, message: 'خرید با موفقیت انجام شد' };
+    // Commit real discount spend only after the fulfilled PURCHASE event exists.
+    if (pricingCheckout) {
+      await this.pricingExperiment.commitCheckoutReservation(
+        userId,
+        pricingCheckout,
+        stableKey,
+      );
+    }
+
+    return {
+      success: true,
+      message: 'خرید با موفقیت انجام شد',
+      ...(pricingCheckout
+        ? {
+            pricingExperiment: {
+              experimentId: pricingCheckout.experimentId,
+              variant: pricingCheckout.variant,
+              discountRials:
+                pricingCheckout.basePriceRials - pricingCheckout.payablePriceRials,
+            },
+          }
+        : {}),
+    };
+  }
+
+  private isInsufficientBalance(error: unknown): boolean {
+    const candidate = error as {
+      code?: string;
+      response?: { code?: string };
+      getResponse?: () => unknown;
+    };
+    if (candidate?.code === 'INSUFFICIENT_BALANCE') return true;
+    if (candidate?.response?.code === 'INSUFFICIENT_BALANCE') return true;
+    if (typeof candidate?.getResponse === 'function') {
+      const response = candidate.getResponse();
+      return (
+        typeof response === 'object' &&
+        response !== null &&
+        'code' in response &&
+        (response as { code?: unknown }).code === 'INSUFFICIENT_BALANCE'
+      );
+    }
+    return false;
   }
 
   // ─── کاربر: آپلود رسید ───────────────────────────────────────
