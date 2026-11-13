@@ -354,11 +354,11 @@ export class AdminApiRevenueController {
     if (top && top.userCount > 0) {
       decisions.push({
         id: 'decision_top_ltv_source',
-        title: `بالاترین LTV مشاهده‌شده: ${top.source}`,
+        title: `بالاترین واریزی کیف پول مشاهده‌شده: ${top.source}`,
         description:
-          `میانگین LTV این منبع ${top.ltv} ${currency} ` +
-          `برای ${top.userCount} کاربر در بازه محاسبه‌شده است. ` +
-          'این شاخص به‌تنهایی اثبات‌کننده ROI یا مناسب‌بودن افزایش بودجه نیست.',
+          `میانگین واریزی پرداخت‌شدهٔ ثبت‌شده برای این منبع ${top.ltv} ${currency} ` +
+          `برای ${top.userCount} کاربر در بازه محاسبه‌شده است؛ این رقم می‌تواند شارژ کیف پول باشد و LTV خرید محصول نیست. ` +
+          'این شاخص اثبات‌کننده ROI یا اثر علّی کانال نیست.',
         currency,
         impact: Math.round(top.ltv),
       });
