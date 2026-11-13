@@ -188,8 +188,11 @@ export class AcquisitionGrowthService {
       const firstTouch = acquisition.firstTouch && typeof acquisition.firstTouch === 'object'
         ? acquisition.firstTouch as Record<string, unknown>
         : {};
-      const campaignId = typeof firstTouch.campaignId === 'string' ? firstTouch.campaignId : touch.campaignId;
-      const campaign = touch.campaign;
+      const campaignId =
+        (typeof firstTouch.campaignId === 'string' ? firstTouch.campaignId : null) ??
+        touch.campaignId ??
+        touch.referralCode;
+      const campaign = touch.campaign ?? (touch.referralCode ? `referral-${touch.referralCode}` : null);
       const key = groupKey(touch.source, touch.medium, campaignId, campaign);
       userGroups.set(user.id, key);
 
