@@ -26,7 +26,7 @@ function makeService() {
     },
     {
       id: 2,
-      createdAt: new Date(now - 12 * 86_400_000),
+      createdAt: new Date(now - 20 * 86_400_000),
       isCompleted: false,
       acquisitionSource: 'mobile',
       acquisitionKeyword: null,
@@ -50,7 +50,8 @@ function makeService() {
     { userId: 1, type: EventType.PURCHASE, createdAt: new Date(now - 4 * 86_400_000), metadata: { isCommercialPurchase: true, currency: 'IRT', amountRials: 300_000 } },
     { userId: 1, type: EventType.LOGIN, createdAt: new Date(now - 2 * 86_400_000), metadata: { kind: 'acquisition_touch', acquisitionTouch: { source: 'instagram', medium: 'social', campaign: 'return-link', campaignId: 'ig-r1', capturedAt: new Date(now - 2 * 86_400_000).toISOString() } } },
     { userId: 1, type: EventType.WALLET_CHARGED, createdAt: new Date(now - 3 * 86_400_000), metadata: { amountRials: 900_000 } },
-    { userId: 2, type: EventType.USER_REGISTERED, createdAt: new Date(now - 12 * 86_400_000), metadata: { lastTouch: { source: 'referral', medium: 'invite', campaign: null, campaignId: null, capturedAt: new Date(now - 12 * 86_400_000).toISOString() } } },
+    { userId: 2, type: EventType.USER_REGISTERED, createdAt: new Date(now - 20 * 86_400_000), metadata: { lastTouch: { source: 'referral', medium: 'invite', campaign: null, campaignId: null, capturedAt: new Date(now - 20 * 86_400_000).toISOString() } } },
+    { userId: 2, type: EventType.LOGIN, createdAt: new Date(now - 12 * 86_400_000), metadata: { kind: 'acquisition_touch', acquisitionTouch: { source: 'telegram', medium: 'social', campaign: 'sync-only', campaignId: 'tg-sync', capturedAt: new Date(now - 12 * 86_400_000).toISOString() } } },
     { userId: 2, type: EventType.LOGIN, createdAt: new Date(now - 5 * 86_400_000), metadata: {} },
     { userId: 2, type: EventType.PURCHASE, createdAt: new Date(now - 4 * 86_400_000), metadata: { isCommercialPurchase: false, currency: 'IRT', amountRials: 500_000 } },
   ];
@@ -92,7 +93,7 @@ describe('AcquisitionGrowthService', () => {
       grossRevenuePerAcquiredUser: 300_000,
       grossRevenueToCacRatio: 2.5,
     });
-    expect(unattributed).toMatchObject({ newUsers: 1, cac: null });
+    expect(unattributed).toMatchObject({ newUsers: 1, cac: null, d7EligibleUsers: 1, d7RetainedUsers: 0 });
     expect(instagram).toMatchObject({ newUsers: 1, profileCompletedUsers: 0, costAmount: 0, cac: 0, grossRevenueToCacRatio: null });
     expect(report.lastTouchTrackedUsers).toBe(2);
     expect(report.lastTouchSummary).toEqual(
