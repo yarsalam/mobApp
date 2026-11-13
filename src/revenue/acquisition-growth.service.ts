@@ -259,11 +259,20 @@ export class AcquisitionGrowthService {
           (event.type === EventType.LOGIN && eventMetadata.kind === 'acquisition_touch') ||
           event.type === EventType.USER_REGISTERED
         ) &&
-        eventMetadata.acquisitionTouch &&
-        typeof eventMetadata.acquisitionTouch === 'object'
+        (
+          eventMetadata.acquisitionTouch ??
+          (event.type === EventType.USER_REGISTERED ? eventMetadata.lastTouch : undefined)
+        ) &&
+        typeof (
+          eventMetadata.acquisitionTouch ??
+          (event.type === EventType.USER_REGISTERED ? eventMetadata.lastTouch : undefined)
+        ) === 'object'
       ) {
+        const touchInput =
+          eventMetadata.acquisitionTouch ??
+          (event.type === EventType.USER_REGISTERED ? eventMetadata.lastTouch : undefined);
         const touch = normalizeAcquisitionTouch(
-          eventMetadata.acquisitionTouch as Record<string, unknown>,
+          touchInput as Record<string, unknown>,
         );
         const previous = lastTouchByUser.get(event.userId);
         if (!previous || eventAt > previous.eventAt) {
