@@ -269,6 +269,7 @@ describe('RevenueAnalyticsService customer RFM segmentation', () => {
       createQueryBuilder: jest.fn(() => purchaseBuilder),
     };
     const users: any = {
+      count: jest.fn(async () => 24),
       createQueryBuilder: jest.fn(() => neverPurchasedBuilder),
     };
     const service = new RevenueAnalyticsService(
@@ -284,6 +285,7 @@ describe('RevenueAnalyticsService customer RFM segmentation', () => {
     expect(result.currency).toBe('IRT');
     expect(result.metrics).toMatchObject({
       activePreviouslyPurchasedCustomers: 7,
+      activeIrtPreviouslyPurchasedCustomers: 7,
       activePurchasedInWindow: 6,
       historicalDormantBuyers: 1,
       purchasesInWindow: 13,
@@ -339,6 +341,7 @@ describe('RevenueAnalyticsService customer RFM segmentation', () => {
       'since',
       expect.any(Date),
     );
+    expect(users.count).toHaveBeenCalledWith({ where: { status: 'active' } });
     expect(neverPurchasedBuilder.leftJoin).toHaveBeenCalled();
     expect(neverPurchasedBuilder.andWhere).toHaveBeenCalledWith(
       'purchase.id IS NULL',
