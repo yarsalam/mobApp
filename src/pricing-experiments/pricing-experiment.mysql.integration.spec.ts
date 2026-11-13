@@ -238,9 +238,12 @@ integrationDescribe('Pricing experiment report MySQL cohort integration', () => 
       observedRevenuePerExposedUserRials: 105_000,
     });
 
+    // The immutable purchase ledger records all committed discounts, even
+    // if a synthetic malformed purchase is deliberately excluded from cohort
+    // attribution above.
     expect(report.budget).toMatchObject({
       budgetCapRials: 200_000,
-      spentDiscountRials: 10_000,
+      spentDiscountRials: 30_000,
     });
     expect(report.interpretation).toContain('matching exposure');
     expect(report.interpretation).toContain('descriptive_only');
