@@ -468,6 +468,88 @@ export class PricingExperimentService {
       .groupBy("JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.variant'))")
       .getRawMany();
 
+    // Keep the first experiment-attributed purchase as the cohort anchor.
+    // Later commercial PURCHASE events are counted as repeat purchases for that
+    // original randomized assignment, even though the first-purchase quote is
+    // no longer eligible on subsequent checkouts.
+    const cohortPurchases = await this.events
+      .createQueryBuilder('event')
+      .select('event.userId', 'userId')
+      .addSelect('event.createdAt', 'createdAt')
+      .addSelect(
+        "JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.variant'))",
+        'variant',
+      )
+      .where('event.type = :purchaseType', {
+        purchaseType: EventType.PURCHASE,
+      })
+      .andWhere("JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.experimentId')) = :experimentId", {
+        experimentId,
+      })
+      .andWhere('event.createdAt >= :since', { since })
+      .getRawMany();
+
+    const firstPurchaseByUser = new Map<number, { variant: string; at: number }>();
+    for (const row of cohortPurchases) {
+      const userId = Number(row.userId);
+      const at = new Date(row.createdAt).getTime();
+      const existing = firstPurchaseByUser.get(userId);
+      if (
+        Number.isSafeInteger(userId) &&
+        Number.isFinite(at) &&
+        (row.variant === 'control' || row.variant === 'treatment') &&
+        (!existing || at < existing.at)
+      ) {
+        firstPurchaseByUser.set(userId, { variant: row.variant, at });
+      }
+    }
+
+    const repeatByVariant = new Map<string, {
+      repeatPurchasedUsers: Set<number>;
+      repeatPurchaseCount: number;
+      repeatRevenueRials: number;
+    }>([
+      ['control', { repeatPurchasedUsers: new Set<number>(), repeatPurchaseCount: 0, repeatRevenueRials: 0 }],
+      ['treatment', { repeatPurchasedUsers: new Set<number>(), repeatPurchaseCount: 0, repeatRevenueRials: 0 }],
+    ]);
+
+    const cohortUserIds = [...firstPurchaseByUser.keys()];
+    for (let offset = 0; offset < cohortUserIds.length; offset += 500) {
+      const userIds = cohortUserIds.slice(offset, offset + 500);
+      const laterPurchases = await this.events
+        .createQueryBuilder('event')
+        .select('event.userId', 'userId')
+        .addSelect('event.createdAt', 'createdAt')
+        .addSelect(
+          "CAST(JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.amountRials')) AS DECIMAL(20,0))",
+          'amountRials',
+        )
+        .where('event.type = :purchaseType', {
+          purchaseType: EventType.PURCHASE,
+        })
+        .andWhere('event.userId IN (:...userIds)', { userIds })
+        .andWhere('event.createdAt >= :since', { since })
+        .andWhere(
+          "JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.isCommercialPurchase')) = 'true'",
+        )
+        .getRawMany();
+
+      for (const row of laterPurchases) {
+        const userId = Number(row.userId);
+        const cohort = firstPurchaseByUser.get(userId);
+        const at = new Date(row.createdAt).getTime();
+        if (!cohort || !Number.isFinite(at) || at <= cohort.at) continue;
+        const bucket = repeatByVariant.get(cohort.variant);
+        if (!bucket) continue;
+        const amount = Number(row.amountRials);
+        bucket.repeatPurchasedUsers.add(userId);
+        bucket.repeatPurchaseCount += 1;
+        if (Number.isFinite(amount) && amount > 0) {
+          bucket.repeatRevenueRials += amount;
+        }
+      }
+    }
+
     const exposureByVariant = new Map<string, any>(
       exposures.map((row) => [row.variant, row]),
     );
@@ -481,6 +563,10 @@ export class PricingExperimentService {
       const purchasedUsers = Number(purchase?.purchasedUsers ?? 0);
       const revenueRials = Number(purchase?.revenueRials ?? 0);
       const discountRials = Number(purchase?.discountRials ?? 0);
+      const repeat = repeatByVariant.get(variant)!;
+      const repeatPurchasedUsers = repeat.repeatPurchasedUsers.size;
+      const repeatRevenueRials = repeat.repeatRevenueRials;
+      const totalObservedRevenueRials = revenueRials + repeatRevenueRials;
       const safeNumber = (value: number) =>
         Number.isFinite(value) && value >= 0 ? Math.round(value) : 0;
 
@@ -494,6 +580,18 @@ export class PricingExperimentService {
             : null,
         revenueRials: safeNumber(revenueRials),
         discountRials: safeNumber(discountRials),
+        repeatPurchasedUsers: safeNumber(repeatPurchasedUsers),
+        repeatPurchaseCount: safeNumber(repeat.repeatPurchaseCount),
+        repeatPurchaseRatePercent:
+          purchasedUsers > 0
+            ? Math.round((repeatPurchasedUsers / purchasedUsers) * 10_000) / 100
+            : null,
+        repeatRevenueRials: safeNumber(repeatRevenueRials),
+        totalObservedRevenueRials: safeNumber(totalObservedRevenueRials),
+        observedRevenuePerExposedUserRials:
+          exposedUsers > 0
+            ? Math.round(totalObservedRevenueRials / exposedUsers)
+            : null,
       };
     });
 
