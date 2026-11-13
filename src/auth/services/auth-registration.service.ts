@@ -314,26 +314,15 @@ export class AuthRegistrationService {
         : normalizeAcquisitionTouch({
             source: user.acquisitionSource,
             term: user.acquisitionKeyword,
+            capturedAt:
+              user.createdAt instanceof Date
+                ? user.createdAt.toISOString()
+                : undefined,
           });
     const lastTouch = normalizeAcquisitionTouch(touchInput);
 
-    // Last-touch is mutable; first-touch and the registration source remain immutable.
-    await this.usersService.update(userId, {
-      metadata: {
-        ...metadata,
-        acquisition: {
-          ...previousAcquisition,
-          firstTouch,
-          firstTouchAt:
-            previousAcquisition.firstTouchAt ?? (firstTouch as any).capturedAt,
-          lastTouch,
-        },
-      },
-    } as any);
-
-    // Keep an append-only touch history for last-touch analysis. The client
-    // capture timestamp is part of the idempotency digest, so a retried sync
-    // does not generate duplicate touch events.
+    // Record the event first. If the profile update then fails, a retry uses
+    // the same event key and UserEventService keeps the append-only receipt.
     const touchDigest = crypto
       .createHash('sha256')
       .update(JSON.stringify(lastTouch))
@@ -350,7 +339,32 @@ export class AuthRegistrationService {
       idempotencyKey: `acquisition:last_touch:${touchDigest}`,
     });
 
-    return { success: true };
+    const previousLastTouch =
+      previousAcquisition.lastTouch &&
+      typeof previousAcquisition.lastTouch === 'object'
+        ? previousAcquisition.lastTouch
+        : null;
+    if (
+      previousLastTouch &&
+      JSON.stringify(previousLastTouch) === JSON.stringify(lastTouch)
+    ) {
+      return { success: true, unchanged: true };
+    }
+
+    await this.usersService.update(userId, {
+      metadata: {
+        ...metadata,
+        acquisition: {
+          ...previousAcquisition,
+          firstTouch,
+          firstTouchAt:
+            previousAcquisition.firstTouchAt ?? (firstTouch as any).capturedAt,
+          lastTouch,
+        },
+      },
+    } as any);
+
+    return { success: true, unchanged: false };
   }
 
   async completeVerification(phone: string, clientDeviceId: string) {
