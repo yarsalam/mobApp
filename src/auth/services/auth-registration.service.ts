@@ -21,7 +21,7 @@ import { DevicePhoneService } from '../device-phone/device-phone.service';
 import { DevicePhoneEvent } from '../device-phone/entities/device-phone.entity';
 import { UserEventService } from '../../user-event/user-event.service';
 import { PhaseService } from '../../phase/phase.service';
-import { CreateAuthDto } from '../dto/create-auth.dto';
+import { AcquisitionTouchDto, CreateAuthDto } from '../dto/create-auth.dto';
 import { CompleteProfileDto } from '../dto/complete-profile.dto';
 import { UpdateUserDto } from '../../users/dto/update-user.dto';
 import * as bcrypt from 'bcrypt';
@@ -232,20 +232,18 @@ export class AuthRegistrationService {
           type: EventType.LOGIN,
           metadata: { via: 'signup', platform: createAuthDto.platform },
         }),
-        !existingUser
-          ? this.userEventService.log({
-              userId: user.id,
-              type: EventType.USER_REGISTERED,
-              metadata: {
-                source: firstTouch.source,
-                medium: firstTouch.medium,
-                campaign: firstTouch.campaign,
-                campaignId: firstTouch.campaignId,
-                attributionModel: 'first_touch',
-              },
-              idempotencyKey: `acquisition:user_registered:${user.id}`,
-            })
-          : Promise.resolve(),
+        this.userEventService.log({
+          userId: user.id,
+          type: EventType.USER_REGISTERED,
+          metadata: {
+            source: firstTouch.source,
+            medium: firstTouch.medium,
+            campaign: firstTouch.campaign,
+            campaignId: firstTouch.campaignId,
+            attributionModel: 'first_touch',
+          },
+          idempotencyKey: `acquisition:user_registered:${user.id}`,
+        }),
       ]);
       t = mark('Promise.all (device, phone, event)', t);
 
@@ -268,6 +266,51 @@ export class AuthRegistrationService {
       this.logger.error(`step1 failed for ${createAuthDto.phone}: ${msg}`);
       throw new InternalServerErrorException('خطا در پردازش درخواست');
     }
+  }
+
+  async updateAcquisitionLastTouch(
+    userId: number,
+    touchInput: AcquisitionTouchDto,
+  ) {
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      throw new BadRequestException('Invalid user id');
+    }
+    const user = await this.usersService.findById(userId);
+    if (!user) throw new UnauthorizedException('کاربر یافت نشد');
+
+    const metadata =
+      user.metadata && typeof user.metadata === 'object'
+        ? user.metadata as Record<string, unknown>
+        : {};
+    const previousAcquisition =
+      metadata.acquisition && typeof metadata.acquisition === 'object'
+        ? metadata.acquisition as Record<string, unknown>
+        : {};
+    const firstTouch =
+      previousAcquisition.firstTouch &&
+      typeof previousAcquisition.firstTouch === 'object'
+        ? previousAcquisition.firstTouch
+        : normalizeAcquisitionTouch({
+            source: user.acquisitionSource,
+            term: user.acquisitionKeyword,
+          });
+    const lastTouch = normalizeAcquisitionTouch(touchInput);
+
+    // Last-touch is mutable; first-touch and the registration source remain immutable.
+    await this.usersService.update(userId, {
+      metadata: {
+        ...metadata,
+        acquisition: {
+          ...previousAcquisition,
+          firstTouch,
+          firstTouchAt:
+            previousAcquisition.firstTouchAt ?? (firstTouch as any).capturedAt,
+          lastTouch,
+        },
+      },
+    } as any);
+
+    return { success: true };
   }
 
   async completeVerification(phone: string, clientDeviceId: string) {
