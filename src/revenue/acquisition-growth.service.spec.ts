@@ -45,6 +45,7 @@ function makeService() {
     { userId: 1, type: EventType.PROFILE_UPDATE, createdAt: new Date(now - 36 * 86_400_000), metadata: { kind: 'profile_completed' } },
     { userId: 1, type: EventType.LIKE, createdAt: new Date(now - 35 * 86_400_000), metadata: {} },
     { userId: 1, type: EventType.APP_OPEN, createdAt: new Date(now - 33 * 86_400_000), metadata: {} },
+    { userId: 1, type: EventType.APP_OPEN, createdAt: new Date(now - 8 * 86_400_000), metadata: {} },
     { userId: 1, type: EventType.MESSAGE_SENT, createdAt: new Date(now - 5 * 86_400_000), metadata: {} },
     { userId: 1, type: EventType.PURCHASE, createdAt: new Date(now - 4 * 86_400_000), metadata: { isCommercialPurchase: true, currency: 'IRT', amountRials: 300_000 } },
     { userId: 1, type: EventType.LOGIN, createdAt: new Date(now - 2 * 86_400_000), metadata: { kind: 'acquisition_touch', acquisitionTouch: { source: 'instagram', medium: 'social', campaign: 'return-link', campaignId: 'ig-r1', capturedAt: new Date(now - 2 * 86_400_000).toISOString() } } },
