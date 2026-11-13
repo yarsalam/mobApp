@@ -34,7 +34,7 @@ For privacy, the normalizer stores only the landing page origin and path, and on
 The cohort is users whose `User.createdAt` falls within the selected report window. That timestamp represents the account creation/registration step, not an anonymous page impression.
 
 - Registered users: unique user records in the cohort.
-- Profile completion: current `User.isCompleted` state.
+- Profile completion: a `PROFILE_UPDATE` event with `metadata.kind=profile_completed` in the cohort window. The current user profile flag alone is not used because it cannot date the completion step.
 - Meaningful interaction: at least one `LIKE`, `SUPERLIKE`, `MATCH` or `MESSAGE_SENT` within the first 30 days after registration.
 - D7 retained: at least one `APP_OPEN`, `LOGIN`, `PROFILE_VIEW`, `LIKE`, `SUPERLIKE`, `MATCH` or `MESSAGE_SENT` in days 7–13 after registration. The denominator includes only users at least 14 days old, so the full window has matured.
 - D30 retained: the same active-event set in days 30–36. The denominator includes only users at least 37 days old.
@@ -54,7 +54,7 @@ CAC is calculated only for an exact first-touch source + medium + campaign group
 
 If no matching cost row exists, CAC is `null`. If an explicit cost row exists with amount zero, CAC may be zero. If the cohort has no new users, CAC remains `null`. Costs in different currencies are never added together.
 
-The report currently supports IRT, USDT, BTC and USD in the cost ledger. Fulfilled product purchase events currently provide IRT amounts only; therefore gross purchase revenue per acquired user and LTV/CAC are only populated for IRT.
+The report currently supports IRT, USDT, BTC and USD in the cost ledger. Fulfilled product purchase events currently provide IRT amounts only; therefore gross purchase revenue per acquired user and the gross-revenue-to-CAC ratio are only populated for IRT. This ratio is not LTV/CAC: it covers only the selected report window and is not lifetime or net revenue.
 
 ## Revenue interpretation and causal limits
 
@@ -67,7 +67,7 @@ Revenue is the gross sum of event records where:
 
 The current source ledger does not yet reconcile refunds, chargebacks or reversals. The metric is therefore observed gross fulfilled product-purchase revenue, not net revenue, profit or fully matured lifetime value.
 
-The report is observational and descriptive. First-touch grouping, last-touch summaries or an observed difference between discount treatment and control do not prove causality. The discount experiment must not be described as increasing sales or LTV based on these descriptive values. A causal claim requires a pre-registered experiment, valid randomization and exposure receipt, an adequate sample, matured observation windows, refund reconciliation and a statistical analysis plan.
+The report is observational and descriptive. First-touch grouping, last-touch summaries or an observed difference between discount treatment and control do not prove causality. The discount experiment must not be described as increasing sales, revenue, profit or LTV based on these descriptive values. A causal claim requires a pre-registered experiment, valid randomization and exposure receipt, an adequate sample, matured observation windows, refund reconciliation and a statistical analysis plan.
 
 ## External discovery feeds not yet connected
 
