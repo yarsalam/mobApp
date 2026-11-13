@@ -15,6 +15,8 @@ on:
       - "scripts/ai-eval/**"
       - "python-ai/staging-base-images/**"
       - "python-ai/services/ai_moderation/**"
+      - "python-ai/services/ai_feedback/**"
+      - "python-ai/tests/test_ai_feedback_contract.py"
       - "python-ai/services/embedded_ai/**"
       - "python-ai/downloaded_wheels/.gitkeep"
       - ".github/workflows/staging-ai-lab-validation.yml"
@@ -181,6 +183,94 @@ jobs:
             docker compose --env-file .env.staging -p yarsalam-staging \
               -f docker-compose.yml -f docker-compose.production.yml \
               -f docker-compose.staging.yml stop ai_ops backend qdrant user-mysql redis || true
+          fi
+
+
+  staging-runtime-ai-feedback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create fresh isolated staging secrets
+        run: bash scripts/staging/bootstrap.sh
+
+      - name: Build and start only AI Feedback
+        run: bash scripts/staging/ai-service.sh ai-up ai_feedback
+
+      - name: Verify AI Feedback health and fail-closed runtime contract
+        run: |
+          set -euo pipefail
+          base="http://127.0.0.1:18005"
+          ready=false
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --output "$RUNNER_TEMP/feedback-health.json" "$base/health" &&
+              python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d.get("status") == "healthy" and d.get("service") == "ai_feedback" and d.get("model_available") is False and d.get("training_enabled") is False' "$RUNNER_TEMP/feedback-health.json"
+            then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          [[ "$ready" == true ]] || { echo "AI Feedback health did not become ready."; exit 1; }
+
+          cat > "$RUNNER_TEMP/feedback-direct.json" <<'JSON'
+          {"userId":991001,"feature":"promotion","feedbackType":"click"}
+          JSON
+          curl --fail --silent --show-error -H "Content-Type: application/json" \
+            --data-binary @"$RUNNER_TEMP/feedback-direct.json" \
+            "$base/feedback/train_incremental" > "$RUNNER_TEMP/feedback-direct-response.json"
+          python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["status"] == "accepted_not_trained" and d["trained"] == 0 and d["training_enabled"] is False' "$RUNNER_TEMP/feedback-direct-response.json"
+
+          cat > "$RUNNER_TEMP/feedback-envelope.json" <<'JSON'
+          {"feedback":{"userId":991002,"feature":"image","feedbackType":"dismiss"}}
+          JSON
+          curl --fail --silent --show-error -H "Content-Type: application/json" \
+            --data-binary @"$RUNNER_TEMP/feedback-envelope.json" \
+            "$base/feedback/train_incremental" > "$RUNNER_TEMP/feedback-envelope-response.json"
+          python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["status"] == "accepted_not_trained" and d["trained"] == 0 and d["feature"] == "image"' "$RUNNER_TEMP/feedback-envelope-response.json"
+
+          curl --fail --silent --show-error -H "Content-Type: application/json" \
+            --data '[{"userId":991001,"feature":"promotion"},{"userId":991002,"feature":"image"}]' \
+            "$base/feedback/train_batch" > "$RUNNER_TEMP/feedback-batch-response.json"
+          python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["status"] == "not_trained" and d["trained"] == 0 and d["training_enabled"] is False and d["samples_received"] == 2' "$RUNNER_TEMP/feedback-batch-response.json"
+
+          predict_code="$(curl --silent --show-error -o "$RUNNER_TEMP/feedback-predict-response.json" -w '%{http_code}' \
+            -H "Content-Type: application/json" --data-binary @"$RUNNER_TEMP/feedback-direct.json" \
+            "$base/feedback/predict")"
+          [[ "$predict_code" == "503" ]]
+          python -c 'import json,sys; d=json.load(open(sys.argv[1]))["detail"]; assert d["status"] == "unavailable" and d["probability"] is None and d["confidence"] is None and d["reason"] == "no_validated_conversion_model"' "$RUNNER_TEMP/feedback-predict-response.json"
+
+          curl --fail --silent --show-error "$base/feedback/metrics" > "$RUNNER_TEMP/feedback-metrics.json"
+          python -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["model_available"] is False and d["model_trained"] is False and d["training_samples"] == 0 and d["training_enabled"] is False' "$RUNNER_TEMP/feedback-metrics.json"
+          echo "AI Feedback runtime contract passed: no fabricated labels, training, probabilities, or confidence."
+
+      - name: Upload AI Feedback runtime report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yarsalam-ai-feedback-runtime-contract
+          path: |
+            ${{ runner.temp }}/feedback-*.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Capture AI Feedback logs on failure
+        if: failure()
+        run: |
+          docker compose --env-file .env.staging -p yarsalam-staging \
+            -f docker-compose.yml -f docker-compose.production.yml \
+            -f docker-compose.staging.yml logs --no-color --tail=160 \
+            ai_feedback redis || true
+
+      - name: Stop staging containers without deleting volumes
+        if: always()
+        run: |
+          if [[ -s .env.staging ]]; then
+            docker compose --env-file .env.staging -p yarsalam-staging \
+              -f docker-compose.yml -f docker-compose.production.yml \
+              -f docker-compose.staging.yml stop ai_feedback redis || true
           fi
 
   staging-runtime-moderation:
