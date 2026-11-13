@@ -86,6 +86,7 @@ jobs:
           wallet/verification/crypto-watcher.processor.spec.ts
           feature-store-rvenue.service.spec.ts
           ai-assistant/context/user-context.service.spec.ts
+          user-metrics/user-metrics.service.spec.ts
           ai-assistant/llm/openrouter-client.service.spec.ts
           ai-assistant/ai-assistant.service.spec.ts
           ai-assistant/analyzers/problem-detector.service.spec.ts

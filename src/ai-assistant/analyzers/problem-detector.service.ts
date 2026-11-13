@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { PhaseService } from '../../phase/phase.service';
 import { AiImageService } from '../../ai-image/ai-image.service';
 import { InteractionsService } from '../../interaction/interaction.service';
 import { UserMetricsService } from '../../user-metrics/user-metrics.service';
+import { User } from '../../users/entities/user.entity';
 import { UserProblem } from '../types/user-problem.interface';
-import { ProblemDetectorPhase } from '../types/problem-detector-phase.interface';
 import { UserImageAnalysis } from '../types/user-image-analysis.interface';
 import { InteractionAnalysis } from '../types/interaction-analysis.interface';
 import { UserMetricsSnapshot } from '../types/user-metrics-snapshot.interface';
@@ -13,23 +15,38 @@ import { UserMetricsSnapshot } from '../types/user-metrics-snapshot.interface';
 export class ProblemDetectorService {
   constructor(
     private readonly phaseService: PhaseService,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
     private readonly aiImageService: AiImageService,
     private readonly interactionsService: InteractionsService,
     private readonly userMetricsService: UserMetricsService,
   ) {}
 
   async detectProblems(userId: number): Promise<UserProblem[]> {
-    const [phaseResult, imageResult, interactionsResult, metricsResult] =
-      await Promise.allSettled([
-        this.phaseService.getPhaseMetrics(userId),
-        this.aiImageService.findByUser(userId),
-        this.interactionsService.getUserInteractions(userId),
-        this.userMetricsService.buildExtraMetrics(userId),
-      ]);
+    const [
+      phaseResult,
+      userResult,
+      imageResult,
+      interactionsResult,
+      metricsResult,
+    ] = await Promise.allSettled([
+      this.phaseService.getPhaseMetrics(userId),
+      this.userRepo.findOne({
+        where: { id: userId },
+        select: { isCompleted: true, city: true, aboutme: true },
+      }),
+      this.aiImageService.findByUser(userId),
+      this.interactionsService.getUserInteractions(userId),
+      this.userMetricsService.buildExtraMetrics(userId),
+    ]);
 
-    const phase =
+    const phaseMetrics =
       phaseResult.status === 'fulfilled' && phaseResult.value
-        ? (phaseResult.value as ProblemDetectorPhase)
+        ? phaseResult.value
+        : null;
+    const user =
+      userResult.status === 'fulfilled' && userResult.value
+        ? userResult.value
         : null;
     const images =
       imageResult.status === 'fulfilled' && Array.isArray(imageResult.value)
@@ -70,17 +87,26 @@ export class ProblemDetectorService {
     }));
 
     const problems: UserProblem[] = [];
-    if (phase) {
-      problems.push(...(await this.detectProfileProblems(userId, phase, userImages)));
-    }
-    if (images) {
-      problems.push(...(await this.detectImageProblems(userImages)));
-    }
+    if (user) problems.push(...this.detectProfileProblems(user));
+    if (images) problems.push(...(await this.detectImageProblems(userImages)));
+    // No "no message sent" conclusion when event history or signup metrics failed.
     if (interactions && metrics) {
       problems.push(...(await this.detectEngagementProblems(userId, interactions, metrics)));
     }
-    if (phase && metrics) {
-      problems.push(...(await this.detectPhaseProblems(phase, metrics)));
+    if (
+      phaseMetrics &&
+      metrics &&
+      (phaseMetrics.phase === 'cold' ||
+        phaseMetrics.phase === 'warm' ||
+        phaseMetrics.phase === 'hot') &&
+      typeof phaseMetrics.everPaid === 'boolean'
+    ) {
+      problems.push(
+        ...(await this.detectPhaseProblems(
+          { phase: phaseMetrics.phase, everPaid: phaseMetrics.everPaid },
+          metrics,
+        )),
+      );
     }
 
     return problems.sort((a, b) => {
@@ -89,23 +115,21 @@ export class ProblemDetectorService {
     });
   }
 
-  private async detectProfileProblems(
-    _userId: number,
-    phase: ProblemDetectorPhase,
-    _images: UserImageAnalysis[],
-  ): Promise<UserProblem[]> {
+  private detectProfileProblems(
+    user: Pick<User, 'isCompleted' | 'city' | 'aboutme'>,
+  ): UserProblem[] {
     const problems: UserProblem[] = [];
-    if (!phase.isCompleted) {
+    if (!user.isCompleted) {
       problems.push({
         category: 'profile',
         severity: 'high',
         description: 'پروفایل شما هنوز کامل نشده است',
-        reason: 'وضعیت ثبت‌شده پروفایل نشان می‌دهد بخشی از اطلاعات اصلی تکمیل نشده است.',
+        reason: 'وضعیت ثبت‌شده حساب نشان می‌دهد بخشی از اطلاعات اصلی تکمیل نشده است.',
         solution: 'بخش‌های ناقص را در صفحه ویرایش پروفایل تکمیل کن.',
         impact: 'اطلاعات بیشتری برای شناخت اولیه در اختیار بازدیدکننده قرار می‌گیرد؛ اثر عددی آن هنوز اندازه‌گیری نشده است.',
       });
     }
-    if (!phase.city) {
+    if (!user.city?.trim()) {
       problems.push({
         category: 'profile',
         severity: 'medium',
@@ -115,7 +139,7 @@ export class ProblemDetectorService {
         impact: 'اطلاعات لازم برای تجربه‌ها و پیشنهادهای مکانی فراهم می‌شود؛ افزایش Match تضمین‌شده نیست.',
       });
     }
-    if (!phase.bio || phase.bio.trim().length < 50) {
+    if (!user.aboutme?.trim() || user.aboutme.trim().length < 50) {
       problems.push({
         category: 'profile',
         severity: 'medium',
@@ -190,11 +214,11 @@ export class ProblemDetectorService {
   }
 
   private async detectPhaseProblems(
-    phase: ProblemDetectorPhase,
+    phase: { phase: 'cold' | 'warm' | 'hot'; everPaid: boolean },
     metrics: UserMetricsSnapshot,
   ): Promise<UserProblem[]> {
     const problems: UserProblem[] = [];
-    if (phase.phase === 'cold' && !phase.isCompleted) {
+    if (phase.phase === 'cold') {
       problems.push({
         category: 'phase',
         severity: 'medium',

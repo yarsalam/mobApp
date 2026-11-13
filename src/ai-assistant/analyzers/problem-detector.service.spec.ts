@@ -1,29 +1,33 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { ProblemDetectorService } from './problem-detector.service';
 
-const completePhase = {
+const completeUser = {
   isCompleted: true,
   city: 'Tehran',
-  bio: 'درباره علایق و ارزش‌های واقعی کاربر که برای شناخت اولیه ثبت شده است.',
-  phase: 'warm',
-  everPaid: false,
-  suggestedActions: [],
+  aboutme: 'درباره علایق و ارزش‌های واقعی کاربر که برای شناخت اولیه ثبت شده است.',
 };
 
 function makeService(overrides: Record<string, any> = {}) {
   return new ProblemDetectorService(
-    { getPhaseMetrics: jest.fn(async () => completePhase), ...overrides.phase },
+    { getPhaseMetrics: jest.fn(async () => ({ phase: 'warm', everPaid: false })), ...overrides.phase },
+    { findOne: jest.fn(async () => completeUser), ...overrides.user },
     { findByUser: jest.fn(async () => []), ...overrides.images },
     { getUserInteractions: jest.fn(async () => []), ...overrides.interactions },
-    { buildExtraMetrics: jest.fn(async () => ({ daysSinceSignup: 2, lastPurchaseDays: 0 })), ...overrides.metrics },
+    { buildExtraMetrics: jest.fn(async () => ({ daysSinceSignup: 2, lastPurchaseDays: null })), ...overrides.metrics },
   );
 }
 
 describe('ProblemDetectorService evidence handling', () => {
-  it('does not infer an incomplete profile when phase data is unavailable', async () => {
+  it('does not infer an incomplete profile when the user record is unavailable', async () => {
+    const service = makeService({ user: { findOne: jest.fn(async () => { throw new Error('offline'); }) } });
+    const problems = await service.detectProblems(42);
+    expect(problems.some((p) => p.category === 'profile')).toBe(false);
+  });
+
+  it('does not infer a phase when phase metrics are unavailable', async () => {
     const service = makeService({ phase: { getPhaseMetrics: jest.fn(async () => { throw new Error('offline'); }) } });
     const problems = await service.detectProblems(42);
-    expect(problems.some((p) => p.category === 'profile' || p.category === 'phase')).toBe(false);
+    expect(problems.some((p) => p.category === 'phase' || p.category === 'payment')).toBe(false);
   });
 
   it('does not treat image-service failure as proof that the user has no photos', async () => {
@@ -38,13 +42,14 @@ describe('ProblemDetectorService evidence handling', () => {
     expect(problems.some((p) => p.description.includes('امتیاز داخلی کیفیت'))).toBe(false);
   });
 
-  it('does not output unsupported numeric profile/engagement uplift promises', async () => {
+  it('bases profile recommendations on persisted User fields without numeric uplift promises', async () => {
     const service = makeService({
-      phase: { getPhaseMetrics: jest.fn(async () => ({ ...completePhase, isCompleted: false, city: null, bio: '' })) },
+      user: { findOne: jest.fn(async () => ({ isCompleted: false, city: null, aboutme: '' })) },
       images: { findByUser: jest.fn(async () => []) },
     });
     const problems = await service.detectProblems(42);
     const content = problems.map((p) => [p.reason, p.solution, p.impact].join(' ')).join(' ');
+    expect(problems.some((p) => p.category === 'profile')).toBe(true);
     expect(content).not.toMatch(/۵ برابر|۱۰ برابر|۳ برابر|۵۰٪|۲۰٪/);
   });
 
@@ -59,15 +64,15 @@ describe('ProblemDetectorService evidence handling', () => {
 
   it('does not show a purchase prompt to every non-paying warm user', async () => {
     const service = makeService({
-      phase: { getPhaseMetrics: jest.fn(async () => ({ ...completePhase, phase: 'warm', everPaid: false })) },
+      phase: { getPhaseMetrics: jest.fn(async () => ({ phase: 'warm', everPaid: false })) },
     });
     const problems = await service.detectProblems(42);
     expect(problems.some((p) => p.category === 'payment')).toBe(false);
   });
 
-  it('detects old purchase only from a real last-purchase metric and never invents discount', async () => {
+  it('detects old purchases only from real phase and successful-payment age data', async () => {
     const service = makeService({
-      phase: { getPhaseMetrics: jest.fn(async () => ({ ...completePhase, phase: 'hot', everPaid: true })) },
+      phase: { getPhaseMetrics: jest.fn(async () => ({ phase: 'hot', everPaid: true })) },
       metrics: { buildExtraMetrics: jest.fn(async () => ({ daysSinceSignup: 100, lastPurchaseDays: 45 })) },
     });
     const problems = await service.detectProblems(42);
