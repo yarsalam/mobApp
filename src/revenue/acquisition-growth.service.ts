@@ -290,6 +290,12 @@ export class AcquisitionGrowthService {
         profileCompletedUsers.add(event.userId);
       }
 
+      // Attribution metadata sync is not user activity. It must not inflate
+      // D7/D30 retention merely because an app refreshed its session.
+      if (event.type === EventType.LOGIN && eventMetadata.kind === 'acquisition_touch') {
+        continue;
+      }
+
       if (MEANINGFUL_EVENTS.includes(event.type) && daysSinceRegistration <= 30) {
         firstInteractionUsers.add(event.userId);
       }
