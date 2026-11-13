@@ -12,7 +12,6 @@ const integrationDescribe = mysqlUrl && redisUrl ? describe : describe.skip;
 
 const experimentId = `pricing-report-mysql-${process.pid}-${Date.now()}`;
 const now = Date.now();
-const since = new Date(now - 30 * 86_400_000);
 
 const eventSchema = new EntitySchema({
   name: 'PartitionedEvent',
