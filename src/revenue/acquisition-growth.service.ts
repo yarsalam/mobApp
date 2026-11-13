@@ -53,7 +53,7 @@ type CohortRow = {
   costCurrency: AcquisitionCostCurrency;
   cac: number | null;
   grossRevenuePerAcquiredUser: number | null;
-  ltvOverCac: number | null;
+  grossRevenueToCacRatio: number | null;
 };
 
 function groupKey(source: string, medium: string | null, campaignId: string | null, campaign: string | null) {
@@ -164,6 +164,7 @@ export class AcquisitionGrowthService {
 
     const grouped = new Map<string, CohortRow>();
     const userGroups = new Map<number, string>();
+    const profileCompletedUsers = new Set<number>();
     const firstInteractionUsers = new Set<number>();
     const d7Users = new Set<number>();
     const d30Users = new Set<number>();
@@ -211,13 +212,12 @@ export class AcquisitionGrowthService {
           costAmount: null,
           costCurrency: currency,
           cac: null,
-          grossRevenuePerAcquiredUser: currency === 'IRT' ? null : null,
-          ltvOverCac: null,
+          grossRevenuePerAcquiredUser: null,
+          grossRevenueToCacRatio: null,
         };
         grouped.set(key, row);
       }
       row.newUsers += 1;
-      if (user.isCompleted) row.profileCompletedUsers += 1;
       const ageMs = now.getTime() - new Date(user.createdAt).getTime();
       if (ageMs >= 14 * DAY_MS) {
         row.d7EligibleUsers += 1;
@@ -280,6 +280,13 @@ export class AcquisitionGrowthService {
         }
       }
 
+      if (
+        event.type === EventType.PROFILE_UPDATE &&
+        eventMetadata.kind === 'profile_completed'
+      ) {
+        profileCompletedUsers.add(event.userId);
+      }
+
       if (MEANINGFUL_EVENTS.includes(event.type) && daysSinceRegistration <= 30) {
         firstInteractionUsers.add(event.userId);
       }
@@ -303,6 +310,11 @@ export class AcquisitionGrowthService {
       }
     }
 
+    for (const userId of profileCompletedUsers) {
+      const key = userGroups.get(userId);
+      const row = key ? grouped.get(key) : undefined;
+      if (row) row.profileCompletedUsers += 1;
+    }
     for (const userId of firstInteractionUsers) {
       const key = userGroups.get(userId);
       const row = key ? grouped.get(key) : undefined;
@@ -381,7 +393,7 @@ export class AcquisitionGrowthService {
           costCurrency: currency,
           cac: null,
           grossRevenuePerAcquiredUser: null,
-          ltvOverCac: null,
+          grossRevenueToCacRatio: null,
         });
       }
     }
@@ -413,7 +425,7 @@ export class AcquisitionGrowthService {
         d30RetentionRatePercent: row.d30EligibleUsers > 0
           ? Math.round((row.d30RetainedUsers / row.d30EligibleUsers) * 10_000) / 100
           : null,
-        ltvOverCac: cac !== null && cac > 0 && grossRevenuePerAcquiredUser !== null
+        grossRevenueToCacRatio: cac !== null && cac > 0 && grossRevenuePerAcquiredUser !== null
           ? Math.round((grossRevenuePerAcquiredUser / cac) * 100) / 100
           : null,
       };
