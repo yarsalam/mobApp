@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { ConflictException, ServiceUnavailableException } from '@nestjs/common';
-import { createHmac } from 'crypto';
+import { createHash, createHmac } from 'crypto';
 import { PricingExperimentService } from './pricing-experiment.service';
 import { EventType } from '../user-event/type/event-type.enum';
 
@@ -342,6 +342,58 @@ describe('PricingExperimentService', () => {
       `pricing:redeemed:${EXPERIMENT_ID}:${userId}`,
       'checkout-A',
     );
+  });
+
+  it('allows an exact idempotent retry after the experiment purchase event is committed', async () => {
+    const userId = await findUserForVariant('treatment');
+    const h = makeService();
+    const quote = await h.service.getQuote(userId, 'vip-month');
+    const payload = decodeQuote(quote.quoteId!);
+    h.eligibilityBuilder.getCount.mockResolvedValue(1);
+
+    const checkoutKey = 'checkout-already-fulfilled';
+    const purchaseEventKey =
+      'purchase:' +
+      createHash('sha256')
+        .update(`wallet-checkout:${checkoutKey}`)
+        .digest('hex')
+        .slice(0, 56);
+    h.eventRepo.findOne
+      .mockResolvedValueOnce({
+        metadata: {
+          bundleCode: 'vip-month',
+          pricingExperiment: {
+            experimentId: EXPERIMENT_ID,
+            assignmentId: payload.assignmentId,
+            variant: 'treatment',
+            payablePriceRials: 90_000,
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        metadata: {
+          promotionKind: 'pricing_experiment',
+          experimentId: EXPERIMENT_ID,
+          assignmentId: payload.assignmentId,
+          variant: 'treatment',
+          payablePriceRials: 90_000,
+        },
+      });
+
+    await expect(
+      h.service.prepareCheckout(userId, 'vip-month', quote.quoteId!, checkoutKey),
+    ).resolves.toMatchObject({
+      experimentId: EXPERIMENT_ID,
+      variant: 'treatment',
+      payablePriceRials: 90_000,
+    });
+    expect(h.eventRepo.findOne).toHaveBeenNthCalledWith(1, {
+      where: {
+        userId,
+        type: EventType.PURCHASE,
+        idempotencyKey: purchaseEventKey,
+      },
+    });
   });
 
   it('rejects a quote after the user purchases in the meantime', async () => {
