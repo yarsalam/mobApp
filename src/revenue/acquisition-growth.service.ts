@@ -208,11 +208,11 @@ export class AcquisitionGrowthService {
       row.newUsers += 1;
       if (user.isCompleted) row.profileCompletedUsers += 1;
       const ageMs = now.getTime() - new Date(user.createdAt).getTime();
-      if (ageMs >= 7 * DAY_MS) {
+      if (ageMs >= 14 * DAY_MS) {
         row.d7EligibleUsers += 1;
         d7Users.add(user.id);
       }
-      if (ageMs >= 30 * DAY_MS) {
+      if (ageMs >= 37 * DAY_MS) {
         row.d30EligibleUsers += 1;
         d30Users.add(user.id);
       }
@@ -366,8 +366,8 @@ export class AcquisitionGrowthService {
       rows,
       interpretation: 'observational_descriptive_only; CAC is null unless explicit cost entries exist for the same source, medium, campaign and currency; gross product purchase revenue is based on fulfilled commercial purchase events and excludes wallet top-ups; refunds and chargebacks are not yet reconciled; no causal lift or LTV improvement is inferred',
       limitations: [
-        'D7 retention is measured in days 7–13 after registration and only among cohorts at least 7 days old.',
-        'D30 retention is measured in days 30–36 after registration and only among cohorts at least 30 days old.',
+        'D7 retention is measured in days 7–13 after registration and only among cohorts at least 14 days old (fully matured window).',
+        'D30 retention is measured in days 30–36 after registration and only among cohorts at least 37 days old (fully matured window).',
         'Meaningful interaction is LIKE, SUPERLIKE, MATCH or MESSAGE_SENT.',
         'Gross revenue is currently available only in IRT from the commercial purchase event ledger.',
         'Google Search Console, Bing Webmaster and AI answer citation/impression feeds are not automatically imported by this endpoint.',
