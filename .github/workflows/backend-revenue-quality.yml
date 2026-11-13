@@ -102,6 +102,12 @@ jobs:
           REDIS_INTEGRATION_URL: redis://127.0.0.1:6379/15
         run: npm test -- --runInBand pricing-experiment.redis.integration.spec.ts
 
+      - name: Verify pricing experiment cohort attribution against MySQL
+        env:
+          MYSQL_INTEGRATION_URL: mysql://root:test-root@127.0.0.1:3306/yarsalam_test
+          REDIS_INTEGRATION_URL: redis://127.0.0.1:6379/15
+        run: npm test -- --runInBand pricing-experiment.mysql.integration.spec.ts
+
       - name: Compile backend
         run: npm run build
 
