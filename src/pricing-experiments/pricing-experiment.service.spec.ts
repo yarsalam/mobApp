@@ -362,6 +362,9 @@ describe('PricingExperimentService', () => {
       .mockResolvedValueOnce({
         metadata: {
           bundleCode: 'vip-month',
+          isCommercialPurchase: true,
+          amountRials: 90_000,
+          currency: 'IRT',
           pricingExperiment: {
             experimentId: EXPERIMENT_ID,
             assignmentId: payload.assignmentId,
