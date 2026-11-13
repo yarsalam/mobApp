@@ -264,11 +264,38 @@ export class PricingExperimentService {
     `;
     await this.redis.eval(cleanup, 2, reservationsKey, amountsKey, String(Date.now()));
 
+    const spentKey = this.budgetSpentKey(experimentId);
     const [spentRaw, reservedRaw] = await Promise.all([
-      this.redis.get(this.budgetSpentKey(experimentId)),
+      this.redis.get(spentKey),
       this.redis.hvals(amountsKey),
     ]);
-    const spentDiscountRials = Math.max(0, Number(spentRaw ?? 0) || 0);
+
+    let spentDiscountRials = Math.max(0, Number(spentRaw ?? 0) || 0);
+    if (spentRaw === null) {
+      // Redis normally persists this counter; if its key was lost, rebuild the
+      // committed amount from immutable PURCHASE events before accepting more
+      // discounts. SET NX prevents racing initializers from overwriting a
+      // concurrently committed wallet purchase.
+      const ledger = await this.events
+        .createQueryBuilder('event')
+        .select(
+          "COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.discountRials')) AS DECIMAL(20,0))), 0)",
+          'spentRials',
+        )
+        .where('event.type = :purchaseType', {
+          purchaseType: EventType.PURCHASE,
+        })
+        .andWhere(
+          "JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.experimentId')) = :experimentId",
+          { experimentId },
+        )
+        .getRawOne();
+      const ledgerSpent = Math.max(0, Number(ledger?.spentRials ?? 0) || 0);
+      await this.redis.set(spentKey, String(ledgerSpent), 'NX');
+      const current = await this.redis.get(spentKey);
+      spentDiscountRials = Math.max(ledgerSpent, Number(current ?? 0) || 0);
+    }
+
     const reservedDiscountRials = reservedRaw.reduce(
       (sum, value) => sum + Math.max(0, Number(value) || 0),
       0,
