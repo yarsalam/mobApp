@@ -16,7 +16,7 @@ import { CreateAcquisitionCostDto } from './dto/create-acquisition-cost.dto';
 import { acquisitionTouchFromUserMetadata } from './acquisition-attribution';
 
 const SUPPORTED_CURRENCIES: AcquisitionCostCurrency[] = ['IRT', 'USDT', 'BTC', 'USD'];
-const ACTIVE_EVENTS = [
+const ACTIVE_EVENTS: EventType[] = [
   EventType.APP_OPEN,
   EventType.LOGIN,
   EventType.PROFILE_VIEW,
@@ -25,7 +25,7 @@ const ACTIVE_EVENTS = [
   EventType.MATCH,
   EventType.MESSAGE_SENT,
 ];
-const MEANINGFUL_EVENTS = [
+const MEANINGFUL_EVENTS: EventType[] = [
   EventType.LIKE,
   EventType.SUPERLIKE,
   EventType.MATCH,
@@ -75,7 +75,8 @@ export class AcquisitionGrowthService {
   ) {}
 
   async createCost(input: CreateAcquisitionCostDto, createdBy: string) {
-    const source = input.source.trim().toLowerCase().replace(/\s+/g, '_');
+    const normalizedSource = normalizeAcquisitionTouch({ source: input.source });
+    const source = normalizedSource.source;
     if (!source || source.length > 80) {
       throw new BadRequestException('source is invalid');
     }
@@ -225,7 +226,7 @@ export class AcquisitionGrowthService {
       if (!Number.isFinite(eventAt) || eventAt < createdAt) continue;
       const daysSinceRegistration = Math.floor((eventAt - createdAt) / DAY_MS);
 
-      if (MEANINGFUL_EVENTS.includes(event.type)) {
+      if (MEANINGFUL_EVENTS.includes(event.type) && daysSinceRegistration <= 30) {
         firstInteractionUsers.add(event.userId);
       }
       if (d7Users.has(event.userId) && daysSinceRegistration >= 7 && daysSinceRegistration < 14 && ACTIVE_EVENTS.includes(event.type)) {
@@ -347,7 +348,7 @@ export class AcquisitionGrowthService {
       unit: currency === 'IRT' ? 'rial' : 'native_currency_units',
       periodDays: days,
       attributionModel: 'first_touch',
-      costCoverage: costRows.length > 0 ? 'partial_or_complete' : 'no_cost_data',
+      costCoverage: costRows.length > 0 ? 'cost_data_present_completeness_unverified' : 'no_cost_data',
       rows,
       interpretation: 'observational_descriptive_only; CAC is null unless explicit cost entries exist for the same source, medium, campaign and currency; gross product purchase revenue is based on fulfilled commercial purchase events and excludes wallet top-ups; refunds and chargebacks are not yet reconciled; no causal lift or LTV improvement is inferred',
       limitations: [
