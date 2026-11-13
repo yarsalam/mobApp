@@ -31,6 +31,8 @@ on:
       - "scripts/ai-eval/**"
       - "python-ai/staging-base-images/**"
       - "python-ai/services/ai_moderation/**"
+      - "python-ai/services/ai_feedback/**"
+      - "python-ai/tests/test_ai_feedback_contract.py"
       - "python-ai/services/embedded_ai/**"
       - ".github/workflows/staging-ai-lab-validation.yml"
   workflow_dispatch:
