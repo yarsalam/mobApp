@@ -310,6 +310,25 @@ export class AuthRegistrationService {
       },
     } as any);
 
+    // Keep an append-only touch history for last-touch analysis. The client
+    // capture timestamp is part of the idempotency digest, so a retried sync
+    // does not generate duplicate touch events.
+    const touchDigest = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(lastTouch))
+      .digest('hex')
+      .slice(0, 48);
+    await this.userEventService.log({
+      userId,
+      type: EventType.LOGIN,
+      metadata: {
+        via: 'acquisition_touch_sync',
+        kind: 'acquisition_touch',
+        acquisitionTouch: lastTouch,
+      },
+      idempotencyKey: `acquisition:last_touch:${touchDigest}`,
+    });
+
     return { success: true };
   }
 
