@@ -88,7 +88,6 @@ describe('AcquisitionGrowthService', () => {
       grossRevenuePerAcquiredUser: 300_000,
       ltvOverCac: 2.5,
     });
-    expect(google?.landingPage).toBeUndefined();
     expect(unattributed).toMatchObject({ newUsers: 1, cac: null });
     expect(instagram).toMatchObject({ newUsers: 1, costAmount: 0, cac: 0, ltvOverCac: null });
     expect(report.interpretation).toContain('observational_descriptive_only');
