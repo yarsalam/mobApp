@@ -84,6 +84,7 @@ import { RelationStatusModule } from 'src/relation-status/relation-status.module
 import { NotificationModule } from 'src/notification/notification.module';
 import { AiImageModule } from 'src/ai-image/ai-image.module';
 import { UserDeviceModule } from 'src/user-device/user-device.module';
+import { PricingExperimentModule } from 'src/pricing-experiments/pricing-experiment.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([
@@ -137,6 +138,7 @@ import { UserDeviceModule } from 'src/user-device/user-device.module';
     BadgeModule,
     UserMetricsModule,
     UserPhonesModule,
+    PricingExperimentModule,
   ],
   controllers: [
     AdminApiController,
