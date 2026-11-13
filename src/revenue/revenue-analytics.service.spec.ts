@@ -290,8 +290,8 @@ describe('RevenueAnalyticsService customer RFM segmentation', () => {
       historicalDormantBuyers: 1,
       purchasesInWindow: 13,
       fulfilledRevenueRialsInWindow: 31500,
-      lifetimeRepeatBuyers: 6,
-      lifetimeFrequentBuyers: 3,
+      lifetimeIrtRepeatBuyers: 6,
+      lifetimeIrtFrequentBuyers: 3,
       topQuartileAtRiskBuyers: 1,
       activeNeverPurchasedUsers: 17,
       invalidAggregateRows: 0,
@@ -319,7 +319,7 @@ describe('RevenueAnalyticsService customer RFM segmentation', () => {
     expect(result.protection).toMatchObject({
       previouslyPurchasedUsersExcludedFromFirstPurchaseDiscounts: true,
       previouslyPurchasedUsersProtected: 7,
-      repeatBuyersProtected: 6,
+      repeatIrtBuyersProtected: 6,
       firstPurchaseCandidatePool: 17,
       status: 'analytics_only_no_discount_is_applied',
     });
