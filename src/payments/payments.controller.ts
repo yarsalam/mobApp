@@ -167,6 +167,16 @@ export class PaymentsController {
       ...(pricingCheckout ? { pricingExperiment: pricingCheckout } : {}),
     });
 
+    // Move a treatment discount from reserved to spent only after fulfillment
+    // and the immutable PURCHASE event have both been recorded.
+    if (pricingCheckout) {
+      await this.pricingExperiment.commitCheckoutReservation(
+        userId,
+        pricingCheckout,
+        stableKey,
+      );
+    }
+
     let promotionAttribution: 'not_supplied' | 'recorded' | 'failed' = 'not_supplied';
     if (promotionId) {
       try {
