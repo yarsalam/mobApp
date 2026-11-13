@@ -99,6 +99,64 @@ describe('AcquisitionGrowthService', () => {
     expect(report.interpretation).toContain('wallet top-ups');
   });
 
+  it('records cost entries idempotently and rejects a reused key with different values', async () => {
+    const h = makeService();
+    const input = {
+      source: 'google',
+      medium: 'organic',
+      campaign: 'trust',
+      campaignId: 'g-01',
+      category: 'media' as const,
+      amount: 123_450,
+      currency: 'IRT' as const,
+      occurredAt: '2026-11-13T10:00:00.000Z',
+      notes: 'invoice-42',
+      idempotencyKey: 'cost-key-0001',
+    };
+
+    const first = await h.service.createCost(input, 'superadmin-1');
+    expect(first).toMatchObject({
+      success: true,
+      duplicate: false,
+      cost: {
+        source: 'google_organic',
+        medium: 'organic',
+        campaignId: 'g-01',
+        amount: '123450.00',
+        currency: 'IRT',
+      },
+    });
+
+    h.costRepo.findOne.mockResolvedValueOnce(first.cost);
+    const retry = await h.service.createCost(input, 'superadmin-1');
+    expect(retry).toMatchObject({success: true, duplicate: true});
+    expect(h.costRepo.save).toHaveBeenCalledTimes(1);
+
+    h.costRepo.findOne.mockResolvedValueOnce(first.cost);
+    await expect(
+      h.service.createCost({...input, amount: 123_451}, 'superadmin-1'),
+    ).rejects.toThrow('idempotencyKey was already used for a different cost entry');
+  });
+
+  it('keeps explicit zero cost distinct from missing cost and rejects malformed currencies', async () => {
+    const h = makeService();
+    const input = {
+      source: 'instagram',
+      category: 'media' as const,
+      amount: 0,
+      currency: 'IRT' as const,
+      occurredAt: '2026-11-13T10:00:00.000Z',
+      idempotencyKey: 'cost-key-zero-01',
+    };
+    await h.service.createCost(input, 'superadmin-1');
+    expect(h.costRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({amount: '0.00', source: 'instagram'}),
+    );
+    await expect(
+      h.service.createCost({...input, currency: 'EUR' as any, idempotencyKey: 'cost-key-eur-01'}, 'superadmin-1'),
+    ).rejects.toThrow('Unsupported acquisition cost currency');
+  });
+
   it('does not fabricate a CAC when no matching cost entries exist', async () => {
     const h = makeService();
     h.costRepo.find.mockResolvedValueOnce([]);
