@@ -568,4 +568,261 @@ export class RevenueAnalyticsService {
       evaluationSamples: evaluations.length,
     };
   }
-}
+ 
+  /**
+   * RFM segmentation from successfully fulfilled commercial IRT bundle purchases.
+   * Frequency and monetary value use the selected window; recency uses lifetime
+   * purchase history so dormant historical buyers are not mistaken for prospects.
+   */
+  async customerSegments(days = 90) {
+    if (!Number.isInteger(days) || days < 30 || days > 3650) {
+      throw new Error('days must be an integer between 30 and 3650');
+    }
+
+    const since = sinceDays(days);
+    const amountExpr =
+      "CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.amountRials')), '0') AS DECIMAL(20,0))";
+    const purchaseRows = await this.events
+      .createQueryBuilder('e')
+      .innerJoin('e.user', 'customer')
+      .select('e.userId', 'userId')
+      .addSelect(
+        'SUM(CASE WHEN e.createdAt >= :since THEN 1 ELSE 0 END)',
+        'frequency',
+      )
+      .addSelect('COUNT(*)', 'lifetimeFrequency')
+      .addSelect('MAX(e.createdAt)', 'lastPurchaseAt')
+      .addSelect(
+        `SUM(CASE WHEN e.createdAt >= :since THEN ${amountExpr} ELSE 0 END)`,
+        'monetaryRials',
+      )
+      .where('e.type = :purchaseType', { purchaseType: EventType.PURCHASE })
+      .andWhere('customer.status = :activeStatus', { activeStatus: 'active' })
+      .andWhere("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.isCommercialPurchase')) = 'true'")
+      .andWhere("JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.currency')) = 'IRT'")
+      .andWhere(`${amountExpr} > 0`)
+      .andWhere('e.createdAt <= :now', { now: new Date() })
+      .setParameter('since', since)
+      .groupBy('e.userId')
+      .getRawMany();
+
+    // First-purchase eligibility is lifetime-based, not window-based. This
+    // prevents a previous buyer with no recent transaction from being treated
+    // as a new prospect.
+    const [activeUserCount, neverPurchasedActiveUsers] = await Promise.all([
+      this.users.count({ where: { status: 'active' } }),
+      this.users
+        .createQueryBuilder('customer')
+        .leftJoin(
+          PartitionedEvent,
+          'purchase',
+          `purchase.userId = customer.id
+            AND purchase.type = :purchaseType
+            AND JSON_UNQUOTE(JSON_EXTRACT(purchase.metadata, '$.isCommercialPurchase')) = 'true'`,
+          { purchaseType: EventType.PURCHASE },
+        )
+        .where('customer.status = :activeStatus', { activeStatus: 'active' })
+        .andWhere('purchase.id IS NULL')
+        .getCount(),
+    ]);
+
+    const definitions = [
+      { key: 'frequent_active', rule: `3+ purchases in ${days} days; last purchase within 30 days` },
+      { key: 'frequent_at_risk', rule: `3+ purchases in ${days} days; last purchase more than 30 days ago` },
+      { key: 'repeat_active', rule: `2 purchases in ${days} days; last purchase within 30 days` },
+      { key: 'repeat_at_risk', rule: `2 purchases in ${days} days; last purchase more than 30 days ago` },
+      { key: 'single_purchase_window_active', rule: `1 purchase in ${days} days; last purchase within 30 days` },
+      { key: 'single_purchase_window_lapsed', rule: `1 purchase in ${days} days; last purchase more than 30 days ago` },
+      { key: 'historical_dormant', rule: `0 purchases in ${days} days; at least 1 successful commercial purchase before the window` },
+    ] as const;
+
+    type SegmentKey = (typeof definitions)[number]['key'];
+    type MonetaryTier = 'M1' | 'M2' | 'M3' | 'M4';
+    type MonetaryBucket = { customers: number; revenueRials: number };
+    type SegmentStats = {
+      customers: number;
+      purchases: number;
+      revenueRials: number;
+      monetaryTiers: Record<MonetaryTier, MonetaryBucket>;
+    };
+    const emptyMonetaryTiers = (): Record<MonetaryTier, MonetaryBucket> => ({
+      M1: { customers: 0, revenueRials: 0 },
+      M2: { customers: 0, revenueRials: 0 },
+      M3: { customers: 0, revenueRials: 0 },
+      M4: { customers: 0, revenueRials: 0 },
+    });
+    const grouped = Object.fromEntries(
+      definitions.map(({ key }) => [
+        key,
+        {
+          customers: 0,
+          purchases: 0,
+          revenueRials: 0,
+          monetaryTiers: emptyMonetaryTiers(),
+        },
+      ]),
+    ) as Record<SegmentKey, SegmentStats>;
+
+    const isValidRow = (row: any): boolean => {
+      const userId = Number(row.userId);
+      const frequency = Math.trunc(finite(row.frequency));
+      const lifetimeFrequency = Math.trunc(finite(row.lifetimeFrequency));
+      const monetaryRials = finite(row.monetaryRials);
+      const lastPurchase = new Date(row.lastPurchaseAt);
+      return (
+        Number.isSafeInteger(userId) &&
+        userId > 0 &&
+        lifetimeFrequency > 0 &&
+        frequency >= 0 &&
+        frequency <= lifetimeFrequency &&
+        Number.isFinite(lastPurchase.getTime()) &&
+        Number.isFinite(monetaryRials) &&
+        monetaryRials >= 0 &&
+        (frequency === 0 || monetaryRials > 0)
+      );
+    };
+    const validRows = purchaseRows.filter(isValidRow);
+    const invalidRows = purchaseRows.length - validRows.length;
+
+    // Monetary tiers are data-derived quartiles among active IRT purchasers in
+    // this window. Equal amounts share the same tier; ties are never split.
+    const monetaryValues = validRows
+      .filter((row) => Math.trunc(finite(row.frequency)) > 0)
+      .map((row) => finite(row.monetaryRials))
+      .sort((a, b) => a - b);
+    const quantile = (p: number): number | null => {
+      if (monetaryValues.length === 0) return null;
+      const position = (monetaryValues.length - 1) * p;
+      const lower = Math.floor(position);
+      const upper = Math.ceil(position);
+      if (lower === upper) return monetaryValues[lower];
+      const fraction = position - lower;
+      return monetaryValues[lower] + (monetaryValues[upper] - monetaryValues[lower]) * fraction;
+    };
+    const monetaryCutoffs = {
+      p25: quantile(0.25),
+      p50: quantile(0.5),
+      p75: quantile(0.75),
+    };
+    const resolveMonetaryTier = (amount: number): MonetaryTier => {
+      if (monetaryCutoffs.p25 === null || amount <= monetaryCutoffs.p25) return 'M1';
+      if (monetaryCutoffs.p50 !== null && amount <= monetaryCutoffs.p50) return 'M2';
+      if (monetaryCutoffs.p75 !== null && amount <= monetaryCutoffs.p75) return 'M3';
+      return 'M4';
+    };
+
+    let activePurchasedInWindow = 0;
+    let periodPurchases = 0;
+    let periodRevenueRials = 0;
+    let lifetimeIrtRepeatBuyers = 0;
+    let lifetimeIrtFrequentBuyers = 0;
+    let topQuartileAtRiskBuyers = 0;
+
+    for (const row of validRows) {
+      const frequency = Math.trunc(finite(row.frequency));
+      const lifetimeFrequency = Math.trunc(finite(row.lifetimeFrequency));
+      const monetaryRials = finite(row.monetaryRials);
+      const lastPurchase = new Date(row.lastPurchaseAt);
+      const recencyDays = Math.max(
+        0,
+        Math.floor((Date.now() - lastPurchase.getTime()) / 86_400_000),
+      );
+      const segment: SegmentKey =
+        frequency === 0
+          ? 'historical_dormant'
+          : frequency >= 3
+            ? recencyDays <= 30
+              ? 'frequent_active'
+              : 'frequent_at_risk'
+            : frequency === 2
+              ? recencyDays <= 30
+                ? 'repeat_active'
+                : 'repeat_at_risk'
+              : recencyDays <= 30
+                ? 'single_purchase_window_active'
+                : 'single_purchase_window_lapsed';
+
+      grouped[segment].customers += 1;
+      grouped[segment].purchases += frequency;
+      grouped[segment].revenueRials += monetaryRials;
+      periodPurchases += frequency;
+      periodRevenueRials += monetaryRials;
+      if (frequency > 0) {
+        activePurchasedInWindow += 1;
+        const tier = resolveMonetaryTier(monetaryRials);
+        grouped[segment].monetaryTiers[tier].customers += 1;
+        grouped[segment].monetaryTiers[tier].revenueRials += monetaryRials;
+        if (tier === 'M4' && (segment === 'frequent_at_risk' || segment === 'repeat_at_risk')) {
+          topQuartileAtRiskBuyers += 1;
+        }
+      }
+      if (lifetimeFrequency >= 2) lifetimeIrtRepeatBuyers += 1;
+      if (lifetimeFrequency >= 3) lifetimeIrtFrequentBuyers += 1;
+    }
+
+    const activePreviouslyPurchasedCustomers = Math.max(
+      0,
+      activeUserCount - neverPurchasedActiveUsers,
+    );
+    const activeIrtPreviouslyPurchasedCustomers = validRows.length;
+    return {
+      currency: 'IRT',
+      unit: 'rial',
+      periodDays: days,
+      source:
+        "active users' PURCHASE events with isCommercialPurchase=true, currency=IRT and positive amountRials; written after bundle fulfilment succeeds",
+      metrics: {
+        activePreviouslyPurchasedCustomers,
+        activeIrtPreviouslyPurchasedCustomers,
+        activePurchasedInWindow,
+        historicalDormantBuyers: grouped.historical_dormant.customers,
+        purchasesInWindow: periodPurchases,
+        fulfilledRevenueRialsInWindow: Math.round(periodRevenueRials),
+        lifetimeIrtRepeatBuyers,
+        lifetimeIrtFrequentBuyers,
+        topQuartileAtRiskBuyers,
+        activeNeverPurchasedUsers: neverPurchasedActiveUsers,
+        invalidAggregateRows: invalidRows,
+      },
+      segments: definitions.map(({ key, rule }) => ({
+        key,
+        rule,
+        ...grouped[key],
+        revenueRials: Math.round(grouped[key].revenueRials),
+        monetaryTiers: Object.fromEntries(
+          Object.entries(grouped[key].monetaryTiers).map(([tier, bucket]) => [
+            tier,
+            {
+              customers: bucket.customers,
+              revenueRials: Math.round(bucket.revenueRials),
+            },
+          ]),
+        ),
+      })),
+      monetaryQuartiles: {
+        unit: 'rial',
+        p25: monetaryCutoffs.p25 === null ? null : Math.round(monetaryCutoffs.p25),
+        p50: monetaryCutoffs.p50 === null ? null : Math.round(monetaryCutoffs.p50),
+        p75: monetaryCutoffs.p75 === null ? null : Math.round(monetaryCutoffs.p75),
+        definition:
+          'per-customer fulfilled commercial purchase sum in the selected window; quartiles are calculated only among active-window purchasers; tied amounts remain together in the lower tier',
+      },
+      protection: {
+        previouslyPurchasedUsersExcludedFromFirstPurchaseDiscounts: true,
+        previouslyPurchasedUsersProtected: activePreviouslyPurchasedCustomers,
+        repeatIrtBuyersProtected: lifetimeIrtRepeatBuyers,
+        firstPurchaseCandidatePool: neverPurchasedActiveUsers,
+        eligibilityRule:
+          'active account with no lifetime successfully fulfilled commercial PURCHASE event; past purchasers remain excluded even when they have no purchase in the selected window',
+        status: 'analytics_only_no_discount_is_applied',
+      },
+      rfmDefinitions: {
+        recency: 'whole days since the latest lifetime successfully fulfilled commercial purchase',
+        frequency: `number of successfully fulfilled commercial purchases in the selected rolling ${days}-day window`,
+        monetary: 'sum of amountRials on purchases in the selected window, kept in IRT only',
+        monetaryTiers: 'M1-M4 based on empirical 25th, 50th and 75th percentiles; equal monetary amounts are never split',
+        recencyRiskBoundaryDays: 30,
+        frequentPurchaseThresholdInWindow: 3,
+      },
+    };
+  }}

@@ -1,8 +1,11 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Get,
+  Patch,
   Query,
+  Param,
   UseGuards,
 } from '@nestjs/common';
 
@@ -12,6 +15,7 @@ import { RevenueAttributionService } from '../../../revenue/revenue-attribution.
 import { RevenueTrendService } from '../../../revenue/revenue-trend.service';
 import { RevenueAnalyticsService } from '../../../revenue/revenue-analytics.service';
 import { PaymentCurrency } from '../../../payments/entities/payment.entity';
+import { PricingExperimentService } from '../../../pricing-experiments/pricing-experiment.service';
 
 const SUPPORTED_CURRENCIES: PaymentCurrency[] = ['IRT', 'USDT', 'BTC', 'USD'];
 
@@ -23,6 +27,7 @@ export class AdminApiRevenueController {
     private readonly revenueIntelligence: RevenueIntelligenceService,
     private readonly revenueTrend: RevenueTrendService,
     private readonly revenueAnalytics: RevenueAnalyticsService,
+    private readonly pricingExperiments: PricingExperimentService,
   ) {}
 
   private parseBoundedInt(
@@ -258,6 +263,48 @@ export class AdminApiRevenueController {
       this.parseCurrency(currencyInput),
       this.parseBoundedInt(days, 365, 1, 3650, 'days'),
     );
+  }
+
+  @Get('customer-segments')
+  async customerSegments(@Query('days') days?: string) {
+    return this.revenueAnalytics.customerSegments(
+      this.parseBoundedInt(days, 90, 30, 3650, 'days'),
+    );
+  }
+
+  @Get('pricing-experiments/:experimentId')
+  async pricingExperimentReport(
+    @Param('experimentId') experimentId: string,
+    @Query('days') days?: string,
+  ) {
+    if (!/^[A-Za-z0-9._:-]{1,96}$/.test(experimentId)) {
+      throw new BadRequestException('experimentId is invalid');
+    }
+    return this.pricingExperiments.getExperimentReport(
+      experimentId,
+      this.parseBoundedInt(days, 90, 1, 3650, 'days'),
+    );
+  }
+
+  @Get('pricing-experiments/:experimentId/config')
+  async pricingExperimentSettings(
+    @Param('experimentId') experimentId: string,
+  ) {
+    return this.pricingExperiments.getAdminSettings(experimentId);
+  }
+
+  @Patch('pricing-experiments/:experimentId/config')
+  async updatePricingExperimentSettings(
+    @Param('experimentId') experimentId: string,
+    @Body() body: {
+      enabled: boolean;
+      discountBps: number;
+      treatmentRateBps: number;
+      maxDiscountBudgetRials: number;
+      endsAt: string;
+    },
+  ) {
+    return this.pricingExperiments.updateAdminSettings(experimentId, body);
   }
 
   @Get('forecast-accuracy')

@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends gcc curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir fastapi 'uvicorn[standard]' pydantic pydantic-settings redis slowapi sqlalchemy aiomysql python-multipart python-dotenv \
+    && useradd -m -u 1000 appuser \
+    && mkdir -p /app/models \
+    && chown -R appuser:appuser /app
+USER appuser
+CMD ["bash"]

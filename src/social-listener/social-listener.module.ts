@@ -11,5 +11,6 @@ import { HttpModule } from '@nestjs/axios';
   ],
   controllers: [SocialListenerController],
   providers: [SocialListenerService],
+  exports: [SocialListenerService],
 })
 export class SocialListenerModule {}

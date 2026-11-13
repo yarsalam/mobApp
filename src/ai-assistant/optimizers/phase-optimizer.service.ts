@@ -17,7 +17,7 @@ export interface PhaseOptimizationPlan {
     guidanceId: string;
     expectedImpact: string;
   }[];
-  estimatedTimeToNextPhase: string;
+  estimatedTimeToNextPhase: string | null;
 }
 
 @Injectable()
@@ -52,17 +52,12 @@ export class PhaseOptimizerService {
       }));
 
     // ← Fix: division by zero
-    const progress =
-      (phase.nextPhaseThreshold ?? 0) > 0
-        ? (phase.score / phase.nextPhaseThreshold) * 100
-        : 100;
-
     const plan: PhaseOptimizationPlan = {
       userId,
       currentPhase: phase.phase,
       targetPhase,
       steps,
-      estimatedTimeToNextPhase: this.estimateTime(phase.phase, progress),
+      estimatedTimeToNextPhase: this.estimateTime(phase.phase),
     };
 
     await this.userEventService.log({
@@ -78,18 +73,11 @@ export class PhaseOptimizerService {
     return plan;
   }
 
-  private estimateTime(currentPhase: string, progress: number): string {
-    if (currentPhase === 'cold') {
-      if (progress < 30) return '۵-۷ روز';
-      if (progress < 70) return '۳-۵ روز';
-      return '۱-۲ روز';
+  private estimateTime(currentPhase: string): string | null {
+    if (currentPhase === 'hot') {
+      return 'شما در بالاترین فاز ثبت‌شده هستید.';
     }
-    if (currentPhase === 'warm') {
-      if (progress < 30) return '۷-۱۰ روز';
-      if (progress < 70) return '۴-۷ روز';
-      return '۲-۳ روز';
-    }
-    return 'شما در بالاترین فاز هستید';
+    return null;
   }
 
   async trackProgress(userId: number): Promise<void> {
@@ -118,17 +106,12 @@ export class PhaseOptimizerService {
         expectedImpact: problem.impact ?? 'بهبود عملکرد',
       }));
 
-    const progress =
-      (phase.nextPhaseThreshold ?? 0) > 0
-        ? (phase.score / phase.nextPhaseThreshold) * 100
-        : 100;
-
     const plan: PhaseOptimizationPlan = {
       userId,
       currentPhase: phase.phase,
       targetPhase,
       steps: guidances,
-      estimatedTimeToNextPhase: this.estimateTime(phase.phase, progress),
+      estimatedTimeToNextPhase: this.estimateTime(phase.phase),
     };
 
     await this.userEventService.log({
@@ -162,11 +145,11 @@ export class PhaseOptimizerService {
     }
     if (problem.category === 'engagement') {
       if (problem.description.includes('لایک کافی'))
-        return '❤️ روزانه ۵ نفر رو لایک کن';
+        return '❤️ پروفایل‌های متناسب را مرور کن و فقط در صورت علاقه تعامل ثبت کن.';
       if (problem.description.includes('هیچ پیامی'))
-        return '💬 با ۳ نفر گفتگو رو شروع کن';
+        return '💬 در صورت مشاهده فردی با علایق مشترک، گفتگویی محترمانه را شروع کن.';
       if (problem.description.includes('نرخ تبدیل'))
-        return '📊 عکس اصلی رو عوض کن';
+        return '📊 برای تصمیم درباره عکس اصلی، داده‌های هم‌دوره و قابل‌مقایسه را بررسی کن.';
     }
     return problem.description;
   }

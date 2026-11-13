@@ -31,6 +31,7 @@ import { CardTransferProvider } from './wallet/providers/card-transfer.provider'
 import { CryptoProvider } from './wallet/providers/crypto.provider';
 import { ManualVerifierService } from './wallet/verification/manual-verifier.service';
 import { CryptoWatcherProcessor } from './wallet/verification/crypto-watcher.processor';
+import { PricingExperimentModule } from 'src/pricing-experiments/pricing-experiment.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { CryptoWatcherProcessor } from './wallet/verification/crypto-watcher.pro
     SuggestionModule,
     AiFeedbackModule,
     FeatureStoreModule,
+    PricingExperimentModule,
   ],
   controllers: [PaymentsController],
   providers: [

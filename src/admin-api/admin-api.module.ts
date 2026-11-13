@@ -55,9 +55,6 @@ import { Block } from 'src/report-block/entities/block.entity';
 import { SEOActivity } from 'src/seo/entities/seo-activity.entity';
 import { SEOMetrics } from 'src/seo/entities/seo-metrics.entity';
 import { PartitionedEvent } from 'src/user-event/entities/partitioned-event.entity';
-import { SERPFeatureHunterService } from 'src/seo/services/serp-feature-hunter.service';
-import { CompetitorSEOService } from 'src/seo/services/competitor-seo.service';
-import { CompetitorData } from 'src/seo/entities/competitor-data.entity';
 import { BrandSentimentService } from 'src/seo/services/brand-sentiment.service';
 import { DiversityOptimizerService } from 'src/suggestion/optimization/diversity-optimizer.service';
 import { ConversionAnalyticsService } from 'src/ai-feedback/services/conversion-analytics.service';
@@ -87,6 +84,7 @@ import { RelationStatusModule } from 'src/relation-status/relation-status.module
 import { NotificationModule } from 'src/notification/notification.module';
 import { AiImageModule } from 'src/ai-image/ai-image.module';
 import { UserDeviceModule } from 'src/user-device/user-device.module';
+import { PricingExperimentModule } from 'src/pricing-experiments/pricing-experiment.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([
@@ -105,7 +103,6 @@ import { UserDeviceModule } from 'src/user-device/user-device.module';
       SEOActivity,
       SEOMetrics,
       PartitionedEvent,
-      CompetitorData,
       AiFeedback,
       UserCohort,
       UserDevice,
@@ -141,6 +138,7 @@ import { UserDeviceModule } from 'src/user-device/user-device.module';
     BadgeModule,
     UserMetricsModule,
     UserPhonesModule,
+    PricingExperimentModule,
   ],
   controllers: [
     AdminApiController,
@@ -174,8 +172,6 @@ import { UserDeviceModule } from 'src/user-device/user-device.module';
   ],
   providers: [
     AdminApiGuard,
-    SERPFeatureHunterService,
-    CompetitorSEOService,
     BrandSentimentService,
     DiversityOptimizerService,
     ConversionAnalyticsService,

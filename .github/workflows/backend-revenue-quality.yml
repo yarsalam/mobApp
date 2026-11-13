@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - "src/personality/**"
+      - "src/seo/**"
+      - "src/admin-api/controllers/seo/**"
+      - "src/admin-api/controllers/growth/seo-studio.controller.ts"
       - "src/feature-store/**"
       - "src/suggestion/scoring/**"
       - "src/ai-assistant/**"
@@ -17,10 +20,18 @@ on:
       - "src/redis/redis.service.ts"
       - "src/message/**"
       - "src/payments/**"
+      - "src/pricing-experiments/**"
+      - ".env.example"
+      - "src/feed/**"
+      - "src/user-metrics/**"
+      - "src/admin-api/controllers/growth/monetization.controller.ts"
+      - "src/admin-api/controllers/product/experiments.controller.ts"
       - "src/user-event/**"
       - "python-ai/services/ml_service/**"
       - "python-ai/tests/test_matching_scoring.py"
       - "python-ai/services/ai_moderation/**"
+      - "python-ai/services/ai_feedback/**"
+      - "python-ai/tests/test_ai_feedback_contract.py"
       - "python-ai/tests/test_ai_moderation_fail_closed.py"
       - "src/admin-api/controllers/revenue/**"
       - "package.json"
@@ -64,9 +75,15 @@ jobs:
         run: >-
           npm test -- --runInBand
           revenue-analytics.service.spec.ts
+          admin-api/controllers/revenue/admin-api-revenue.controller.spec.ts
           personality.service.spec.ts
           app.controller.spec.ts
           payments.service.spec.ts
+          payments.controller.spec.ts
+          pricing-experiments/pricing-experiment.service.spec.ts
+          product/product.controller.spec.ts
+          promotion-exposure.service.spec.ts
+          feed.controller.spec.ts
           wallet.service.spec.ts
           card-transfer.provider.spec.ts
           crypto.provider.spec.ts
@@ -74,8 +91,17 @@ jobs:
           wallet/verification/crypto-watcher.processor.spec.ts
           feature-store-rvenue.service.spec.ts
           ai-assistant/context/user-context.service.spec.ts
+          user-metrics/user-metrics.service.spec.ts
+          ai-assistant/llm/openrouter-client.service.spec.ts
+          ai-assistant/ai-assistant.service.spec.ts
+          ai-assistant/analyzers/problem-detector.service.spec.ts
+          ai-assistant/guidance/guidance-generator.service.spec.ts
+          ai-assistant/intent/intent-detector.service.spec.ts
+          ai-assistant/optimizers/phase-optimizer.service.spec.ts
+          feed/services/feed-promotion.service.spec.ts
           moderation/moderation.service.spec.ts
           database.config.spec.ts
+          seo/services/acquisition-growth.service.spec.ts
 
       - name: MySQL wallet concurrency and rollback integration tests
         env:
@@ -97,7 +123,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check pytest numpy scipy scikit-learn joblib fastapi pydantic httpx
       - name: Run LTV provenance and model integrity contracts
         working-directory: python-ai
-        run: python -m pytest -q tests/test_ai_revenue_predictor.py tests/test_revenue_feature_contract.py
+        run: python -m pytest -q tests/test_ai_revenue_predictor.py tests/test_revenue_feature_contract.py tests/test_ai_feedback_contract.py
 
   matching-python:
     runs-on: ubuntu-latest

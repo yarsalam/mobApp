@@ -3,11 +3,8 @@ import { Redis } from 'ioredis';
 import { randomUUID } from 'crypto';
 import { REDIS_CLIENT } from '../../redis/redis.constants';
 import { PromotionEngineService } from '../../payments/promotion-engine.service';
-import { PromotionExposureService } from '../../payments/promotion-exposure.service';
-import { UserEventService } from '../../user-event/user-event.service';
 import { FeedItem, PromotionConfig } from '../types/feed.types';
 import { FeedPhase } from '../types/feed-phase.interface';
-import { EventType } from 'src/user-event/type/event-type.enum';
 
 @Injectable()
 export class FeedPromotionService {
@@ -17,7 +14,7 @@ export class FeedPromotionService {
     profile: {
       variant: 'profile',
       title: 'پروفایلت رو کامل کن!',
-      subtitle: 'پروفایل کامل = ۵ برابر لایک بیشتر\nفقط چند دقیقه طول می‌کشه',
+      subtitle: 'اطلاعات و علایق واقعی‌ات را کامل‌تر ثبت کن.',
       ctaText: 'کامل کن',
       ctaColor: '#00BFFF',
       gradientColors: ['#383232', '#006994', '#1b1818'],
@@ -29,7 +26,7 @@ export class FeedPromotionService {
     boost: {
       variant: 'boost',
       title: 'دیده شو!',
-      subtitle: '۳۰ دقیقه در صدر لیست\n۱۰ برابر بازدید بیشتر',
+      subtitle: 'قابلیت Boost و شرایط نمایش آن را بررسی کن.',
       ctaText: 'بوست بزن',
       ctaColor: '#FFD700',
       gradientColors: ['#383232', '#4a2c00', '#1b1818'],
@@ -42,7 +39,7 @@ export class FeedPromotionService {
     vip: {
       variant: 'vip',
       title: 'VIP شو!',
-      subtitle: 'لایک نامحدود + اولویت همیشگی\nبدون محدودیت و دیده شدن بیشتر',
+      subtitle: 'مزایا و محدودیت‌های فعلی VIP را پیش از خرید بررسی کن.',
       ctaText: 'VIP فعال کن',
       ctaColor: '#00FFAA',
       gradientColors: ['#383232', '#006400', '#1b1818'],
@@ -66,9 +63,9 @@ export class FeedPromotionService {
       navigationParams: { type: 'credit' },
     },
     bundle: {
-      variant: 'credit',
+      variant: 'bundle',
       title: '🎁 بسته شروع',
-      subtitle: '۲۰ اعتبار + ۲ بوست\n۵۰٪ تخفیف ویژه',
+      subtitle: 'امکانات، قیمت و شرایط فعلی بسته را ببین.',
       ctaText: 'شروع کن',
       ctaColor: '#FFAA00',
       gradientColors: ['#383232', '#8B4513', '#1b1818'],
@@ -82,8 +79,6 @@ export class FeedPromotionService {
 
   constructor(
     private readonly promotionEngine: PromotionEngineService,
-    private readonly exposureService: PromotionExposureService,
-    private readonly userEventService: UserEventService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
@@ -130,35 +125,35 @@ export class FeedPromotionService {
       case 'boost':
         if (userPhase === 'cold') {
           personalized.title = 'اولین قدم رو بردار! 🚀';
-          personalized.subtitle = 'با Boost رایگان، ۱۰ برابر بیشتر دیده شو';
+          personalized.subtitle = 'قابلیت Boost و شرایط فعلی آن را بررسی کن.';
           personalized.ctaText = 'امتحان می‌کنم';
         } else if (userPhase === 'warm') {
           personalized.title = 'دیده شو! 🔥';
           personalized.subtitle =
-            '۳۰ دقیقه در صدر لیست • ۱۰ برابر بازدید بیشتر';
+            'مدت و شرایط نمایش Boost را پیش از خرید بررسی کن.';
           personalized.ctaText = 'Boost کن';
         } else {
           personalized.title = everPaid
             ? 'حرفه‌ای شو! 👑'
             : 'اولین بار ویژه 🎁';
           personalized.subtitle = everPaid
-            ? '۳۰ دقیقه صدرنشین باش و شانس مچ رو ببر بالا'
-            : '۳۰ دقیقه طلایی • مخصوص تو';
+            ? 'اگر به Boost نیاز داری، شرایط و مدت فعلی را بررسی کن.'
+            : 'جزئیات و شرایط فعلی Boost را ببین.';
           personalized.ctaText = everPaid ? 'Boost VIP' : 'شروع کن';
         }
         break;
       case 'vip':
         if (userPhase === 'cold') {
           personalized.title = 'VIP شدن چه مزایایی داره؟ 🤔';
-          personalized.subtitle = 'ببین چرا VIP ها ۵ برابر بیشتر مچ می‌شن';
+          personalized.subtitle = 'مزایای فعلی VIP را ببین؛ نتیجه Match تضمین نمی‌شود.';
           personalized.ctaText = 'می‌خوام بدونم';
         } else if (userPhase === 'warm') {
           personalized.title = 'VIP شو! ⭐';
-          personalized.subtitle = 'لایک نامحدود + اولویت همیشگی';
+          personalized.subtitle = 'مزایا و محدودیت‌های فعلی VIP را بررسی کن.';
           personalized.ctaText = 'VIP فعال کن';
         } else {
           personalized.title = 'ارتقا به VIP طلایی! 👑';
-          personalized.subtitle = 'بدون محدودیت، بدون توقف • مخصوص تو';
+          personalized.subtitle = 'شرایط و محدودیت‌های فعلی اشتراک را ببین.';
           personalized.ctaText = 'همین الان';
         }
         break;
@@ -173,7 +168,7 @@ export class FeedPromotionService {
           personalized.ctaText = 'اعتبار بگیر';
         } else {
           personalized.title = 'شارژ سریع اعتبار ⚡';
-          personalized.subtitle = 'پیام‌های نامحدود • مخصوص کاربران فعال';
+          personalized.subtitle = 'امکانات و شرایط فعلی خرید اعتبار را بررسی کن.';
           personalized.ctaText = 'شارژ کن';
         }
         break;
@@ -184,8 +179,8 @@ export class FeedPromotionService {
             : 'پروفایلت رو جذاب‌تر کن! 🎨';
         personalized.subtitle =
           userPhase === 'cold'
-            ? 'با پروفایل کامل، ۵ برابر بیشتر دیده می‌شی'
-            : 'عکس و توضیحات جدید = شانس بیشتر';
+            ? 'پروفایلت را با اطلاعات و عکس‌های واقعی کامل‌تر کن.'
+            : 'عکس‌ها و توضیحات واقعی و به‌روز اضافه کن.';
         personalized.ctaText =
           userPhase === 'cold' ? 'شروع می‌کنم' : 'ویرایش پروفایل';
         break;
@@ -220,23 +215,23 @@ export class FeedPromotionService {
         score: decision.score,
         phase: phase.phase,
         tone: 'soft_sell',
+        position: feedPosition,
+        features: decision.featuresSnapshot,
+        scoreKind: decision.scoreKind,
+        modelStatus: decision.modelStatus,
+        experimentId: decision.experimentId,
+        assignmentId: decision.assignmentId,
+        propensity: decision.propensity,
+        // Keep the exposure through the seven-day outcome window plus one
+        // worker interval so a matured negative outcome can be persisted.
+        createdAt: new Date().toISOString(),
       }),
       'EX',
-      3600,
+      8 * 24 * 3600,
     );
 
-    // ردیابی و لاگ
-    await this.exposureService.trackImpression(userId, decision.variant);
-    await this.userEventService.log({
-      userId,
-      type: EventType.PROMOTION_SHOWN,
-      metadata: {
-        variant: decision.variant,
-        score: decision.score,
-        position: feedPosition,
-        promotionId,
-      },
-    });
+    // Impression is recorded later by POST /feed/impression/:promotionId
+    // when the client confirms that this item is actually visible.
 
     return {
       id: promotionId,

@@ -1,0 +1,9 @@
+FROM python-ai-core:latest
+USER root
+RUN pip install --no-cache-dir numpy==1.26.4 \
+    && pip install --no-cache-dir torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir transformers sentence-transformers tokenizers safetensors accelerate slowapi textblob pandas nltk httpx \
+    && mkdir -p /app/model-cache \
+    && chown -R appuser:appuser /app/model-cache
+USER appuser
+CMD ["bash"]

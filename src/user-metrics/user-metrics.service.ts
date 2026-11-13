@@ -6,6 +6,7 @@ import { Between, EntityManager, MoreThan, Repository } from 'typeorm';
 import { PartitionedEvent } from 'src/user-event/entities/partitioned-event.entity';
 import { EventType } from 'src/user-event/type/event-type.enum';
 import { Message } from 'src/message/entities/message.entity';
+import { User } from 'src/users/entities/user.entity';
 
 export interface UserIntelligenceMetrics {
   totalEvents: number;
@@ -53,6 +54,9 @@ export class UserMetricsService {
 
     @InjectRepository(Message)
     private readonly messageRepo: Repository<Message>,
+
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
 
     private readonly entityManager: EntityManager,
   ) {}
@@ -165,15 +169,50 @@ export class UserMetricsService {
   // EXTRA METRICS
   // ───────────────────────────────────────────────────────────────────────────
 
+  private wholeDaysSince(value: Date | string | null | undefined): number | null {
+    if (!value) return null;
+    const date = value instanceof Date ? value : new Date(value);
+    if (!Number.isFinite(date.getTime())) return null;
+    return Math.max(0, Math.floor((Date.now() - date.getTime()) / 86400000));
+  }
+
+  private async getDaysSinceSignup(userId: number): Promise<number | null> {
+    const user = await this.userRepo.findOne({
+      where: { id: userId },
+      select: { createdAt: true },
+    });
+    return this.wholeDaysSince(user?.createdAt);
+  }
+
+  private async getDaysSinceLastPurchase(userId: number): Promise<number | null> {
+    const latestPaidPayment = await this.paymentRepo.findOne({
+      where: { userId, status: 'paid' },
+      order: { confirmedAt: 'DESC', createdAt: 'DESC' },
+      select: { confirmedAt: true, createdAt: true },
+    });
+    return this.wholeDaysSince(
+      latestPaidPayment?.confirmedAt ?? latestPaidPayment?.createdAt,
+    );
+  }
+
   async buildExtraMetrics(userId: number) {
-    const [retentionDays, boostUsed7d, pastPayments, messages7d, views7d] =
-      await Promise.all([
-        this.getRetentionDays(userId),
-        this.getBoostUsed7d(userId),
-        this.getPastPayments(userId),
-        this.getMessagesSent7d(userId),
-        this.getProfileViews7d(userId),
-      ]);
+    const [
+      retentionDays,
+      boostUsed7d,
+      pastPayments,
+      messages7d,
+      views7d,
+      daysSinceSignup,
+      lastPurchaseDays,
+    ] = await Promise.all([
+      this.getRetentionDays(userId),
+      this.getBoostUsed7d(userId),
+      this.getPastPayments(userId),
+      this.getMessagesSent7d(userId),
+      this.getProfileViews7d(userId),
+      this.getDaysSinceSignup(userId),
+      this.getDaysSinceLastPurchase(userId),
+    ]);
 
     return {
       retentionDays,
@@ -181,6 +220,8 @@ export class UserMetricsService {
       pastPayments,
       messages7d,
       views7d,
+      daysSinceSignup,
+      lastPurchaseDays,
     };
   }
 

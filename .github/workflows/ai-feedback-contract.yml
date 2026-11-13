@@ -1,0 +1,33 @@
+name: AI Feedback Fail-Closed Contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "python-ai/services/ai_feedback/**"
+      - "python-ai/tests/test_ai_feedback_contract.py"
+      - ".github/workflows/ai-feedback-contract.yml"
+  push:
+    branches: ["infra/staging-ai-lab-2026-11"]
+    paths:
+      - "python-ai/services/ai_feedback/**"
+      - "python-ai/tests/test_ai_feedback_contract.py"
+      - ".github/workflows/ai-feedback-contract.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  feedback-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install minimal isolated test dependencies
+        run: python -m pip install --disable-pip-version-check pytest fastapi pydantic httpx
+      - name: Run AI Feedback safety and API contracts
+        working-directory: python-ai
+        run: python -m pytest -q tests/test_ai_feedback_contract.py

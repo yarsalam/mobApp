@@ -3,7 +3,6 @@ import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { REDIS_CLIENT } from 'src/redis/redis.constants';
 import { Redis } from 'ioredis';
-import googleTrends from 'google-trends-api';
 
 const TTL = {
   SEARCH_CONSOLE: 3_600,
@@ -11,9 +10,6 @@ const TTL = {
   PAGESPEED: 86_400,
   CRUX: 86_400,
   SERP: 3_600,
-  TRENDS: 86_400,
-  BACKLINK: 86_400,
-  DATAFORSEO: 86_400,
 } as const;
 
 @Injectable()
@@ -38,87 +34,73 @@ export class ExternalSEOToolsService {
   //        کنترلر از این صدا می‌زد: getSearchConsoleData(domain, 30)
   // ══════════════════════════════════════════════════════════════════
   async getSearchConsoleData(siteUrl?: string, days = 28): Promise<any> {
-    const site =
-      siteUrl ??
-      process.env.GOOGLE_SEARCH_CONSOLE_SITE ??
-      'https://yarsalam.top/';
-    const cacheKey = `gsc:${site}:${days}`;
+    const site = siteUrl ?? this.defaultSite;
+    if (!site) {
+      return { dataAvailable: false, source: 'unavailable', reason: 'search_console_site_not_configured', rows: [], totalClicks: null, totalImpressions: null, avgCTR: null, avgPosition: null, topQueries: [] };
+    }
+
+    const normalizedSite = site.startsWith('http')
+      ? (site.endsWith('/') ? site : site + '/')
+      : 'https://' + (site.endsWith('/') ? site : site + '/');
+    const cacheKey = 'gsc:v3:' + normalizedSite + ':' + days;
     const cached = await this.redis.get(cacheKey);
     if (cached) return JSON.parse(cached);
-    const normalizedSite = site.startsWith('http')
-      ? site.endsWith('/')
-        ? site
-        : `${site}/`
-      : `https://${site.endsWith('/') ? site : site + '/'}`;
+
     const token = await this._getGoogleToken([
       'https://www.googleapis.com/auth/webmasters.readonly',
     ]);
     if (!token) {
-      this.logger.warn('GSC: No service account — using mock');
-      return this._mockSearchConsole();
+      return { dataAvailable: false, source: 'unavailable', reason: 'google_service_account_not_configured', rows: [], totalClicks: null, totalImpressions: null, avgCTR: null, avgPosition: null, topQueries: [] };
     }
 
     try {
       const endDate = new Date().toISOString().split('T')[0];
-      const startDate = new Date(Date.now() - days * 86_400_000)
-        .toISOString()
-        .split('T')[0];
-
-      const { data } = await firstValueFrom(
-        this.httpService.post(
-          `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(normalizedSite)}/searchAnalytics/query`,
-          {
-            startDate,
-            endDate,
-            dimensions: ['query', 'page'],
-            rowLimit: 100,
-            dataState: 'all',
-          },
-          { headers: { Authorization: `Bearer ${token}` }, timeout: 15_000 },
-        ),
-      );
-
-      const rows: any[] = data.rows ?? [];
-
-      // FIX 3: درست‌شده — (rows ?? []) به‌جای rows?.reduce + ?? 0 آخر
-      const totalClicks = rows.reduce((s, r) => s + (r.clicks ?? 0), 0);
-      const totalImpressions = rows.reduce(
-        (s, r) => s + (r.impressions ?? 0),
-        0,
-      );
-      const avgCTR = rows.length
-        ? rows.reduce((s, r) => s + (r.ctr ?? 0), 0) / rows.length
-        : 0;
-      const avgPosition = rows.length
-        ? rows.reduce((s, r) => s + (r.position ?? 0), 0) / rows.length
-        : 0;
-
-      const result = {
-        rows,
-        totalClicks,
-        totalImpressions,
-        avgCTR,
-        avgPosition,
-        topQueries: rows
-          .slice(0, 10)
-          .map((r: any) => r.keys?.[0])
-          .filter(Boolean),
-        // FIX 2: اضافه‌کردن فیلدهایی که کنترلر انتظار دارد
-        crawlErrors: 0, // GSC URL Inspection API جداگانه است — placeholder
-        brokenLinks: 0, // placeholder
-        mobileScore: 0, // از PSI می‌آید — اینجا placeholder
+      const startDate = new Date(Date.now() - days * 86_400_000).toISOString().split('T')[0];
+      const endpoint =
+        'https://searchconsole.googleapis.com/webmasters/v3/sites/' +
+        encodeURIComponent(normalizedSite) +
+        '/searchAnalytics/query';
+      const config = {
+        headers: { Authorization: 'Bearer ' + token },
+        timeout: 15_000,
       };
 
-      await this.redis.set(
-        cacheKey,
-        JSON.stringify(result),
-        'EX',
-        TTL.SEARCH_CONSOLE,
-      );
+      // First request is property-wide (no dimensions), so totals are not
+      // truncated by the separate top-query/page report's rowLimit.
+      const [aggregateResponse, detailResponse] = await Promise.all([
+        firstValueFrom(this.httpService.post(
+          endpoint,
+          { startDate, endDate, dataState: 'all' },
+          config,
+        )),
+        firstValueFrom(this.httpService.post(
+          endpoint,
+          { startDate, endDate, dimensions: ['query', 'page'], rowLimit: 100, dataState: 'all' },
+          config,
+        )),
+      ]);
+
+      const aggregateRows: any[] = aggregateResponse.data.rows ?? [];
+      const rows: any[] = detailResponse.data.rows ?? [];
+      const aggregate = aggregateRows[0] ?? null;
+      const result = {
+        dataAvailable: true,
+        source: 'google_search_console',
+        totalsScope: 'property_aggregate',
+        rows,
+        totalClicks: aggregate ? Number(aggregate.clicks ?? 0) : 0,
+        totalImpressions: aggregate ? Number(aggregate.impressions ?? 0) : 0,
+        avgCTR: aggregate && Number.isFinite(Number(aggregate.ctr)) ? Number(aggregate.ctr) : null,
+        avgPosition: aggregate && Number.isFinite(Number(aggregate.position)) ? Number(aggregate.position) : null,
+        topQueries: rows.slice(0, 10).map((row) => row.keys?.[0]).filter(Boolean),
+        crawlErrors: null,
+        brokenLinks: null,
+      };
+      await this.redis.set(cacheKey, JSON.stringify(result), 'EX', TTL.SEARCH_CONSOLE);
       return result;
-    } catch (err: any) {
-      this.logger.error('GSC API failed', (err as Error).message);
-      return this._mockSearchConsole();
+    } catch (error: unknown) {
+      this.logger.error('GSC request failed', error instanceof Error ? error.message : String(error));
+      return { dataAvailable: false, source: 'unavailable', reason: 'search_console_request_failed', rows: [], totalClicks: null, totalImpressions: null, avgCTR: null, avgPosition: null, topQueries: [] };
     }
   }
 
@@ -126,10 +108,11 @@ export class ExternalSEOToolsService {
   // ANALYTICS 4
   // ══════════════════════════════════════════════════════════════════
   async getAnalyticsData(propertyId?: string, days = 28): Promise<any> {
-    const prop = propertyId || this.ga4Property;
-    if (!prop) return this._mockAnalytics();
-
-    const cacheKey = `ga4:${prop}:${days}`;
+    const property = propertyId || this.ga4Property;
+    if (!property) {
+      return { dataAvailable: false, source: 'unavailable', reason: 'ga4_property_not_configured', rows: [] };
+    }
+    const cacheKey = 'ga4:v2:' + property + ':' + days;
     const cached = await this.redis.get(cacheKey);
     if (cached) return JSON.parse(cached);
 
@@ -137,16 +120,14 @@ export class ExternalSEOToolsService {
       'https://www.googleapis.com/auth/analytics.readonly',
     ]);
     if (!token) {
-      this.logger.warn('GA4: No service account — using mock');
-      return this._mockAnalytics();
+      return { dataAvailable: false, source: 'unavailable', reason: 'google_service_account_not_configured', rows: [] };
     }
-
     try {
       const { data } = await firstValueFrom(
         this.httpService.post(
-          `https://analyticsdata.googleapis.com/v1beta/properties/${prop}:runReport`,
+          'https://analyticsdata.googleapis.com/v1beta/properties/' + property + ':runReport',
           {
-            dateRanges: [{ startDate: `${days}daysAgo`, endDate: 'today' }],
+            dateRanges: [{ startDate: days + 'daysAgo', endDate: 'today' }],
             metrics: [
               { name: 'activeUsers' },
               { name: 'newUsers' },
@@ -157,21 +138,15 @@ export class ExternalSEOToolsService {
             ],
             dimensions: [{ name: 'sessionSource' }],
           },
-          { headers: { Authorization: `Bearer ${token}` }, timeout: 15_000 },
+          { headers: { Authorization: 'Bearer ' + token }, timeout: 15_000 },
         ),
       );
-
-      const result = { rows: data.rows ?? [], metadata: data.metadata };
-      await this.redis.set(
-        cacheKey,
-        JSON.stringify(result),
-        'EX',
-        TTL.ANALYTICS,
-      );
+      const result = { dataAvailable: true, source: 'google_analytics_4', rows: data.rows ?? [], metadata: data.metadata ?? null };
+      await this.redis.set(cacheKey, JSON.stringify(result), 'EX', TTL.ANALYTICS);
       return result;
-    } catch (err: unknown) {
-      this.logger.error('GA4 API failed', (err as Error).message);
-      return this._mockAnalytics();
+    } catch (error: unknown) {
+      this.logger.error('GA4 request failed', error instanceof Error ? error.message : String(error));
+      return { dataAvailable: false, source: 'unavailable', reason: 'ga4_request_failed', rows: [] };
     }
   }
 
@@ -184,15 +159,17 @@ export class ExternalSEOToolsService {
     strategy: 'mobile' | 'desktop' = 'mobile',
   ): Promise<any> {
     const target = url ?? this.defaultSite ?? process.env.APP_URL ?? '';
-    const apiKey = process.env.GOOGLE_API_KEY ?? '';
-    const cacheKey = `psi:${strategy}:${encodeURIComponent(target)}`;
+    if (!target) {
+      return { dataAvailable: false, source: 'unavailable', reason: 'site_url_not_configured', strategy };
+    }
+    const cacheKey = 'psi:v2:' + strategy + ':' + encodeURIComponent(target);
     const cached = await this.redis.get(cacheKey);
     if (cached) return JSON.parse(cached);
 
     try {
       const params: Record<string, string> = { url: target, strategy };
+      const apiKey = process.env.GOOGLE_API_KEY ?? '';
       if (apiKey) params.key = apiKey;
-
       const { data } = await firstValueFrom(
         this.httpService.get(
           'https://www.googleapis.com/pagespeedonline/v5/runPagespeed',
@@ -201,100 +178,49 @@ export class ExternalSEOToolsService {
       );
 
       const audits = data.lighthouseResult?.audits ?? {};
-      const le = data.loadingExperience?.metrics ?? {};
-      const perfScore =
-        data.lighthouseResult?.categories?.performance?.score ?? 0;
-
+      const loading = data.loadingExperience?.metrics ?? {};
+      const performanceScore = data.lighthouseResult?.categories?.performance?.score;
+      const score = (value: unknown) => typeof value === 'number' ? Math.round(value * 100) : null;
+      const metric = (key: string, divisor = 1) => {
+        const value = audits[key]?.numericValue;
+        return typeof value === 'number' && Number.isFinite(value) ? value / divisor : null;
+      };
+      const field = (key: string, divisor = 1) => {
+        const value = loading[key]?.percentile;
+        return typeof value === 'number' && Number.isFinite(value)
+          ? { value: value / divisor, category: loading[key]?.category ?? null }
+          : null;
+      };
       const result = {
-        // Lab metrics
-        lcp: (audits['largest-contentful-paint']?.numericValue ?? 0) / 1000,
-        fid: audits['max-potential-fid']?.numericValue ?? 0,
-        cls: audits['cumulative-layout-shift']?.numericValue ?? 0,
-        ttfb: audits['server-response-time']?.numericValue ?? 0,
-        fcp: (audits['first-contentful-paint']?.numericValue ?? 0) / 1000,
-
-        // Scores (0–100)
-        performanceScore: Math.round(perfScore * 100),
-        seoScore: Math.round(
-          (data.lighthouseResult?.categories?.seo?.score ?? 0) * 100,
-        ),
-        accessibilityScore: Math.round(
-          (data.lighthouseResult?.categories?.accessibility?.score ?? 0) * 100,
-        ),
-
-        // FIX 2: فیلدهایی که admin-api-seo.controller انتظار دارد
-        mobileScore: strategy === 'mobile' ? Math.round(perfScore * 100) : 0,
-        crawlErrors: 0, // placeholder — از GSC URL Inspection جداگانه می‌آید
-        brokenLinks: 0, // placeholder
-
-        // Field data (CrUX که Google داخل PSI جاسازی می‌کند)
+        dataAvailable: true,
+        source: 'pagespeed_insights',
+        lcp: metric('largest-contentful-paint', 1000),
+        inp: metric('interaction-to-next-paint'),
+        cls: metric('cumulative-layout-shift'),
+        ttfb: metric('server-response-time'),
+        fcp: metric('first-contentful-paint', 1000),
+        performanceScore: score(performanceScore),
+        seoScore: score(data.lighthouseResult?.categories?.seo?.score),
+        accessibilityScore: score(data.lighthouseResult?.categories?.accessibility?.score),
         fieldData: {
-          lcp: le.LARGEST_CONTENTFUL_PAINT_MS
-            ? {
-                value: le.LARGEST_CONTENTFUL_PAINT_MS.percentile / 1000,
-                category: le.LARGEST_CONTENTFUL_PAINT_MS.category,
-              }
-            : null,
-          cls: le.CUMULATIVE_LAYOUT_SHIFT_SCORE
-            ? {
-                value: le.CUMULATIVE_LAYOUT_SHIFT_SCORE.percentile / 100,
-                category: le.CUMULATIVE_LAYOUT_SHIFT_SCORE.category,
-              }
-            : null,
-          inp: le.INTERACTION_TO_NEXT_PAINT
-            ? {
-                value: le.INTERACTION_TO_NEXT_PAINT.percentile,
-                category: le.INTERACTION_TO_NEXT_PAINT.category,
-              }
-            : null,
+          lcp: field('LARGEST_CONTENTFUL_PAINT_MS', 1000),
+          cls: field('CUMULATIVE_LAYOUT_SHIFT_SCORE', 100),
+          inp: field('INTERACTION_TO_NEXT_PAINT'),
         },
-
         opportunities: Object.entries(audits)
-          .filter(
-            ([, v]: any) =>
-              v.score !== null &&
-              v.score < 0.9 &&
-              v.details?.type === 'opportunity',
-          )
-          .map(([key, v]: any) => ({
-            key,
-            title: v.title,
-            savingsMs: v.details?.overallSavingsMs ?? 0,
-          }))
-          .sort((a: any, b: any) => b.savingsMs - a.savingsMs)
+          .filter(([, value]: any) => value.score !== null && value.score < 0.9 && value.details?.type === 'opportunity')
+          .map(([key, value]: any) => ({ key, title: value.title, savingsMs: value.details?.overallSavingsMs ?? null }))
+          .sort((a: any, b: any) => (b.savingsMs ?? 0) - (a.savingsMs ?? 0))
           .slice(0, 5),
-
         strategy,
         url: target,
         measuredAt: new Date().toISOString(),
       };
-
-      await this.redis.set(
-        cacheKey,
-        JSON.stringify(result),
-        'EX',
-        TTL.PAGESPEED,
-      );
+      await this.redis.set(cacheKey, JSON.stringify(result), 'EX', TTL.PAGESPEED);
       return result;
-    } catch (err: unknown) {
-      this.logger.error('PSI failed', (err as Error).message);
-      return {
-        lcp: 2.5,
-        fid: 100,
-        cls: 0.1,
-        ttfb: 200,
-        fcp: 1.5,
-        performanceScore: 0,
-        seoScore: 0,
-        accessibilityScore: 0,
-        mobileScore: 0,
-        crawlErrors: 0,
-        brokenLinks: 0,
-        fieldData: null,
-        opportunities: [],
-        strategy,
-        url: target,
-      };
+    } catch (error: unknown) {
+      this.logger.error('PageSpeed request failed', error instanceof Error ? error.message : String(error));
+      return { dataAvailable: false, source: 'unavailable', reason: 'pagespeed_request_failed', strategy, url: target, lcp: null, inp: null, cls: null, ttfb: null, fcp: null, performanceScore: null, seoScore: null, accessibilityScore: null, fieldData: null, opportunities: [] };
     }
   }
 
@@ -363,49 +289,36 @@ export class ExternalSEOToolsService {
   //        ۲,۵۰۰ کوئری رایگان، بعد $1/1K
   // ══════════════════════════════════════════════════════════════════
   async getLiveSerpRanking(keyword: string, domain: string): Promise<any> {
-    const cacheKey = `serp:${keyword}:${domain}`;
-    const cached = await this.redis.get(cacheKey);
-    if (cached) return JSON.parse(cached);
-
     const apiKey = process.env.SERPER_API_KEY;
     if (!apiKey) {
-      this.logger.warn('SERPER_API_KEY not set — using mock');
-      return this._mockSerpData();
+      return { dataAvailable: false, source: 'unavailable', reason: 'serp_provider_not_configured', position: null, totalResults: null, topDomains: [] };
     }
-
+    const cacheKey = 'serp:v2:' + keyword + ':' + domain;
+    const cached = await this.redis.get(cacheKey);
+    if (cached) return JSON.parse(cached);
     try {
       const { data } = await firstValueFrom(
         this.httpService.post(
           'https://google.serper.dev/search',
           { q: keyword, gl: 'ir', hl: 'fa', num: 20, autocorrect: false },
-          {
-            headers: {
-              'X-API-KEY': apiKey,
-              'Content-Type': 'application/json',
-            },
-            timeout: 10_000,
-          },
+          { headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' }, timeout: 10_000 },
         ),
       );
-
       const organic: any[] = data.organic ?? [];
-      const pos = organic.findIndex((r) => r.link?.includes(domain));
-
+      const index = organic.findIndex((row) => row.link?.includes(domain));
       const result = {
-        position: pos !== -1 ? pos + 1 : null,
-        totalResults: data.searchInformation?.totalResults ?? 0,
-        topDomains: organic.slice(0, 5).map((r) => r.link),
-        peopleAlsoAsk: (data.peopleAlsoAsk ?? [])
-          .slice(0, 5)
-          .map((q: any) => q.question),
+        dataAvailable: true,
         source: 'serper',
+        position: index >= 0 ? index + 1 : null,
+        totalResults: data.searchInformation?.totalResults ?? null,
+        topDomains: organic.slice(0, 5).map((row) => row.link),
+        peopleAlsoAsk: (data.peopleAlsoAsk ?? []).slice(0, 5).map((row: any) => row.question),
       };
-
       await this.redis.set(cacheKey, JSON.stringify(result), 'EX', TTL.SERP);
       return result;
-    } catch (err: unknown) {
-      this.logger.error('Serper failed', (err as Error).message);
-      return this._mockSerpData();
+    } catch (error: unknown) {
+      this.logger.error('SERP request failed', error instanceof Error ? error.message : String(error));
+      return { dataAvailable: false, source: 'unavailable', reason: 'serp_request_failed', position: null, totalResults: null, topDomains: [] };
     }
   }
 
@@ -413,30 +326,11 @@ export class ExternalSEOToolsService {
   // GOOGLE INDEXING API — رایگان، فهرست فوری
   // ══════════════════════════════════════════════════════════════════
   async requestIndexing(
-    url: string,
-    type: 'URL_UPDATED' | 'URL_DELETED' = 'URL_UPDATED',
+    _url: string,
+    _type: 'URL_UPDATED' | 'URL_DELETED' = 'URL_UPDATED',
   ): Promise<boolean> {
-    const token = await this._getGoogleToken([
-      'https://www.googleapis.com/auth/indexing',
-    ]);
-    if (!token) {
-      this.logger.warn('Indexing API: no service account');
-      return false;
-    }
-    try {
-      await firstValueFrom(
-        this.httpService.post(
-          'https://indexing.googleapis.com/v3/urlNotifications:publish',
-          { url, type },
-          { headers: { Authorization: `Bearer ${token}` }, timeout: 10_000 },
-        ),
-      );
-      this.logger.log(`Indexing requested: ${url} (${type})`);
-      return true;
-    } catch (err: unknown) {
-      this.logger.error('Indexing API failed', (err as Error).message);
-      return false;
-    }
+    // This API is not a generic indexing submission mechanism.
+    return false;
   }
 
   async batchRequestIndexing(
@@ -458,136 +352,40 @@ export class ExternalSEOToolsService {
   // ══════════════════════════════════════════════════════════════════
   // DataForSEO — pay-as-you-go, $5 رایگان
   // ══════════════════════════════════════════════════════════════════
-  async getBacklinkData(domain: string): Promise<any> {
-    const cacheKey = `bl:${domain}`;
-    const cached = await this.redis.get(cacheKey);
-    if (cached) return JSON.parse(cached);
-
-    const login = process.env.DATAFORSEO_LOGIN;
-    const password = process.env.DATAFORSEO_PASSWORD;
-    if (!login || !password) {
-      this.logger.warn('DataForSEO creds not set');
-      return this._mockBacklinkData();
-    }
-
-    try {
-      const auth = Buffer.from(`${login}:${password}`).toString('base64');
-      const { data } = await firstValueFrom(
-        this.httpService.post(
-          'https://api.dataforseo.com/v3/backlinks/summary/live',
-          [{ target: domain, include_subdomains: true }],
-          { headers: { Authorization: `Basic ${auth}` }, timeout: 20_000 },
-        ),
-      );
-
-      const item = data.tasks?.[0]?.result?.[0] ?? {};
-      const result = {
-        totalBacklinks: item.total_count ?? 0,
-        referringDomains: item.referring_domains ?? 0,
-        dofollow: item.total_count ?? 0,
-        nofollow: 0,
-        topDomains: [],
-        domainRank: item.rank ?? 0,
-        spamScore: item.backlinks_spam_score ?? 0,
-        source: 'dataforseo',
-      };
-
-      await this.redis.set(
-        cacheKey,
-        JSON.stringify(result),
-        'EX',
-        TTL.BACKLINK,
-      );
-      return result;
-    } catch (err: unknown) {
-      this.logger.error('DataForSEO backlink failed', (err as Error).message);
-      return this._mockBacklinkData();
-    }
+  async getBacklinkData(_domain: string): Promise<any> {
+    // Backlink-checker metrics are retired from the Yarsalam growth engine.
+    // Avoid silently returning zero-valued mock metrics or making paid requests.
+    return {
+      dataAvailable: false,
+      source: 'retired',
+      reason: 'backlink_checker_not_part_of_the_product_growth_strategy',
+    };
   }
 
   // FIX 4 (feature-store-rvenue): این متد number | null برمی‌گرداند.
   // کد صدازننده باید null را چک کند — مثال در انتهای فایل
-  async getKeywordDifficulty(keyword: string): Promise<number | null> {
-    const cacheKey = `kd:${keyword}`;
-    const cached = await this.redis.get(cacheKey);
-    if (cached) return parseFloat(cached);
-
-    const login = process.env.DATAFORSEO_LOGIN;
-    const password = process.env.DATAFORSEO_PASSWORD;
-    if (!login || !password) return null;
-
-    try {
-      const auth = Buffer.from(`${login}:${password}`).toString('base64');
-      const { data } = await firstValueFrom(
-        this.httpService.post(
-          'https://api.dataforseo.com/v3/dataforseo_labs/google/keyword_info/live',
-          [
-            {
-              keywords: [keyword],
-              language_name: 'Persian',
-              location_name: 'Iran',
-            },
-          ],
-          { headers: { Authorization: `Basic ${auth}` }, timeout: 15_000 },
-        ),
-      );
-
-      const kd: number | null =
-        data.tasks?.[0]?.result?.[0]?.items?.[0]?.keyword_difficulty ?? null;
-      if (kd !== null) {
-        await this.redis.set(cacheKey, String(kd), 'EX', TTL.DATAFORSEO);
-      }
-      return kd;
-    } catch {
-      return null;
-    }
+  async getKeywordDifficulty(_keyword: string): Promise<number | null> {
+    // Keyword difficulty is retired from product growth; never call a paid provider.
+    return null;
   }
 
   // ══════════════════════════════════════════════════════════════════
   // Google Trends — رایگان، بدون API Key
   // ══════════════════════════════════════════════════════════════════
-  async getGoogleTrends(keyword: string, geo = 'IR'): Promise<any> {
-    const cacheKey = `trends:${keyword}:${geo}`;
-    const cached = await this.redis.get(cacheKey);
-    if (cached) return JSON.parse(cached);
-
-    try {
-      const results = await googleTrends.interestOverTime({
-        keyword,
-        geo,
-        hl: 'fa',
-      });
-      const parsed = JSON.parse(results);
-      await this.redis.set(cacheKey, JSON.stringify(parsed), 'EX', TTL.TRENDS);
-      return parsed;
-    } catch (err: unknown) {
-      this.logger.error('Google Trends failed', (err as Error).message);
-      return null;
-    }
+  async getGoogleTrends(_keyword: string, _geo = 'IR'): Promise<any> {
+    return {
+      dataAvailable: false,
+      source: 'retired',
+      reason: 'Generic keyword trend tracking is not part of the product growth engine.',
+    };
   }
 
-  async getKeywordGap(domain: string, competitors: string[]): Promise<any> {
-    const keywords = [
-      'همسریابی',
-      'دوستیابی',
-      'ازدواج',
-      'اپ همسریابی',
-      'سایت ازدواج',
-    ];
-    const result: Record<string, any> = {};
-
-    for (const kw of keywords) {
-      const serp = await this.getLiveSerpRanking(kw, domain);
-      result[kw] = { ourPosition: serp?.position ?? null };
-
-      for (const comp of competitors.slice(0, 3)) {
-        const compSerp = await this.getLiveSerpRanking(kw, comp);
-        result[kw][comp] = compSerp?.position ?? null;
-        await new Promise((r) => setTimeout(r, 200));
-      }
-    }
-
-    return result;
+  async getKeywordGap(_domain: string, _competitors: string[]): Promise<any> {
+    return {
+      dataAvailable: false,
+      source: 'retired',
+      reason: 'Keyword-gap and competitor-ranking checks are retired from the growth engine.',
+    };
   }
 
   // ══════════════════════════════════════════════════════════════════
@@ -642,43 +440,6 @@ export class ExternalSEOToolsService {
       this.logger.error('Google OAuth failed', (err as Error).message);
       return null;
     }
-  }
-
-  // ══════════════════════════════════════════════════════════════════
-  // Mock data
-  // ══════════════════════════════════════════════════════════════════
-  private _mockSearchConsole() {
-    return {
-      rows: [],
-      totalClicks: 0,
-      totalImpressions: 0,
-      avgCTR: 0,
-      avgPosition: 0,
-      topQueries: ['همسریابی', 'دوستیابی', 'ازدواج آسان'],
-      crawlErrors: 0,
-      brokenLinks: 0,
-      mobileScore: 0,
-      source: 'mock',
-    };
-  }
-
-  private _mockAnalytics() {
-    return { rows: [], metadata: null, source: 'mock' };
-  }
-
-  private _mockSerpData() {
-    return { position: null, totalResults: 0, topDomains: [], source: 'mock' };
-  }
-
-  private _mockBacklinkData() {
-    return {
-      totalBacklinks: 0,
-      referringDomains: 0,
-      dofollow: 0,
-      nofollow: 0,
-      topDomains: [],
-      source: 'mock',
-    };
   }
 
   // ══════════════════════════════════════════════════════════════════

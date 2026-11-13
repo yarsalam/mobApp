@@ -1,13 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { TechnicalSEOService } from './technical-seo.service';
-import { UserSEOSignalsService } from './user-seo-signals.service';
 import { CampaignSEOService } from './campaign-seo.service';
-import { CompetitorSEOService } from './competitor-seo.service';
-import { SEOScoreEngine } from './seo-score-engine.service';
-import { AEOTrackerService } from './intelligence/aeo-tracker.service';
-import { SeoRecommenderService } from './seo-recommender.service';
-import { BacklinkQualityService } from './backlink-quality.service';
-import { ConfigService } from '@nestjs/config';
+import { ContentOpportunityService } from './intelligence/content-opportunity.service';
 
 @Injectable()
 export class SEOCollectorService {
@@ -15,109 +9,57 @@ export class SEOCollectorService {
 
   constructor(
     private readonly technicalService: TechnicalSEOService,
-    private readonly userService: UserSEOSignalsService,
     private readonly campaignService: CampaignSEOService,
-    private readonly competitorService: CompetitorSEOService,
-    private readonly scoreEngine: SEOScoreEngine,
-    private readonly aeoTracker: AEOTrackerService,
-    private readonly recommenderService: SeoRecommenderService,
-    private readonly backlinkQualityService: BacklinkQualityService,
-    private readonly configService: ConfigService,
+    private readonly contentOpportunity: ContentOpportunityService,
   ) {}
 
   async collectAllMetrics() {
-    const [technical, user, campaign, competitor, aeo, recommender, backlink] =
-      await Promise.all([
-        this.collectSafely('technical', () =>
-          this.technicalService.analyzeTechnicalSEO(),
-        ),
-        this.collectSafely('user', () => this.userService.analyzeUserSignals()),
-        this.collectSafely('campaign', () =>
-          this.campaignService.analyzeCampaigns(),
-        ),
-        this.collectSafely('competitor', () =>
-          this.competitorService.analyzeCompetitors(),
-        ),
-        this.collectSafely('aeo', () => this.collectAEOMetrics()),
-        this.collectSafely('recommender', () =>
-          this.collectRecommenderMetrics(),
-        ),
-        this.collectSafely('backlink', () => this.collectBacklinkMetrics()),
-      ]);
+    const [technical, campaign] = await Promise.all([
+      this.technicalService.analyzeTechnicalSEO().catch((error: unknown) => {
+        this.logger.warn('Technical measurement unavailable: ' + String(error));
+        return null;
+      }),
+      this.campaignService.analyzeCampaigns().catch((error: unknown) => {
+        this.logger.warn('Campaign activity ledger unavailable: ' + String(error));
+        return null;
+      }),
+    ]);
+
+    const technicalSourceStatuses = Object.values(technical?.sources ?? {});
+    const technicalPartial =
+      !technical?.dataAvailable ||
+      technicalSourceStatuses.length === 0 ||
+      technicalSourceStatuses.some((status) => status !== 'available');
 
     return {
       technical,
-      user,
       campaign,
-      competitor,
-      aeo,
-      recommender,
-      backlink,
+      contentOpportunities: this.contentOpportunity.generateContentIdeas(),
+      acquisition: {
+        status: 'available',
+        endpoint: '/admin-api/seo/acquisition',
+        description: 'Source cohorts, profile completion, activation, matured D7/D30 retention and currency-separated paid revenue.',
+      },
+      user: null,
+      competitor: null,
+      aeo: null,
+      recommender: null,
+      backlink: null,
+      retiredOrUnavailable: {
+        userProfileMining: 'disabled_pending_privacy_preserving_aggregation',
+        competitorScraping: 'no_verified_provider',
+        trafficForecasting: 'retired',
+        arbitraryCompositeSeoScore: 'retired',
+        backlinkChecker: 'retired_from_growth_engine',
+        keywordGapAndDifficulty: 'retired_from_growth_engine',
+      },
       collectedAt: new Date().toISOString(),
-      partial:
-        technical === null ||
-        user === null ||
-        campaign === null ||
-        competitor === null ||
-        aeo === null ||
-        recommender === null ||
-        backlink === null,
+      partial: technicalPartial || campaign === null,
     };
   }
 
-  private async collectAEOMetrics() {
-    try {
-      const result = await this.aeoTracker.getMentions(
-        this.configService.get('BRAND_NAME') || 'YourBrand',
-        ['بهترین اپ همسریابی ایران چیست؟', 'اپ‌های دوستیابی معتبر کدامند؟'],
-      );
-      return result;
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`AEO metrics collection failed: ${message}`);
-      return null;
-    }
-  }
-
-  private async collectRecommenderMetrics() {
-    try {
-      return await this.recommenderService.health();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Recommender metrics collection failed: ${message}`);
-      return null;
-    }
-  }
-
-  private async collectBacklinkMetrics() {
-    try {
-      return await this.backlinkQualityService.health();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Backlink metrics collection failed: ${message}`);
-      return null;
-    }
-  }
-
-  async collectFeedMetrics(userId: number, feedLength: number) {
-    // لاگ برای تحلیل سئو
-    this.logger.debug(`Feed metrics for user ${userId}: ${feedLength} items`);
-    // TODO: ذخیره در دیتابیس
+  async collectFeedMetrics(_userId: number, _feedLength: number): Promise<void> {
+    // Feed acquisition and activation are measured through canonical user events.
     return Promise.resolve();
-  }
-
-  private async collectSafely<T>(
-    name: string,
-    task: () => Promise<T>,
-  ): Promise<T | null> {
-    try {
-      return await task();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-
-      this.logger.warn(`SEO collection failed [${name}]: ${message}`);
-
-      return null;
-    }
   }
 }

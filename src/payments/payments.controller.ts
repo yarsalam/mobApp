@@ -4,6 +4,7 @@ import {
   Headers,
   BadRequestException,
   Get,
+  Logger,
   NotFoundException,
   Param,
   ParseIntPipe,
@@ -21,17 +22,23 @@ import { CardTransferProvider } from './wallet/providers/card-transfer.provider'
 import { CryptoProvider } from './wallet/providers/crypto.provider';
 import { ManualVerifierService } from './wallet/verification/manual-verifier.service';
 import { ProductBundle } from 'src/product/entities/product-bundle.entity';
+import { PromotionExposureService } from './promotion-exposure.service';
+import { PricingExperimentService, PricingCheckout } from 'src/pricing-experiments/pricing-experiment.service';
 
 @Controller('payments')
 export class PaymentsController {
+  private readonly logger = new Logger(PaymentsController.name);
+
   constructor(
     private readonly paymentsService: PaymentsService,
     private readonly cardTransferProvider: CardTransferProvider,
     private readonly cryptoProvider: CryptoProvider,
     private readonly manualVerifier: ManualVerifierService,
     private readonly walletService: WalletService,
+    private readonly promotionExposure: PromotionExposureService,
     @InjectRepository(ProductBundle)
     private readonly bundleRepo: Repository<ProductBundle>,
+    private readonly pricingExperiment: PricingExperimentService,
   ) {}
 
   // ─── کاربر: دریافت موجودی wallet ────────────────────────────
@@ -93,6 +100,7 @@ export class PaymentsController {
   async buyWithWallet(
     @CurrentUser('sub') userId: number,
     @Param('bundleCode') bundleCode: string,
+    @Body() body?: { promotionId?: string; pricingQuoteId?: string },
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     const stableKey = idempotencyKey?.trim();
@@ -107,22 +115,120 @@ export class PaymentsController {
     });
     if (!bundle) throw new NotFoundException('محصول یافت نشد');
 
-    // کسر از wallet به ریال
-    await this.walletService.debitOnce(
-      userId,
-      bundle.price,
-      `buy:${bundleCode}`,
-      `wallet-checkout:${stableKey}:debit`,
-    );
+    const promotionId = body?.promotionId?.trim();
+    if (
+      promotionId &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(promotionId)
+    ) {
+      throw new BadRequestException('promotionId must be a valid promotion exposure ID');
+    }
 
-    // grant محصول
+    const pricingQuoteId = body?.pricingQuoteId?.trim();
+    if (pricingQuoteId && pricingQuoteId.length > 4096) {
+      throw new BadRequestException('pricingQuoteId is too long');
+    }
+
+    let pricingCheckout: PricingCheckout | undefined;
+    if (pricingQuoteId) {
+      pricingCheckout = await this.pricingExperiment.prepareCheckout(
+        userId,
+        bundleCode,
+        pricingQuoteId,
+        stableKey,
+      );
+    }
+    const payablePriceRials =
+      pricingCheckout?.payablePriceRials ?? bundle.price;
+
+    try {
+      await this.walletService.debitOnce(
+        userId,
+        payablePriceRials,
+        `buy:${bundleCode}`,
+        `wallet-checkout:${stableKey}:debit`,
+      );
+    } catch (error: unknown) {
+      if (pricingCheckout && this.isInsufficientBalance(error)) {
+        await this.pricingExperiment.releaseCheckoutReservation(
+          userId,
+          pricingCheckout.experimentId,
+          stableKey,
+        );
+      }
+      throw error;
+    }
+
+    // grant محصول؛ قیمت واقعی و انتساب آزمایش در رویداد PURCHASE ثبت می‌شود.
     await this.paymentsService.grantBundle(userId, bundleCode, {
-      amountRials: bundle.price,
+      amountRials: payablePriceRials,
       source: 'wallet',
       idempotencyKey: `wallet-checkout:${stableKey}`,
+      ...(promotionId ? { promotionId } : {}),
+      ...(pricingCheckout ? { pricingExperiment: pricingCheckout } : {}),
     });
 
-    return { success: true, message: 'خرید با موفقیت انجام شد' };
+    // Move a treatment discount from reserved to spent only after fulfillment
+    // and the immutable PURCHASE event have both been recorded.
+    if (pricingCheckout) {
+      await this.pricingExperiment.commitCheckoutReservation(
+        userId,
+        pricingCheckout,
+        stableKey,
+      );
+    }
+
+    let promotionAttribution: 'not_supplied' | 'recorded' | 'failed' = 'not_supplied';
+    if (promotionId) {
+      try {
+        await this.promotionExposure.trackConversion(
+          userId,
+          promotionId,
+          stableKey,
+          bundleCode,
+        );
+        promotionAttribution = 'recorded';
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(`Purchase succeeded but promotion attribution failed: ${message}`);
+        promotionAttribution = 'failed';
+      }
+    }
+
+    return {
+      success: true,
+      message: 'خرید با موفقیت انجام شد',
+      promotionAttribution,
+      ...(pricingCheckout
+        ? {
+            pricingExperiment: {
+              experimentId: pricingCheckout.experimentId,
+              variant: pricingCheckout.variant,
+              discountRials:
+                pricingCheckout.basePriceRials - pricingCheckout.payablePriceRials,
+            },
+          }
+        : {}),
+    };
+  }
+
+  private isInsufficientBalance(error: unknown): boolean {
+    const candidate = error as {
+      code?: string;
+      response?: { code?: string };
+      getResponse?: () => unknown;
+    };
+    if (candidate?.code === 'INSUFFICIENT_BALANCE') return true;
+    if (candidate?.response?.code === 'INSUFFICIENT_BALANCE') return true;
+    if (typeof candidate?.getResponse === 'function') {
+      const response = candidate.getResponse();
+      return (
+        typeof response === 'object' &&
+        response !== null &&
+        'code' in response &&
+        (response as { code?: unknown }).code === 'INSUFFICIENT_BALANCE'
+      );
+    }
+    return false;
   }
 
   // ─── کاربر: آپلود رسید ───────────────────────────────────────

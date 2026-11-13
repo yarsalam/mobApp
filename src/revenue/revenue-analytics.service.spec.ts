@@ -78,6 +78,7 @@ describe('RevenueAnalyticsService by-product reporting', () => {
       'andWhere',
       'groupBy',
       'orderBy',
+      'setParameter',
     ]) {
       builder[method] = jest.fn(() => builder);
     }
@@ -225,5 +226,140 @@ describe('RevenueAnalyticsService historical gender attribution', () => {
     expect(result.fulfilledPurchaseLegacyGenderFallbackCount).toBe(1);
     expect(result.fulfilledPurchaseSnapshotCoveragePercent).toBe(50);
     expect(result.walletDebitGenderBasis).toContain('current user profile');
+  });
+});
+
+
+describe('RevenueAnalyticsService customer RFM segmentation', () => {
+  const makeBuilder = (rows: any[] = [], count = 0) => {
+    const builder: any = {};
+    for (const method of [
+      'innerJoin',
+      'leftJoin',
+      'select',
+      'addSelect',
+      'where',
+      'andWhere',
+      'groupBy',
+      'orderBy',
+      'setParameter',
+    ]) {
+      builder[method] = jest.fn(() => builder);
+    }
+    builder.getRawMany = jest.fn(async () => rows);
+    builder.getCount = jest.fn(async () => count);
+    return builder;
+  };
+
+  it('separates period frequency/monetary value from lifetime recency and protects all past buyers', async () => {
+    const now = Date.now();
+    const purchaseRows = [
+      { userId: '1', frequency: '3', lifetimeFrequency: '3', lastPurchaseAt: new Date(now - 2 * 86400000), monetaryRials: '9000' },
+      { userId: '2', frequency: '4', lifetimeFrequency: '4', lastPurchaseAt: new Date(now - 60 * 86400000), monetaryRials: '12000' },
+      { userId: '3', frequency: '2', lifetimeFrequency: '2', lastPurchaseAt: new Date(now - 5 * 86400000), monetaryRials: '5000' },
+      { userId: '4', frequency: '2', lifetimeFrequency: '2', lastPurchaseAt: new Date(now - 45 * 86400000), monetaryRials: '3000' },
+      { userId: '5', frequency: '1', lifetimeFrequency: '1', lastPurchaseAt: new Date(now - 1 * 86400000), monetaryRials: '1000' },
+      // A historical repeat buyer with only one purchase in-window is not a first-time purchaser.
+      { userId: '6', frequency: '1', lifetimeFrequency: '3', lastPurchaseAt: new Date(now - 90 * 86400000), monetaryRials: '1500' },
+      { userId: '7', frequency: '0', lifetimeFrequency: '2', lastPurchaseAt: new Date(now - 120 * 86400000), monetaryRials: '0' },
+    ];
+    const purchaseBuilder = makeBuilder(purchaseRows);
+    const neverPurchasedBuilder = makeBuilder([], 17);
+    const events: any = {
+      createQueryBuilder: jest.fn(() => purchaseBuilder),
+    };
+    const users: any = {
+      count: jest.fn(async () => 24),
+      createQueryBuilder: jest.fn(() => neverPurchasedBuilder),
+    };
+    const service = new RevenueAnalyticsService(
+      {} as any,
+      users,
+      {} as any,
+      events,
+    );
+
+    const result = await service.customerSegments(90);
+    const byKey = Object.fromEntries(result.segments.map((row) => [row.key, row]));
+
+    expect(result.currency).toBe('IRT');
+    expect(result.metrics).toMatchObject({
+      activePreviouslyPurchasedCustomers: 7,
+      activeIrtPreviouslyPurchasedCustomers: 7,
+      activePurchasedInWindow: 6,
+      historicalDormantBuyers: 1,
+      purchasesInWindow: 13,
+      fulfilledRevenueRialsInWindow: 31500,
+      lifetimeIrtRepeatBuyers: 6,
+      lifetimeIrtFrequentBuyers: 3,
+      topQuartileAtRiskBuyers: 1,
+      activeNeverPurchasedUsers: 17,
+      invalidAggregateRows: 0,
+    });
+    expect(byKey.frequent_active.customers).toBe(1);
+    expect(byKey.frequent_at_risk.customers).toBe(1);
+    expect(byKey.repeat_active.customers).toBe(1);
+    expect(byKey.repeat_at_risk.customers).toBe(1);
+    expect(byKey.single_purchase_window_active.customers).toBe(1);
+    expect(byKey.single_purchase_window_lapsed.customers).toBe(1);
+    expect(byKey.historical_dormant.customers).toBe(1);
+    expect(byKey.frequent_active.monetaryTiers.M4).toMatchObject({
+      customers: 1,
+      revenueRials: 9000,
+    });
+    expect(byKey.frequent_at_risk.monetaryTiers.M4).toMatchObject({
+      customers: 1,
+      revenueRials: 12000,
+    });
+    expect(result.monetaryQuartiles).toMatchObject({
+      p25: 1875,
+      p50: 4000,
+      p75: 8000,
+    });
+    expect(result.protection).toMatchObject({
+      previouslyPurchasedUsersExcludedFromFirstPurchaseDiscounts: true,
+      previouslyPurchasedUsersProtected: 7,
+      repeatIrtBuyersProtected: 6,
+      firstPurchaseCandidatePool: 17,
+      status: 'analytics_only_no_discount_is_applied',
+    });
+
+    expect(purchaseBuilder.where).toHaveBeenCalledWith(
+      'e.type = :purchaseType',
+      { purchaseType: expect.any(String) },
+    );
+    expect(purchaseBuilder.andWhere).toHaveBeenCalledWith(
+      "JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.isCommercialPurchase')) = 'true'",
+    );
+    expect(purchaseBuilder.andWhere).toHaveBeenCalledWith(
+      "JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.currency')) = 'IRT'",
+    );
+    expect(purchaseBuilder.andWhere).toHaveBeenCalledWith(
+      expect.stringContaining('amountRials'),
+    );
+    expect(purchaseBuilder.setParameter).toHaveBeenCalledWith(
+      'since',
+      expect.any(Date),
+    );
+    expect(users.count).toHaveBeenCalledWith({ where: { status: 'active' } });
+    expect(neverPurchasedBuilder.leftJoin).toHaveBeenCalled();
+    expect(neverPurchasedBuilder.andWhere).toHaveBeenCalledWith(
+      'purchase.id IS NULL',
+    );
+  });
+
+  it('rejects invalid windows rather than silently changing the cohort definition', async () => {
+    const events: any = { createQueryBuilder: jest.fn() };
+    const service = new RevenueAnalyticsService(
+      {} as any,
+      {} as any,
+      {} as any,
+      events,
+    );
+
+    await expect(service.customerSegments(7)).rejects.toThrow(
+      'days must be an integer between 30 and 3650',
+    );
+    expect(events.createQueryBuilder).not.toHaveBeenCalled();
   });
 });

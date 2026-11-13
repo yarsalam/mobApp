@@ -232,15 +232,6 @@ export class IntentDetectorService {
     // مرحله ۳: fallback
     if (ruleResult) return { ...ruleResult, source: 'rule' };
 
-    if (normalized.length <= 15) {
-      return {
-        type: IntentType.GREETING,
-        needsLLM: false,
-        confidence: 0.55,
-        source: 'fallback',
-      };
-    }
-
     return {
       type: IntentType.GENERAL_CHAT,
       needsLLM: true,
