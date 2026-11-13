@@ -260,6 +260,13 @@ export class AdminApiRevenueController {
     );
   }
 
+  @Get('customer-segments')
+  async customerSegments(@Query('days') days?: string) {
+    return this.revenueAnalytics.customerSegments(
+      this.parseBoundedInt(days, 90, 30, 3650, 'days'),
+    );
+  }
+
   @Get('forecast-accuracy')
   async forecastAccuracy(
     @Query('days') days?: string,
