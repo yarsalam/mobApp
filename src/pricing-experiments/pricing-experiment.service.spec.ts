@@ -332,7 +332,7 @@ describe('PricingExperimentService', () => {
         payablePriceRials: payload.payablePriceRials,
       },
     });
-    h.eligibilityBuilder.getCount.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    h.eligibilityBuilder.getCount.mockResolvedValue(1);
 
     await expect(
       h.service.prepareCheckout(7, 'vip-month', quote.quoteId!, 'checkout-A'),
