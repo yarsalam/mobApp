@@ -240,10 +240,6 @@ describe('PricingExperimentService', () => {
 
   it('reserves a treatment offer for one idempotency key and blocks another checkout', async () => {
     const userId = await findUserForVariant('treatment');
-    const quoteData = decodeQuote((await makeService()).service.getQuote
-      ? (await makeService()).service.getQuote(7, 'vip-month').then(() => '') as any
-      : '');
-    void quoteData;
     const h = makeService({
       exposure: {
         metadata: {
