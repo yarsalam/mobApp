@@ -99,7 +99,7 @@ describe('AcquisitionGrowthService', () => {
     expect(report.lastTouchSummary).toEqual(
       expect.arrayContaining([
         expect.objectContaining({source: 'instagram', medium: 'social', campaignId: 'ig-r1', users: 1}),
-        expect.objectContaining({source: 'referral', medium: 'invite', users: 1}),
+        expect.objectContaining({source: 'telegram', medium: 'social', campaignId: 'tg-sync', users: 1}),
       ]),
     );
     expect(report.interpretation).toContain('observational_descriptive_only');
