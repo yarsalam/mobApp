@@ -1,7 +1,10 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ProductBundle } from './entities/product-bundle.entity';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { CurrentUser } from '../current-user/current-user.decorator';
+import { PricingExperimentService } from '../pricing-experiments/pricing-experiment.service';
 
 /**
  * ProductController
@@ -14,7 +17,30 @@ export class ProductController {
   constructor(
     @InjectRepository(ProductBundle)
     private readonly bundleRepo: Repository<ProductBundle>,
+    private readonly pricingExperiment: PricingExperimentService,
   ) {}
+
+  @Get('quote/:bundleCode')
+  @UseGuards(JwtAuthGuard)
+  async getPricingQuote(
+    @CurrentUser('sub') userId: number,
+    @Param('bundleCode') bundleCode: string,
+  ) {
+    return this.pricingExperiment.getQuote(userId, bundleCode);
+  }
+
+  @Post('pricing-exposure')
+  @UseGuards(JwtAuthGuard)
+  async recordPricingExposure(
+    @CurrentUser('sub') userId: number,
+    @Body() body: { quoteId?: string },
+  ) {
+    const quoteId = body?.quoteId?.trim();
+    if (!quoteId) {
+      throw new BadRequestException('quoteId is required');
+    }
+    return this.pricingExperiment.recordExposure(userId, quoteId);
+  }
 
   /**
    * لیست محصولات فعال — گروه‌بندی شده بر اساس نوع اول item

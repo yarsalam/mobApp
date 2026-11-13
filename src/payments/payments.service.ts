@@ -44,6 +44,15 @@ export class PaymentsService {
       amountRials: number;
       source: 'wallet' | 'payment';
       idempotencyKey?: string;
+      pricingExperiment?: {
+        experimentId: string;
+        assignmentId: string;
+        variant: 'control' | 'treatment';
+        basePriceRials: number;
+        payablePriceRials: number;
+        discountBps: number;
+        currency: 'IRT';
+      };
     },
   ) {
     try {
@@ -107,6 +116,9 @@ export class PaymentsService {
                 amountRials: purchaseContext.amountRials,
                 currency: 'IRT',
                 source: purchaseContext.source,
+                ...(purchaseContext.pricingExperiment
+                  ? { pricingExperiment: purchaseContext.pricingExperiment }
+                  : {}),
               }
             : { source: 'admin_or_system_grant' }),
         },
