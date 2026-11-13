@@ -255,8 +255,10 @@ export class AcquisitionGrowthService {
         : {};
 
       if (
-        event.type === EventType.LOGIN &&
-        eventMetadata.kind === 'acquisition_touch' &&
+        (
+          (event.type === EventType.LOGIN && eventMetadata.kind === 'acquisition_touch') ||
+          event.type === EventType.USER_REGISTERED
+        ) &&
         eventMetadata.acquisitionTouch &&
         typeof eventMetadata.acquisitionTouch === 'object'
       ) {
