@@ -67,6 +67,8 @@ jobs:
           revenue-analytics.service.spec.ts
           revenue/acquisition-growth.service.spec.ts
           revenue/acquisition-attribution.spec.ts
+          auth/auth.service.spec.ts
+          auth/services/auth-registration.service.spec.ts
           personality.service.spec.ts
           app.controller.spec.ts
           payments.service.spec.ts
