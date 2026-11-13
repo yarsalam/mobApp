@@ -609,9 +609,11 @@ export class RevenueAnalyticsService {
     // First-purchase eligibility is lifetime-based, not window-based. This
     // prevents a previous buyer with no recent transaction from being treated
     // as a new prospect.
-    const neverPurchasedActiveUsers = await this.users
-      .createQueryBuilder('customer')
-      .leftJoin(
+    const [activeUserCount, neverPurchasedActiveUsers] = await Promise.all([
+      this.users.count({ where: { status: 'active' } }),
+      this.users
+        .createQueryBuilder('customer')
+        .leftJoin(
         PartitionedEvent,
         'purchase',
         `purchase.userId = customer.id
@@ -619,9 +621,10 @@ export class RevenueAnalyticsService {
           AND JSON_UNQUOTE(JSON_EXTRACT(purchase.metadata, '$.isCommercialPurchase')) = 'true'`,
         { purchaseType: EventType.PURCHASE },
       )
-      .where('customer.status = :activeStatus', { activeStatus: 'active' })
-      .andWhere('purchase.id IS NULL')
-      .getCount();
+        .where('customer.status = :activeStatus', { activeStatus: 'active' })
+        .andWhere('purchase.id IS NULL')
+        .getCount(),
+    ]);
 
     const definitions = [
       { key: 'frequent_active', rule: `3+ purchases in ${days} days; last purchase within 30 days` },
@@ -757,7 +760,11 @@ export class RevenueAnalyticsService {
       if (lifetimeFrequency >= 3) lifetimeFrequentBuyers += 1;
     }
 
-    const previouslyPurchasedUsers = validRows.length;
+    const activePreviouslyPurchasedCustomers = Math.max(
+      0,
+      activeUserCount - neverPurchasedActiveUsers,
+    );
+    const activeIrtPreviouslyPurchasedCustomers = validRows.length;
     return {
       currency: 'IRT',
       unit: 'rial',
@@ -765,7 +772,8 @@ export class RevenueAnalyticsService {
       source:
         "active users' PURCHASE events with isCommercialPurchase=true, currency=IRT and positive amountRials; written after bundle fulfilment succeeds",
       metrics: {
-        activePreviouslyPurchasedCustomers: previouslyPurchasedUsers,
+        activePreviouslyPurchasedCustomers,
+        activeIrtPreviouslyPurchasedCustomers,
         activePurchasedInWindow,
         historicalDormantBuyers: grouped.historical_dormant.customers,
         purchasesInWindow: periodPurchases,
@@ -801,7 +809,7 @@ export class RevenueAnalyticsService {
       },
       protection: {
         previouslyPurchasedUsersExcludedFromFirstPurchaseDiscounts: true,
-        previouslyPurchasedUsersProtected: previouslyPurchasedUsers,
+        previouslyPurchasedUsersProtected: activePreviouslyPurchasedCustomers,
         repeatBuyersProtected: lifetimeRepeatBuyers,
         firstPurchaseCandidatePool: neverPurchasedActiveUsers,
         eligibilityRule:
