@@ -631,31 +631,32 @@ describe('PricingExperimentService', () => {
     ).rejects.toThrow('First-purchase pricing is no longer available');
   });
 
-  it('reports exposure and purchase conversion separately for control and treatment', async () => {
+  it('counts purchases only after a matching exposure in the selected cohort', async () => {
+    const now = Date.now();
     const exposures = makeBuilder([
-      { variant: 'control', exposedUsers: '12' },
-      { variant: 'treatment', exposedUsers: '10' },
+      { userId: '1', variant: 'control', assignmentId: 'assign-c1', createdAt: new Date(now - 10 * 86_400_000) },
+      { userId: '2', variant: 'control', assignmentId: 'assign-c2', createdAt: new Date(now - 8 * 86_400_000) },
+      { userId: '3', variant: 'treatment', assignmentId: 'assign-t3', createdAt: new Date(now - 7 * 86_400_000) },
+      { userId: '4', variant: 'treatment', assignmentId: 'assign-t4', createdAt: new Date(now - 2 * 86_400_000) },
     ]);
     const purchases = makeBuilder([
-      { variant: 'control', purchasedUsers: '2', revenueRials: '200000', discountRials: '0' },
-      { variant: 'treatment', purchasedUsers: '3', revenueRials: '270000', discountRials: '30000' },
-    ]);
-    const now = Date.now();
-    const cohortPurchases = makeBuilder([
-      { userId: '1', variant: 'control', createdAt: new Date(now - 86_400_000) },
-      { userId: '2', variant: 'treatment', createdAt: new Date(now - 86_400_000) },
-      { userId: '3', variant: 'treatment', createdAt: new Date(now - 86_400_000) },
-      { userId: '4', variant: 'treatment', createdAt: new Date(now - 86_400_000) },
+      { userId: '1', variant: 'control', assignmentId: 'assign-c1', createdAt: new Date(now - 9 * 86_400_000), amountRials: '100000', basePriceRials: '100000' },
+      // This purchase predates the exposure and must not count as a conversion.
+      { userId: '2', variant: 'control', assignmentId: 'assign-c2', createdAt: new Date(now - 9 * 86_400_000), amountRials: '100000', basePriceRials: '100000' },
+      { userId: '3', variant: 'treatment', assignmentId: 'assign-t3', createdAt: new Date(now - 6 * 86_400_000), amountRials: '90000', basePriceRials: '100000' },
+      // A different assignment must not be attributed to this exposure.
+      { userId: '4', variant: 'treatment', assignmentId: 'wrong-assignment', createdAt: new Date(now - 1 * 86_400_000), amountRials: '90000', basePriceRials: '100000' },
+      // A purchase without an in-period exposure must not enter the cohort.
+      { userId: '5', variant: 'treatment', assignmentId: 'assign-t5', createdAt: new Date(now - 1 * 86_400_000), amountRials: '90000', basePriceRials: '100000' },
     ]);
     const repeatPurchases = makeBuilder([
-      { userId: '3', createdAt: new Date(now - 43_200_000), amountRials: '100000' },
-      { userId: '3', createdAt: new Date(now - 21_600_000), amountRials: '200000' },
+      { userId: '3', createdAt: new Date(now - 2 * 86_400_000), amountRials: '100000' },
+      { userId: '3', createdAt: new Date(now - 1 * 86_400_000), amountRials: '200000' },
     ]);
     const h = makeService();
     h.eventRepo.createQueryBuilder
       .mockReturnValueOnce(exposures)
       .mockReturnValueOnce(purchases)
-      .mockReturnValueOnce(cohortPurchases)
       .mockReturnValueOnce(repeatPurchases);
 
     const report = await h.service.getExperimentReport(EXPERIMENT_ID, 30);
@@ -663,33 +664,34 @@ describe('PricingExperimentService', () => {
     expect(report.variants).toEqual([
       {
         variant: 'control',
-        exposedUsers: 12,
-        purchasedUsers: 2,
-        conversionRatePercent: 16.67,
-        revenueRials: 200_000,
+        exposedUsers: 2,
+        purchasedUsers: 1,
+        conversionRatePercent: 50,
+        revenueRials: 100_000,
         discountRials: 0,
         repeatPurchasedUsers: 0,
         repeatPurchaseCount: 0,
         repeatPurchaseRatePercent: 0,
         repeatRevenueRials: 0,
-        totalObservedRevenueRials: 200_000,
-        observedRevenuePerExposedUserRials: 16_667,
+        totalObservedRevenueRials: 100_000,
+        observedRevenuePerExposedUserRials: 50_000,
       },
       {
         variant: 'treatment',
-        exposedUsers: 10,
-        purchasedUsers: 3,
-        conversionRatePercent: 30,
-        revenueRials: 270_000,
-        discountRials: 30_000,
+        exposedUsers: 2,
+        purchasedUsers: 1,
+        conversionRatePercent: 50,
+        revenueRials: 90_000,
+        discountRials: 10_000,
         repeatPurchasedUsers: 1,
         repeatPurchaseCount: 2,
-        repeatPurchaseRatePercent: 33.33,
+        repeatPurchaseRatePercent: 100,
         repeatRevenueRials: 300_000,
-        totalObservedRevenueRials: 570_000,
-        observedRevenuePerExposedUserRials: 57_000,
+        totalObservedRevenueRials: 390_000,
+        observedRevenuePerExposedUserRials: 195_000,
       },
     ]);
+    expect(report.interpretation).toContain('matching exposure');
     expect(report.interpretation).toContain('descriptive_only');
   });
 });
