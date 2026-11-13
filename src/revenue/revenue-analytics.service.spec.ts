@@ -78,6 +78,7 @@ describe('RevenueAnalyticsService by-product reporting', () => {
       'andWhere',
       'groupBy',
       'orderBy',
+      'setParameter',
     ]) {
       builder[method] = jest.fn(() => builder);
     }
@@ -241,6 +242,7 @@ describe('RevenueAnalyticsService customer RFM segmentation', () => {
       'andWhere',
       'groupBy',
       'orderBy',
+      'setParameter',
     ]) {
       builder[method] = jest.fn(() => builder);
     }
@@ -249,15 +251,17 @@ describe('RevenueAnalyticsService customer RFM segmentation', () => {
     return builder;
   };
 
-  it('segments only fulfilled commercial IRT purchases and protects repeat customers', async () => {
+  it('separates period frequency/monetary value from lifetime recency and protects all past buyers', async () => {
     const now = Date.now();
     const purchaseRows = [
-      { userId: '1', frequency: '3', lastPurchaseAt: new Date(now - 2 * 86400000), monetaryRials: '9000' },
-      { userId: '2', frequency: '4', lastPurchaseAt: new Date(now - 60 * 86400000), monetaryRials: '12000' },
-      { userId: '3', frequency: '2', lastPurchaseAt: new Date(now - 5 * 86400000), monetaryRials: '5000' },
-      { userId: '4', frequency: '2', lastPurchaseAt: new Date(now - 45 * 86400000), monetaryRials: '3000' },
-      { userId: '5', frequency: '1', lastPurchaseAt: new Date(now - 1 * 86400000), monetaryRials: '1000' },
-      { userId: '6', frequency: '1', lastPurchaseAt: new Date(now - 90 * 86400000), monetaryRials: '1500' },
+      { userId: '1', frequency: '3', lifetimeFrequency: '3', lastPurchaseAt: new Date(now - 2 * 86400000), monetaryRials: '9000' },
+      { userId: '2', frequency: '4', lifetimeFrequency: '4', lastPurchaseAt: new Date(now - 60 * 86400000), monetaryRials: '12000' },
+      { userId: '3', frequency: '2', lifetimeFrequency: '2', lastPurchaseAt: new Date(now - 5 * 86400000), monetaryRials: '5000' },
+      { userId: '4', frequency: '2', lifetimeFrequency: '2', lastPurchaseAt: new Date(now - 45 * 86400000), monetaryRials: '3000' },
+      { userId: '5', frequency: '1', lifetimeFrequency: '1', lastPurchaseAt: new Date(now - 1 * 86400000), monetaryRials: '1000' },
+      // A historical repeat buyer with only one purchase in-window is not a first-time purchaser.
+      { userId: '6', frequency: '1', lifetimeFrequency: '3', lastPurchaseAt: new Date(now - 90 * 86400000), monetaryRials: '1500' },
+      { userId: '7', frequency: '0', lifetimeFrequency: '2', lastPurchaseAt: new Date(now - 120 * 86400000), monetaryRials: '0' },
     ];
     const purchaseBuilder = makeBuilder(purchaseRows);
     const neverPurchasedBuilder = makeBuilder([], 17);
@@ -279,11 +283,13 @@ describe('RevenueAnalyticsService customer RFM segmentation', () => {
 
     expect(result.currency).toBe('IRT');
     expect(result.metrics).toMatchObject({
-      activePayingCustomers: 6,
-      purchases: 13,
-      fulfilledRevenueRials: 31500,
-      repeatBuyers: 4,
-      frequentBuyers: 2,
+      activePreviouslyPurchasedCustomers: 7,
+      activePurchasedInWindow: 6,
+      historicalDormantBuyers: 1,
+      purchasesInWindow: 13,
+      fulfilledRevenueRialsInWindow: 31500,
+      lifetimeRepeatBuyers: 5,
+      lifetimeFrequentBuyers: 3,
       activeNeverPurchasedUsers: 17,
       invalidAggregateRows: 0,
     });
@@ -291,11 +297,13 @@ describe('RevenueAnalyticsService customer RFM segmentation', () => {
     expect(byKey.frequent_at_risk.customers).toBe(1);
     expect(byKey.repeat_active.customers).toBe(1);
     expect(byKey.repeat_at_risk.customers).toBe(1);
-    expect(byKey.first_purchase_recent.customers).toBe(1);
-    expect(byKey.first_purchase_lapsed.customers).toBe(1);
+    expect(byKey.single_purchase_window_active.customers).toBe(1);
+    expect(byKey.single_purchase_window_lapsed.customers).toBe(1);
+    expect(byKey.historical_dormant.customers).toBe(1);
     expect(result.protection).toMatchObject({
-      repeatBuyersExcludedFromFirstPurchaseDiscounts: true,
-      protectedRepeatBuyers: 4,
+      previouslyPurchasedUsersExcludedFromFirstPurchaseDiscounts: true,
+      previouslyPurchasedUsersProtected: 7,
+      repeatBuyersProtected: 5,
       firstPurchaseCandidatePool: 17,
       status: 'analytics_only_no_discount_is_applied',
     });
@@ -312,6 +320,10 @@ describe('RevenueAnalyticsService customer RFM segmentation', () => {
     );
     expect(purchaseBuilder.andWhere).toHaveBeenCalledWith(
       expect.stringContaining('amountRials'),
+    );
+    expect(purchaseBuilder.setParameter).toHaveBeenCalledWith(
+      'since',
+      expect.any(Date),
     );
     expect(neverPurchasedBuilder.leftJoin).toHaveBeenCalled();
     expect(neverPurchasedBuilder.andWhere).toHaveBeenCalledWith(
