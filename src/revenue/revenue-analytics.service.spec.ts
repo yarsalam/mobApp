@@ -290,6 +290,7 @@ describe('RevenueAnalyticsService customer RFM segmentation', () => {
       fulfilledRevenueRialsInWindow: 31500,
       lifetimeRepeatBuyers: 6,
       lifetimeFrequentBuyers: 3,
+      topQuartileAtRiskBuyers: 1,
       activeNeverPurchasedUsers: 17,
       invalidAggregateRows: 0,
     });
@@ -300,6 +301,19 @@ describe('RevenueAnalyticsService customer RFM segmentation', () => {
     expect(byKey.single_purchase_window_active.customers).toBe(1);
     expect(byKey.single_purchase_window_lapsed.customers).toBe(1);
     expect(byKey.historical_dormant.customers).toBe(1);
+    expect(byKey.frequent_active.monetaryTiers.M4).toMatchObject({
+      customers: 1,
+      revenueRials: 9000,
+    });
+    expect(byKey.frequent_at_risk.monetaryTiers.M4).toMatchObject({
+      customers: 1,
+      revenueRials: 12000,
+    });
+    expect(result.monetaryQuartiles).toMatchObject({
+      p25: 1875,
+      p50: 4000,
+      p75: 8000,
+    });
     expect(result.protection).toMatchObject({
       previouslyPurchasedUsersExcludedFromFirstPurchaseDiscounts: true,
       previouslyPurchasedUsersProtected: 7,
