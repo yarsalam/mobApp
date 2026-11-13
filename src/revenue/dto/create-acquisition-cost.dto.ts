@@ -55,4 +55,9 @@ export class CreateAcquisitionCostDto {
   @IsString()
   @MaxLength(128)
   idempotencyKey!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  createdBy?: string;
 }
