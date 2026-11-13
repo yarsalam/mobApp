@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from '@jest/globals';
+import { createHmac } from 'crypto';
 import { DataSource, EntitySchema } from 'typeorm';
 import Redis from 'ioredis';
 
@@ -247,5 +248,135 @@ integrationDescribe('Pricing experiment report MySQL cohort integration', () => 
     });
     expect(report.interpretation).toContain('matching exposure');
     expect(report.interpretation).toContain('descriptive_only');
+  }, 30_000);
+
+  it('runs quote → exposure → checkout reservation → committed purchase → report through MySQL and Redis', async () => {
+    const flowExperimentId = `pricing-flow-${process.pid}-${Date.now()}`;
+    const signingSecret = 'mysql-flow-integration-secret-at-least-32-bytes';
+    const treatmentRateBps = 5000;
+    const variantFor = (userId: number) => {
+      const digest = createHmac('sha256', signingSecret)
+        .update(`${flowExperimentId}:assignment:${userId}`)
+        .digest();
+      return digest.readUInt32BE(0) % 10_000 < treatmentRateBps
+        ? 'treatment'
+        : 'control';
+    };
+    const findUserForVariant = (variant: 'control' | 'treatment') => {
+      for (let userId = 8401; userId < 9000; userId += 1) {
+        if (variantFor(userId) === variant) return userId;
+      }
+      throw new Error(`Could not find a ${variant} user fixture`);
+    };
+    const userIds = {
+      control: findUserForVariant('control'),
+      treatment: findUserForVariant('treatment'),
+    };
+
+    const configValues: Record<string, string> = {
+      PRICING_EXPERIMENT_ENABLED: 'true',
+      PRICING_EXPERIMENT_ID: flowExperimentId,
+      PRICING_EXPERIMENT_SECRET: signingSecret,
+      PRICING_EXPERIMENT_DISCOUNT_BPS: '1000',
+      PRICING_EXPERIMENT_TREATMENT_RATE_BPS: String(treatmentRateBps),
+      PRICING_EXPERIMENT_MAX_DISCOUNT_BUDGET_RIALS: '200000',
+      PRICING_EXPERIMENT_ENDS_AT: new Date(Date.now() + 14 * 86_400_000).toISOString(),
+    };
+    const config: any = { get: (key: string) => configValues[key] };
+    const bundles: any = {
+      findOne: async ({ where }: any) => ({
+        code: where.code,
+        price: 100_000,
+        active: true,
+      }),
+    };
+    const users: any = {
+      findOne: async ({ where }: any) => ({
+        id: where.id,
+        status: 'active',
+      }),
+    };
+    const repository = dataSource.getRepository(PartitionedEvent);
+    const userEvents: any = {
+      log: async (event: any) => {
+        await repository.insert({
+          userId: event.userId,
+          type: event.type,
+          metadata: event.metadata,
+          idempotencyKey: event.idempotencyKey ?? null,
+        });
+      },
+    };
+    const flowService = new PricingExperimentService(
+      bundles,
+      users,
+      repository,
+      userEvents,
+      config,
+      redis,
+    );
+
+    // Both variants are issued before either purchase consumes the shared cap.
+    const quotes = {
+      control: await flowService.getQuote(userIds.control, 'vip-month'),
+      treatment: await flowService.getQuote(userIds.treatment, 'vip-month'),
+    };
+    expect(quotes.control.variant).toBe('control');
+    expect(quotes.treatment.variant).toBe('treatment');
+    expect(quotes.treatment.discountRials).toBe(10_000);
+
+    for (const variant of ['control', 'treatment'] as const) {
+      const userId = userIds[variant];
+      const quote = quotes[variant];
+      expect(quote.quoteId).toBeTruthy();
+
+      await flowService.recordExposure(userId, quote.quoteId!);
+      const idempotencyKey = `mysql-flow-${variant}-checkout`;
+      const checkout = await flowService.prepareCheckout(
+        userId,
+        'vip-month',
+        quote.quoteId!,
+        idempotencyKey,
+      );
+
+      // This is the durable post-wallet-debit boundary used by PaymentsController.
+      await flowService.commitCheckoutReservation(userId, checkout, idempotencyKey);
+      await repository.insert({
+        userId,
+        type: EventType.PURCHASE,
+        idempotencyKey: `mysql-flow-${variant}-purchase`,
+        metadata: {
+          bundleCode: 'vip-month',
+          isCommercialPurchase: true,
+          amountRials: checkout.payablePriceRials,
+          currency: 'IRT',
+          pricingExperiment: checkout,
+        },
+      });
+    }
+
+    const report = await flowService.getExperimentReport(flowExperimentId, 30);
+    const control = report.variants.find((row: any) => row.variant === 'control');
+    const treatment = report.variants.find((row: any) => row.variant === 'treatment');
+
+    expect(control).toMatchObject({
+      exposedUsers: 1,
+      purchasedUsers: 1,
+      conversionRatePercent: 100,
+      revenueRials: 100_000,
+      discountRials: 0,
+    });
+    expect(treatment).toMatchObject({
+      exposedUsers: 1,
+      purchasedUsers: 1,
+      conversionRatePercent: 100,
+      revenueRials: 90_000,
+      discountRials: 10_000,
+    });
+    expect(report.budget).toMatchObject({
+      budgetCapRials: 200_000,
+      spentDiscountRials: 10_000,
+      reservedDiscountRials: 0,
+    });
   }, 30_000);
 });
