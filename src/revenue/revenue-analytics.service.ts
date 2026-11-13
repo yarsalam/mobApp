@@ -634,44 +634,92 @@ export class RevenueAnalyticsService {
     ] as const;
 
     type SegmentKey = (typeof definitions)[number]['key'];
+    type MonetaryTier = 'M1' | 'M2' | 'M3' | 'M4';
+    type MonetaryBucket = { customers: number; revenueRials: number };
+    type SegmentStats = {
+      customers: number;
+      purchases: number;
+      revenueRials: number;
+      monetaryTiers: Record<MonetaryTier, MonetaryBucket>;
+    };
+    const emptyMonetaryTiers = (): Record<MonetaryTier, MonetaryBucket> => ({
+      M1: { customers: 0, revenueRials: 0 },
+      M2: { customers: 0, revenueRials: 0 },
+      M3: { customers: 0, revenueRials: 0 },
+      M4: { customers: 0, revenueRials: 0 },
+    });
     const grouped = Object.fromEntries(
       definitions.map(({ key }) => [
         key,
-        { customers: 0, purchases: 0, revenueRials: 0 },
+        {
+          customers: 0,
+          purchases: 0,
+          revenueRials: 0,
+          monetaryTiers: emptyMonetaryTiers(),
+        },
       ]),
-    ) as Record<
-      SegmentKey,
-      { customers: number; purchases: number; revenueRials: number }
-    >;
+    ) as Record<SegmentKey, SegmentStats>;
+
+    const isValidRow = (row: any): boolean => {
+      const userId = Number(row.userId);
+      const frequency = Math.trunc(finite(row.frequency));
+      const lifetimeFrequency = Math.trunc(finite(row.lifetimeFrequency));
+      const monetaryRials = finite(row.monetaryRials);
+      const lastPurchase = new Date(row.lastPurchaseAt);
+      return (
+        Number.isSafeInteger(userId) &&
+        userId > 0 &&
+        lifetimeFrequency > 0 &&
+        frequency >= 0 &&
+        frequency <= lifetimeFrequency &&
+        Number.isFinite(lastPurchase.getTime()) &&
+        Number.isFinite(monetaryRials) &&
+        monetaryRials >= 0 &&
+        (frequency === 0 || monetaryRials > 0)
+      );
+    };
+    const validRows = purchaseRows.filter(isValidRow);
+    const invalidRows = purchaseRows.length - validRows.length;
+
+    // Monetary tiers are data-derived quartiles among active IRT purchasers in
+    // this window. Equal amounts share the same tier; ties are never split.
+    const monetaryValues = validRows
+      .filter((row) => Math.trunc(finite(row.frequency)) > 0)
+      .map((row) => finite(row.monetaryRials))
+      .sort((a, b) => a - b);
+    const quantile = (p: number): number | null => {
+      if (monetaryValues.length === 0) return null;
+      const position = (monetaryValues.length - 1) * p;
+      const lower = Math.floor(position);
+      const upper = Math.ceil(position);
+      if (lower === upper) return monetaryValues[lower];
+      const fraction = position - lower;
+      return monetaryValues[lower] + (monetaryValues[upper] - monetaryValues[lower]) * fraction;
+    };
+    const monetaryCutoffs = {
+      p25: quantile(0.25),
+      p50: quantile(0.5),
+      p75: quantile(0.75),
+    };
+    const resolveMonetaryTier = (amount: number): MonetaryTier => {
+      if (monetaryCutoffs.p25 === null || amount <= monetaryCutoffs.p25) return 'M1';
+      if (monetaryCutoffs.p50 !== null && amount <= monetaryCutoffs.p50) return 'M2';
+      if (monetaryCutoffs.p75 !== null && amount <= monetaryCutoffs.p75) return 'M3';
+      return 'M4';
+    };
 
     let activePurchasedInWindow = 0;
     let periodPurchases = 0;
     let periodRevenueRials = 0;
     let lifetimeRepeatBuyers = 0;
     let lifetimeFrequentBuyers = 0;
-    let invalidRows = 0;
+    let topQuartileAtRiskBuyers = 0;
 
-    for (const row of purchaseRows) {
-      const userId = Number(row.userId);
+    for (const row of validRows) {
       const frequency = Math.trunc(finite(row.frequency));
       const lifetimeFrequency = Math.trunc(finite(row.lifetimeFrequency));
       const monetaryRials = finite(row.monetaryRials);
       const lastPurchase = new Date(row.lastPurchaseAt);
-
-      if (
-        !Number.isSafeInteger(userId) ||
-        userId <= 0 ||
-        lifetimeFrequency <= 0 ||
-        frequency < 0 ||
-        frequency > lifetimeFrequency ||
-        !Number.isFinite(lastPurchase.getTime()) ||
-        !Number.isFinite(monetaryRials) ||
-        monetaryRials < 0
-      ) {
-        invalidRows += 1;
-        continue;
-      }
-
       const recencyDays = Math.max(
         0,
         Math.floor((Date.now() - lastPurchase.getTime()) / 86_400_000),
@@ -696,12 +744,20 @@ export class RevenueAnalyticsService {
       grouped[segment].revenueRials += monetaryRials;
       periodPurchases += frequency;
       periodRevenueRials += monetaryRials;
-      if (frequency > 0) activePurchasedInWindow += 1;
+      if (frequency > 0) {
+        activePurchasedInWindow += 1;
+        const tier = resolveMonetaryTier(monetaryRials);
+        grouped[segment].monetaryTiers[tier].customers += 1;
+        grouped[segment].monetaryTiers[tier].revenueRials += monetaryRials;
+        if (tier === 'M4' && (segment === 'frequent_at_risk' || segment === 'repeat_at_risk')) {
+          topQuartileAtRiskBuyers += 1;
+        }
+      }
       if (lifetimeFrequency >= 2) lifetimeRepeatBuyers += 1;
       if (lifetimeFrequency >= 3) lifetimeFrequentBuyers += 1;
     }
 
-    const previouslyPurchasedUsers = purchaseRows.length - invalidRows;
+    const previouslyPurchasedUsers = validRows.length;
     return {
       currency: 'IRT',
       unit: 'rial',
@@ -716,6 +772,7 @@ export class RevenueAnalyticsService {
         fulfilledRevenueRialsInWindow: Math.round(periodRevenueRials),
         lifetimeRepeatBuyers,
         lifetimeFrequentBuyers,
+        topQuartileAtRiskBuyers,
         activeNeverPurchasedUsers: neverPurchasedActiveUsers,
         invalidAggregateRows: invalidRows,
       },
@@ -724,7 +781,24 @@ export class RevenueAnalyticsService {
         rule,
         ...grouped[key],
         revenueRials: Math.round(grouped[key].revenueRials),
+        monetaryTiers: Object.fromEntries(
+          Object.entries(grouped[key].monetaryTiers).map(([tier, bucket]) => [
+            tier,
+            {
+              customers: bucket.customers,
+              revenueRials: Math.round(bucket.revenueRials),
+            },
+          ]),
+        ),
       })),
+      monetaryQuartiles: {
+        unit: 'rial',
+        p25: monetaryCutoffs.p25 === null ? null : Math.round(monetaryCutoffs.p25),
+        p50: monetaryCutoffs.p50 === null ? null : Math.round(monetaryCutoffs.p50),
+        p75: monetaryCutoffs.p75 === null ? null : Math.round(monetaryCutoffs.p75),
+        definition:
+          'per-customer fulfilled commercial purchase sum in the selected window; quartiles are calculated only among active-window purchasers; tied amounts remain together in the lower tier',
+      },
       protection: {
         previouslyPurchasedUsersExcludedFromFirstPurchaseDiscounts: true,
         previouslyPurchasedUsersProtected: previouslyPurchasedUsers,
@@ -738,9 +812,9 @@ export class RevenueAnalyticsService {
         recency: 'whole days since the latest lifetime successfully fulfilled commercial purchase',
         frequency: `number of successfully fulfilled commercial purchases in the selected rolling ${days}-day window`,
         monetary: 'sum of amountRials on purchases in the selected window, kept in IRT only',
+        monetaryTiers: 'M1-M4 based on empirical 25th, 50th and 75th percentiles; equal monetary amounts are never split',
         recencyRiskBoundaryDays: 30,
         frequentPurchaseThresholdInWindow: 3,
       },
     };
-  }
-}
+  }}
