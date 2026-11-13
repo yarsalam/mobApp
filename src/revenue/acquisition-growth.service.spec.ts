@@ -42,6 +42,7 @@ function makeService() {
     },
   ];
   const events = [
+    { userId: 1, type: EventType.PROFILE_UPDATE, createdAt: new Date(now - 36 * 86_400_000), metadata: { kind: 'profile_completed' } },
     { userId: 1, type: EventType.LIKE, createdAt: new Date(now - 35 * 86_400_000), metadata: {} },
     { userId: 1, type: EventType.APP_OPEN, createdAt: new Date(now - 33 * 86_400_000), metadata: {} },
     { userId: 1, type: EventType.MESSAGE_SENT, createdAt: new Date(now - 5 * 86_400_000), metadata: {} },
@@ -88,10 +89,10 @@ describe('AcquisitionGrowthService', () => {
       costAmount: 120_000,
       cac: 120_000,
       grossRevenuePerAcquiredUser: 300_000,
-      ltvOverCac: 2.5,
+      grossRevenueToCacRatio: 2.5,
     });
     expect(unattributed).toMatchObject({ newUsers: 1, cac: null });
-    expect(instagram).toMatchObject({ newUsers: 1, costAmount: 0, cac: 0, ltvOverCac: null });
+    expect(instagram).toMatchObject({ newUsers: 1, profileCompletedUsers: 0, costAmount: 0, cac: 0, grossRevenueToCacRatio: null });
     expect(report.lastTouchTrackedUsers).toBe(2);
     expect(report.lastTouchSummary).toEqual(
       expect.arrayContaining([
