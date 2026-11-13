@@ -428,50 +428,59 @@ export class PricingExperimentService {
     }
 
     const since = new Date(Date.now() - days * 86_400_000);
-    const rows = await this.events
-      .createQueryBuilder('exposure')
-      .leftJoin(
-        PartitionedEvent,
-        'purchase',
-        `purchase.userId = exposure.userId
-          AND purchase.type = :purchaseType
-          AND JSON_UNQUOTE(JSON_EXTRACT(purchase.metadata, '$.pricingExperiment.experimentId')) = :experimentId
-          AND JSON_UNQUOTE(JSON_EXTRACT(purchase.metadata, '$.pricingExperiment.assignmentId')) = JSON_UNQUOTE(JSON_EXTRACT(exposure.metadata, '$.assignmentId'))
-          AND purchase.createdAt >= exposure.createdAt`,
-        {
-          purchaseType: EventType.PURCHASE,
-          experimentId,
-        },
-      )
-      .select("JSON_UNQUOTE(JSON_EXTRACT(exposure.metadata, '$.variant'))", 'variant')
-      .addSelect('COUNT(DISTINCT exposure.userId)', 'exposedUsers')
-      .addSelect('COUNT(DISTINCT purchase.userId)', 'purchasedUsers')
-      .addSelect(
-        "COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(purchase.metadata, '$.pricingExperiment.basePriceRials')) AS DECIMAL(20,0)) - CAST(JSON_UNQUOTE(JSON_EXTRACT(purchase.metadata, '$.amountRials')) AS DECIMAL(20,0))), 0)",
-        'discountRials',
-      )
-      .addSelect(
-        "COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(purchase.metadata, '$.amountRials')) AS DECIMAL(20,0))), 0)",
-        'revenueRials',
-      )
-      .where('exposure.type = :exposureType', {
+    const exposures = await this.events
+      .createQueryBuilder('event')
+      .select("JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.variant'))", 'variant')
+      .addSelect('COUNT(DISTINCT event.userId)', 'exposedUsers')
+      .where('event.type = :exposureType', {
         exposureType: EventType.PROMOTION_SHOWN,
       })
-      .andWhere("JSON_UNQUOTE(JSON_EXTRACT(exposure.metadata, '$.promotionKind')) = 'pricing_experiment'")
-      .andWhere("JSON_UNQUOTE(JSON_EXTRACT(exposure.metadata, '$.experimentId')) = :experimentId", {
+      .andWhere("JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.promotionKind')) = 'pricing_experiment'")
+      .andWhere("JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.experimentId')) = :experimentId", {
         experimentId,
       })
-      .andWhere('exposure.createdAt >= :since', { since })
-      .groupBy("JSON_UNQUOTE(JSON_EXTRACT(exposure.metadata, '$.variant'))")
+      .andWhere('event.createdAt >= :since', { since })
+      .groupBy("JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.variant'))")
       .getRawMany();
 
-    const byVariant = new Map<string, any>(rows.map((row) => [row.variant, row]));
+    const purchases = await this.events
+      .createQueryBuilder('event')
+      .select(
+        "JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.variant'))",
+        'variant',
+      )
+      .addSelect('COUNT(DISTINCT event.userId)', 'purchasedUsers')
+      .addSelect(
+        "COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.amountRials')) AS DECIMAL(20,0))), 0)",
+        'revenueRials',
+      )
+      .addSelect(
+        "COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.basePriceRials')) AS DECIMAL(20,0)) - CAST(JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.amountRials')) AS DECIMAL(20,0))), 0)",
+        'discountRials',
+      )
+      .where('event.type = :purchaseType', {
+        purchaseType: EventType.PURCHASE,
+      })
+      .andWhere("JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.experimentId')) = :experimentId", {
+        experimentId,
+      })
+      .andWhere('event.createdAt >= :since', { since })
+      .groupBy("JSON_UNQUOTE(JSON_EXTRACT(event.metadata, '$.pricingExperiment.variant'))")
+      .getRawMany();
+
+    const exposureByVariant = new Map<string, any>(
+      exposures.map((row) => [row.variant, row]),
+    );
+    const purchaseByVariant = new Map<string, any>(
+      purchases.map((row) => [row.variant, row]),
+    );
     const variants = (['control', 'treatment'] as const).map((variant) => {
-      const row = byVariant.get(variant);
-      const exposedUsers = Number(row?.exposedUsers ?? 0);
-      const purchasedUsers = Number(row?.purchasedUsers ?? 0);
-      const revenueRials = Number(row?.revenueRials ?? 0);
-      const discountRials = Number(row?.discountRials ?? 0);
+      const exposure = exposureByVariant.get(variant);
+      const purchase = purchaseByVariant.get(variant);
+      const exposedUsers = Number(exposure?.exposedUsers ?? 0);
+      const purchasedUsers = Number(purchase?.purchasedUsers ?? 0);
+      const revenueRials = Number(purchase?.revenueRials ?? 0);
+      const discountRials = Number(purchase?.discountRials ?? 0);
       const safeNumber = (value: number) =>
         Number.isFinite(value) && value >= 0 ? Math.round(value) : 0;
 
@@ -497,5 +506,4 @@ export class PricingExperimentService {
       interpretation:
         'descriptive_only; conversion differences are not causal or statistically significant without adequate sample size, duration and pre-registered analysis',
     };
-  }
-}
+  }}
