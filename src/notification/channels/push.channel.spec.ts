@@ -11,12 +11,12 @@ function makeRepo(devices: Array<Record<string, unknown>> = []) {
     addSelect: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
     andWhere: jest.fn().mockReturnThis(),
-    getMany: jest.fn().mockResolvedValue(devices),
+    getMany: jest.fn<() => Promise<Array<Record<string, unknown>>>>().mockResolvedValue(devices),
   };
   return {
     repo: {
       createQueryBuilder: jest.fn(() => query),
-      update: jest.fn().mockResolvedValue({ affected: 1 }),
+      update: jest.fn<(id: number, patch: Record<string, unknown>) => Promise<{ affected: number }>>().mockResolvedValue({ affected: 1 }),
     },
     query,
   };
@@ -63,7 +63,7 @@ describe('PushChannel FCM HTTP v1 delivery', () => {
       { id: 3, pushToken: 'fcm-device-token', timezone: 'Asia/Tokyo' },
     ]);
     global.fetch = jest
-      .fn()
+      .fn<typeof fetch>()
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ access_token: 'oauth-access-token', expires_in: 3600 }),
@@ -100,7 +100,7 @@ describe('PushChannel FCM HTTP v1 delivery', () => {
 
     const { repo } = makeRepo([{ id: 9, pushToken: 'expired-token', timezone: 'UTC' }]);
     global.fetch = jest
-      .fn()
+      .fn<typeof fetch>()
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ access_token: 'oauth-access-token', expires_in: 3600 }),
