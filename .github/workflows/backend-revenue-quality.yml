@@ -88,8 +88,9 @@ jobs:
           ai-assistant/context/user-context.service.spec.ts
           moderation/moderation.service.spec.ts
           database.config.spec.ts
-          notification/channels/push.channel.spec.ts
           notification/reengagement.service.spec.ts
+          notification/orchestrator.notification.spec.ts
+          notification/notification.service.spec.ts
 
       - name: MySQL wallet concurrency and rollback integration tests
         env:
