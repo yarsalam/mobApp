@@ -36,7 +36,7 @@ describe('NotificationOrchestrator (Socket.IO only)', () => {
       isOnline: jest.fn().mockReturnValue(true),
       send: jest.fn(),
     };
-    const repository = { update: jest.fn().mockResolvedValue({ affected: 1 }) };
+    const repository = { update: jest.fn(async () => ({ affected: 1 })) };
     const orchestrator = new NotificationOrchestrator(
       gateway as any,
       repository as any,
