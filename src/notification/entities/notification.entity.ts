@@ -60,9 +60,6 @@ export class AppNotification {
   @Column({ default: false })
   clicked: boolean;
 
-  @Column({ type: 'timestamp', nullable: true })
-  last_push_sent_at: Date | null;
-
   @Column({ default: false })
   is_read: boolean;
 
