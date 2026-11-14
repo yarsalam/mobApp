@@ -20,6 +20,7 @@ function makeController() {
   }));
   const releaseCheckoutReservation = jest.fn(async () => undefined);
   const commitCheckoutReservation = jest.fn(async () => undefined);
+  const redisGet = jest.fn(async () => null as string | null);
 
   const controller = new PaymentsController(
     { grantBundle } as any,
@@ -29,6 +30,7 @@ function makeController() {
     { debitOnce } as any,
     { findOne } as any,
     { prepareCheckout, releaseCheckoutReservation, commitCheckoutReservation } as any,
+    { get: redisGet } as any,
   );
 
   return {
@@ -39,6 +41,7 @@ function makeController() {
     prepareCheckout,
     releaseCheckoutReservation,
     commitCheckoutReservation,
+    redisGet,
   };
 }
 
@@ -176,6 +179,77 @@ describe('PaymentsController pricing experiment checkout', () => {
 
     expect(h.releaseCheckoutReservation).not.toHaveBeenCalled();
     expect(h.grantBundle).not.toHaveBeenCalled();
+  });
+
+
+  it('validates and persists the originating promotion independently of pricing experiments', async () => {
+    const h = makeController();
+    h.redisGet.mockResolvedValueOnce(
+      JSON.stringify({ userId: 42, variant: 'boost', phase: 'warm' }),
+    );
+
+    await h.controller.buyWithWallet(
+      42,
+      'vip-month',
+      { promotionId: 'promo-0123456789abcdef' },
+      'promotion-checkout-key',
+    );
+
+    expect(h.redisGet).toHaveBeenCalledWith('promo:map:promo-0123456789abcdef');
+    expect(h.prepareCheckout).not.toHaveBeenCalled();
+    expect(h.debitOnce).toHaveBeenCalledWith(
+      42,
+      100_000,
+      'buy:vip-month',
+      'wallet-checkout:promotion-checkout-key:debit',
+    );
+    expect(h.grantBundle).toHaveBeenCalledWith(
+      42,
+      'vip-month',
+      expect.objectContaining({
+        amountRials: 100_000,
+        promotionAttribution: {
+          promotionId: 'promo-0123456789abcdef',
+          variant: 'boost',
+          phase: 'warm',
+        },
+      }),
+    );
+  });
+
+  it('rejects a promotion ID that belongs to another user before debiting the wallet', async () => {
+    const h = makeController();
+    h.redisGet.mockResolvedValueOnce(
+      JSON.stringify({ userId: 99, variant: 'vip', phase: 'hot' }),
+    );
+
+    await expect(
+      h.controller.buyWithWallet(
+        42,
+        'vip-month',
+        { promotionId: 'promo-0123456789abcdef' },
+        'foreign-promotion-key',
+      ),
+    ).rejects.toThrow('Promotion not found');
+
+    expect(h.debitOnce).not.toHaveBeenCalled();
+    expect(h.grantBundle).not.toHaveBeenCalled();
+  });
+
+  it('rejects expired or unknown promotion IDs before checkout', async () => {
+    const h = makeController();
+    h.redisGet.mockResolvedValueOnce(null);
+
+    await expect(
+      h.controller.buyWithWallet(
+        42,
+        'vip-month',
+        { promotionId: 'promo-0123456789abcdef' },
+        'missing-promotion-key',
+      ),
+    ).rejects.toThrow('Promotion not found');
+
+    expect(h.debitOnce).not.toHaveBeenCalled();
   });
 
   it('requires the mobile idempotency key before any checkout side effect', async () => {

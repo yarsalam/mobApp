@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Headers,
+  Inject,
   BadRequestException,
   Get,
   NotFoundException,
@@ -22,6 +23,8 @@ import { CryptoProvider } from './wallet/providers/crypto.provider';
 import { ManualVerifierService } from './wallet/verification/manual-verifier.service';
 import { ProductBundle } from 'src/product/entities/product-bundle.entity';
 import { PricingExperimentService, PricingCheckout } from 'src/pricing-experiments/pricing-experiment.service';
+import { Redis } from 'ioredis';
+import { REDIS_CLIENT } from '../redis/redis.constants';
 
 @Controller('payments')
 export class PaymentsController {
@@ -34,6 +37,7 @@ export class PaymentsController {
     @InjectRepository(ProductBundle)
     private readonly bundleRepo: Repository<ProductBundle>,
     private readonly pricingExperiment: PricingExperimentService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
   // ─── کاربر: دریافت موجودی wallet ────────────────────────────
@@ -95,7 +99,7 @@ export class PaymentsController {
   async buyWithWallet(
     @CurrentUser('sub') userId: number,
     @Param('bundleCode') bundleCode: string,
-    @Body() body?: { pricingQuoteId?: string },
+    @Body() body?: { pricingQuoteId?: string; promotionId?: string },
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     const stableKey = idempotencyKey?.trim();
@@ -113,6 +117,45 @@ export class PaymentsController {
     const pricingQuoteId = body?.pricingQuoteId?.trim();
     if (pricingQuoteId && pricingQuoteId.length > 4096) {
       throw new BadRequestException('pricingQuoteId is too long');
+    }
+
+    // A promotion ID is attribution only; it never controls price or eligibility.
+    // Resolve it server-side and ensure it belongs to the authenticated user.
+    const promotionId = body?.promotionId?.trim();
+    let promotionAttribution:
+      | { promotionId: string; variant: string; phase?: string }
+      | undefined;
+    if (promotionId) {
+      if (promotionId.length < 16 || promotionId.length > 128) {
+        throw new NotFoundException('Promotion not found');
+      }
+      const promotionRaw = await this.redis.get(`promo:map:${promotionId}`);
+      if (!promotionRaw) throw new NotFoundException('Promotion not found');
+
+      let promotionMap: {
+        userId?: unknown;
+        variant?: unknown;
+        phase?: unknown;
+      };
+      try {
+        promotionMap = JSON.parse(promotionRaw) as typeof promotionMap;
+      } catch {
+        throw new NotFoundException('Promotion not found');
+      }
+      if (
+        Number(promotionMap.userId) !== userId ||
+        typeof promotionMap.variant !== 'string' ||
+        !/^[a-z][a-z0-9_-]{0,31}$/i.test(promotionMap.variant)
+      ) {
+        throw new NotFoundException('Promotion not found');
+      }
+      promotionAttribution = {
+        promotionId,
+        variant: promotionMap.variant,
+        ...(typeof promotionMap.phase === 'string'
+          ? { phase: promotionMap.phase }
+          : {}),
+      };
     }
 
     let pricingCheckout: PricingCheckout | undefined;
@@ -160,6 +203,7 @@ export class PaymentsController {
       source: 'wallet',
       idempotencyKey: `wallet-checkout:${stableKey}`,
       ...(pricingCheckout ? { pricingExperiment: pricingCheckout } : {}),
+      ...(promotionAttribution ? { promotionAttribution } : {}),
     });
 
     return {

@@ -1,6 +1,16 @@
 name: Backend Revenue Quality
 
 on:
+  push:
+    branches: [feature/promotion-to-purchase-attribution]
+    paths:
+      - "src/payments/**"
+      - "src/pricing-experiments/**"
+      - "src/product/**"
+      - "src/user-event/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/backend-revenue-quality.yml"
   pull_request:
     branches: [main]
     paths:
