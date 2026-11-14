@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { createSign } from 'crypto';
+import { createSign, createPrivateKey } from 'crypto';
 import { Repository } from 'typeorm';
 import { AppNotification, NotificationType } from '../entities/notification.entity';
 import { UserDevice } from 'src/user-device/entities/user-device.entity';
@@ -45,10 +45,14 @@ export class PushChannel {
       ) {
         throw new Error('Required service-account fields are missing');
       }
+      const privateKey = parsed.private_key.replace(/\\n/g, '\n');
+      // Validate the private key during configuration checks, before any
+      // notifications are selected for a remote delivery attempt.
+      createPrivateKey(privateKey);
       this.credentials = {
         project_id: parsed.project_id,
         client_email: parsed.client_email,
-        private_key: parsed.private_key.replace(/\\n/g, '\n'),
+        private_key: privateKey,
       };
       return this.credentials;
     } catch {
@@ -62,6 +66,17 @@ export class PushChannel {
 
   isConfigured(): boolean {
     return Boolean(this.getCredentials());
+  }
+
+  async hasEnabledDevice(userId: number): Promise<boolean> {
+    const device = await this.deviceRepo
+      .createQueryBuilder('device')
+      .select(['device.id'])
+      .where('device.userId = :userId', { userId })
+      .andWhere('device.pushEnabled = :enabled', { enabled: true })
+      .andWhere('device.pushToken IS NOT NULL')
+      .getOne();
+    return Boolean(device);
   }
 
   private base64Url(value: string | Buffer): string {
