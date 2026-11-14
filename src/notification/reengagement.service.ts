@@ -2,14 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Inject } from '@nestjs/common';
-import { LessThanOrEqual, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Redis } from 'ioredis';
 import { User } from 'src/users/entities/user.entity';
 import { UserDevice } from 'src/user-device/entities/user-device.entity';
 import { REDIS_CLIENT } from 'src/redis/redis.constants';
 import { NotificationService } from './notification.service';
-import { NotificationGateway } from './notification.gateway';
-import { PushChannel } from './channels/push.channel';
 import { NotificationType } from './entities/notification.entity';
 
 type ReengagementStage = '1d' | '7d' | '30d';
@@ -25,8 +23,6 @@ export class ReengagementService {
     @InjectRepository(UserDevice)
     private readonly deviceRepo: Repository<UserDevice>,
     private readonly notificationService: NotificationService,
-    private readonly notificationGateway: NotificationGateway,
-    private readonly pushChannel: PushChannel,
     @Inject(REDIS_CLIENT)
     private readonly redis: Redis,
   ) {}
@@ -38,7 +34,10 @@ export class ReengagementService {
     return null;
   }
 
-  private isWithinContactHours(timezone: string | null | undefined, now: Date): boolean {
+  private isWithinContactHours(
+    timezone: string | null | undefined,
+    now: Date,
+  ): boolean {
     if (!timezone) return false;
     try {
       const hourText = new Intl.DateTimeFormat('en-US', {
@@ -49,19 +48,20 @@ export class ReengagementService {
       const hour = Number(hourText);
       return Number.isInteger(hour) && hour >= 9 && hour < 21;
     } catch {
-      // Unknown or invalid device timezone: fail closed instead of sending
-      // at an arbitrary local time.
       return false;
     }
   }
 
-  private async getEligibleDeviceTimezone(userId: number, now: Date) {
+  private async getEligibleDeviceTimezone(
+    userId: number,
+    now: Date,
+  ): Promise<string | undefined> {
+    // Device metadata (including timezone) is collected by Yarsalam itself.
+    // No push registration/token is required for an in-app reminder.
     const devices = await this.deviceRepo
       .createQueryBuilder('device')
       .select(['device.id', 'device.timezone', 'device.updatedAt'])
       .where('device.userId = :userId', { userId })
-      .andWhere('device.pushEnabled = :enabled', { enabled: true })
-      .andWhere('device.pushToken IS NOT NULL')
       .orderBy('device.updatedAt', 'DESC')
       .getMany();
 
@@ -72,13 +72,6 @@ export class ReengagementService {
 
   @Cron('0 * * * *')
   async scheduleReengagement(): Promise<void> {
-    if (!this.pushChannel.isConfigured()) {
-      this.logger.debug(
-        'Re-engagement scan skipped: Firebase service-account configuration is absent',
-      );
-      return;
-    }
-
     const now = new Date();
     const oneDayAgo = new Date(now.getTime() - this.dayMs);
     const candidates = await this.userRepo
@@ -95,17 +88,15 @@ export class ReengagementService {
     let scheduled = 0;
 
     for (const candidate of candidates) {
-      const lastActive = candidate.lastActive;
-      if (!lastActive) continue;
-
+      if (!candidate.lastActive) continue;
       const inactiveDays = Math.floor(
-        (now.getTime() - new Date(lastActive).getTime()) / this.dayMs,
+        (now.getTime() - new Date(candidate.lastActive).getTime()) / this.dayMs,
       );
       const stage = this.getStage(inactiveDays);
-      if (!stage || this.notificationGateway.isOnline(candidate.id)) continue;
+      if (!stage) continue;
 
-      // Re-read activity immediately before scheduling so a user who has
-      // returned since the batch query is not sent a stale reminder.
+      // Re-read activity before claiming a reminder so a returning user is
+      // not notified based on a stale candidate snapshot.
       const current = await this.userRepo.findOne({
         where: { id: candidate.id, status: 'active' },
         select: ['id', 'lastActive'],
@@ -116,12 +107,11 @@ export class ReengagementService {
         (now.getTime() - new Date(current.lastActive).getTime()) / this.dayMs,
       );
       if (this.getStage(currentInactiveDays) !== stage) continue;
-      if (this.notificationGateway.isOnline(candidate.id)) continue;
 
       const timezone = await this.getEligibleDeviceTimezone(candidate.id, now);
       if (!timezone) continue;
-
       considered += 1;
+
       const episode = new Date(current.lastActive).toISOString();
       const stageKey = `reengagement:scheduled:${candidate.id}:${stage}:${episode}`;
       const claimed = await this.redis.set(
@@ -133,9 +123,6 @@ export class ReengagementService {
       );
       if (claimed !== 'OK') continue;
 
-      // Three automated re-engagement messages maximum in any rolling 30-day
-      // window. A stage key is kept even when the cap is reached to prevent
-      // hourly retries from repeatedly attempting the same message.
       const rateKey = `reengagement:rolling-30d:${candidate.id}`;
       const cutoff = now.getTime() - 30 * this.dayMs;
       await this.redis.zremrangebyscore(rateKey, '-inf', cutoff);
@@ -158,7 +145,6 @@ export class ReengagementService {
         });
         scheduled += 1;
       } catch (error: unknown) {
-        // Release the stage claim only when the notification was not persisted.
         await this.redis.del(stageKey);
         const message = error instanceof Error ? error.message : String(error);
         this.logger.warn(
@@ -168,7 +154,7 @@ export class ReengagementService {
     }
 
     this.logger.log(
-      `Re-engagement scan complete: ${candidates.length} candidates, ${considered} eligible, ${scheduled} notifications created`,
+      `In-app re-engagement scan complete: ${candidates.length} candidates, ${considered} eligible, ${scheduled} notifications persisted`,
     );
   }
 }
