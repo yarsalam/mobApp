@@ -12,7 +12,6 @@ import { User } from 'src/users/entities/user.entity';
 @Entity()
 @Index(['deviceId'])
 @Index(['user', 'deviceId'], { unique: true })
-@Index(['user', 'pushEnabled'])
 export class UserDevice {
   @PrimaryGeneratedColumn()
   id: number;
@@ -49,13 +48,6 @@ export class UserDevice {
 
   @Column({ nullable: true })
   deviceId?: string;
-
-  // FCM registration tokens are never returned from ordinary entity reads.
-  @Column({ type: 'varchar', length: 2048, nullable: true, select: false })
-  pushToken?: string | null;
-
-  @Column({ default: false })
-  pushEnabled: boolean;
 
   @Column({ default: false })
   isOnline: boolean;
