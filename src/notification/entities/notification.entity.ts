@@ -18,6 +18,7 @@ export enum NotificationType {
   VERIFICATION = 'verification',
   TICKET = 'ticket',
   SECURITY = 'security',
+  REENGAGEMENT = 'reengagement',
 }
 
 export const INTERACTION_TYPES = [
@@ -34,6 +35,7 @@ export const SYSTEM_TYPES = [
   NotificationType.VERIFICATION,
   NotificationType.TICKET,
   NotificationType.SECURITY,
+  NotificationType.REENGAGEMENT,
 ];
 
 @Entity('notifications')
