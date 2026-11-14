@@ -30,7 +30,7 @@ describe('ReengagementService policy', () => {
       select: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
-      getMany: jest.fn().mockResolvedValue([
+      getMany: jest.fn(async () => [
         { id: 2, timezone: 'Asia/Tehran', updatedAt: new Date() },
       ]),
     };
