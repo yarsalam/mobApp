@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createSign } from 'crypto';
 import { Repository } from 'typeorm';
-import { AppNotification } from '../entities/notification.entity';
+import { AppNotification, NotificationType } from '../entities/notification.entity';
 import { UserDevice } from 'src/user-device/entities/user-device.entity';
 
 type FirebaseServiceAccount = {
@@ -123,6 +123,25 @@ export class PushChannel {
     return this.cachedAccessToken;
   }
 
+  private isWithinContactHours(
+    timezone: string | null | undefined,
+    now: Date,
+  ): boolean {
+    if (!timezone) return false;
+    try {
+      const hour = Number(
+        new Intl.DateTimeFormat('en-US', {
+          timeZone: timezone,
+          hour: '2-digit',
+          hourCycle: 'h23',
+        }).format(now),
+      );
+      return Number.isInteger(hour) && hour >= 9 && hour < 21;
+    } catch {
+      return false;
+    }
+  }
+
   async send(notif: AppNotification): Promise<boolean> {
     const credentials = this.getCredentials();
     if (!credentials) return false;
@@ -135,7 +154,16 @@ export class PushChannel {
       .andWhere('device.pushToken IS NOT NULL')
       .getMany();
 
-    const tokenRows = devices.filter((device) => Boolean(device.pushToken));
+    const now = new Date();
+    const eligibleDevices =
+      notif.type === NotificationType.REENGAGEMENT
+        ? devices.filter((device) =>
+            this.isWithinContactHours(device.timezone, now),
+          )
+        : devices;
+    const tokenRows = eligibleDevices.filter((device) =>
+      Boolean(device.pushToken),
+    );
     if (tokenRows.length === 0) return false;
 
     const accessToken = await this.getAccessToken();
