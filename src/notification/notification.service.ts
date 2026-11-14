@@ -37,8 +37,12 @@ export class NotificationService {
       type: data.type,
     });
     await this.notifRepo.save(notif);
-    // dispatch به صورت fire-and-forget — ساخت notif را کند نمی‌کند
-    this.orchestrator.dispatch(notif).catch(() => {});
+    // Delivery is best-effort; the persisted unread notification remains
+    // available to the mobile fallback if a push provider is unavailable.
+    this.orchestrator.dispatch(notif).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Notification ${notif.id} dispatch failed: ${message}`);
+    });
     return notif;
   }
 
