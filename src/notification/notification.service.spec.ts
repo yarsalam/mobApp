@@ -44,7 +44,7 @@ describe('NotificationService offline inbox', () => {
     const repository = {
       create: jest.fn(),
       save: jest.fn(),
-      count: jest.fn().mockResolvedValue(4),
+      count: jest.fn(async () => 4),
     };
     const service = new NotificationService(
       repository as any,
