@@ -4,6 +4,7 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - "src/auth/**"
       - "src/personality/**"
       - "src/feature-store/**"
       - "src/suggestion/scoring/**"
@@ -78,6 +79,7 @@ jobs:
           moderation/moderation.service.spec.ts
           database.config.spec.ts
           feed/services/feed-promotion.service.spec.ts
+          auth/auth.controller.spec.ts
 
       - name: MySQL wallet concurrency and rollback integration tests
         env:
