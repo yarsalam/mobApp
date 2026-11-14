@@ -7,7 +7,9 @@ function makeController(options?: {
   enabled?: string;
 }) {
   const authService = {
-    simLogin: jest.fn().mockResolvedValue({ id: 42, phone: '09123456789' }),
+    simLogin: jest
+      .fn<() => Promise<{ id: number; phone: string }>>()
+      .mockResolvedValue({ id: 42, phone: '09123456789' }),
   };
   const jwtService = {
     sign: jest.fn().mockReturnValue('staging-only-test-token'),
