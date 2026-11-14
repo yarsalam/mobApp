@@ -137,7 +137,10 @@ export class AuthController {
     const nodeEnv = this.configService.get<string>('NODE_ENV');
     const enabled = this.configService.get<string>('ENABLE_SIM_LOGIN');
 
-    if (nodeEnv === 'production' || enabled !== 'true') {
+    if (
+      !['development', 'test'].includes(nodeEnv ?? '') ||
+      enabled !== 'true'
+    ) {
       throw new NotFoundException();
     }
 
