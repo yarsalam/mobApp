@@ -150,6 +150,7 @@ export class AuthRegistrationService {
           country: ci.country,
           city: ci.city,
           isVpn: ci.isVpn ?? false,
+          timezone: (req.headers['x-timezone'] as string) || ci.timezone,
         }),
         existingUser
           ? Promise.resolve()
