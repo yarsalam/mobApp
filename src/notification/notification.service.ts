@@ -112,6 +112,15 @@ export class NotificationService {
     };
   }
 
+  async markClicked(notificationId: number, userId: number) {
+    const result = await this.notifRepo.update(
+      { id: notificationId, user_id: userId },
+      { clicked: true },
+    );
+    if (!result.affected) throw new ForbiddenException();
+    return { success: true };
+  }
+
   async countUnread(userId: number) {
     return this.notifRepo.count({
       where: { user_id: userId, is_read: false },
