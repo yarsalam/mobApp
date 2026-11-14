@@ -6,7 +6,7 @@ describe('ReengagementService policy', () => {
     ReengagementService.prototype,
   ) as ReengagementService & Record<string, any>;
 
-  it('uses a staged schedule and never sends multiple catch-up stages at once', () => {
+  it('uses staged reminders without sending missed stages in a burst', () => {
     expect(service['getStage'](0)).toBeNull();
     expect(service['getStage'](1)).toBe('1d');
     expect(service['getStage'](6)).toBe('1d');
@@ -15,7 +15,7 @@ describe('ReengagementService policy', () => {
     expect(service['getStage'](30)).toBe('30d');
   });
 
-  it('allows sends only during local daytime and fails closed for unknown timezones', () => {
+  it('allows in-app scheduling only during known device-local daytime', () => {
     const morningInTehran = new Date('2026-01-01T06:00:00.000Z');
     const earlyInTehran = new Date('2026-01-01T03:00:00.000Z');
 
@@ -25,17 +25,30 @@ describe('ReengagementService policy', () => {
     expect(service['isWithinContactHours'](undefined, morningInTehran)).toBe(false);
   });
 
-  it('does not query or schedule recipients before FCM is configured', async () => {
-    const userRepo = { createQueryBuilder: jest.fn() };
-    const pushChannel = { isConfigured: jest.fn().mockReturnValue(false) };
+  it('uses stored device timezone without requiring a remote-push token', async () => {
+    const query = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([
+        { id: 2, timezone: 'Asia/Tehran', updatedAt: new Date() },
+      ]),
+    };
     Object.assign(service, {
-      userRepo,
-      pushChannel,
-      logger: { debug: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() },
+      deviceRepo: { createQueryBuilder: jest.fn(() => query) },
     });
 
-    await service.scheduleReengagement();
-
-    expect(userRepo.createQueryBuilder).not.toHaveBeenCalled();
+    const now = new Date('2026-01-01T06:00:00.000Z');
+    await expect(service['getEligibleDeviceTimezone'](7, now)).resolves.toBe(
+      'Asia/Tehran',
+    );
+    expect(query.where).toHaveBeenCalledWith('device.userId = :userId', {
+      userId: 7,
+    });
+    expect(query.select).toHaveBeenCalledWith([
+      'device.id',
+      'device.timezone',
+      'device.updatedAt',
+    ]);
   });
 });
