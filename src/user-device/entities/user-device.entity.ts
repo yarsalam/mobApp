@@ -5,14 +5,14 @@ import {
   ManyToOne,
   CreateDateColumn,
   UpdateDateColumn,
+  Index,
 } from 'typeorm';
 import { User } from 'src/users/entities/user.entity';
-
-import { Index } from 'typeorm';
 
 @Entity()
 @Index(['deviceId'])
 @Index(['user', 'deviceId'], { unique: true })
+@Index(['user', 'pushEnabled'])
 export class UserDevice {
   @PrimaryGeneratedColumn()
   id: number;
@@ -21,7 +21,7 @@ export class UserDevice {
   platform?: 'web' | 'mobile';
 
   @Column({ nullable: true })
-  deviceType?: string; // desktop / mobile / tablet
+  deviceType?: string;
 
   @Column({ nullable: true })
   os?: string;
@@ -49,6 +49,13 @@ export class UserDevice {
 
   @Column({ nullable: true })
   deviceId?: string;
+
+  // FCM registration tokens are never returned from ordinary entity reads.
+  @Column({ type: 'varchar', length: 2048, nullable: true, select: false })
+  pushToken?: string | null;
+
+  @Column({ default: false })
+  pushEnabled: boolean;
 
   @Column({ default: false })
   isOnline: boolean;
