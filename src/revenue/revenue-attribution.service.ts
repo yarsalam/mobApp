@@ -117,8 +117,9 @@ export class RevenueAttributionService {
     for (const user of users) {
       const source =
         user.acquisitionSource?.trim() ||
+        user.metadata?.acquisition?.firstTouch?.source?.trim() ||
         user.metadata?.acquisitionSource?.trim() ||
-        'organic';
+        'unattributed';
 
       if (!sources[source]) {
         sources[source] = {
@@ -179,57 +180,16 @@ export class RevenueAttributionService {
     return result;
   }
 
-  private async getCACForSource(source: string, days: number): Promise<number> {
-    const platformBySource: Partial<Record<string, ActivityPlatform>> = {
-      instagram: ActivityPlatform.INSTAGRAM,
-      telegram: ActivityPlatform.TELEGRAM,
-      google: ActivityPlatform.GOOGLE_ADS,
-      google_ads: ActivityPlatform.GOOGLE_ADS,
-      linkedin: ActivityPlatform.LINKEDIN,
-      medium: ActivityPlatform.MEDIUM,
-      quora: ActivityPlatform.QUORA,
-    };
-
-    const platform = platformBySource[source];
-
-    // برای منابعی که نگاشت مشخص ندارند، CAC ساختگی تولید نکن.
-    if (!platform) {
-      return 0;
-    }
-
-    const now = new Date();
-    const since = new Date(now.getTime() - days * 86_400_000);
-
-    const [activities, userCount] = await Promise.all([
-      this.seoActivityRepo.find({
-        where: {
-          performedAt: Between(since, now),
-          platform,
-        },
-      }),
-
-      this.userRepo
-        .createQueryBuilder('user')
-        .where('user.createdAt >= :since', { since })
-        .andWhere('user.createdAt <= :now', { now })
-        .andWhere(
-          `(
-          user.acquisitionSource = :source
-          OR JSON_UNQUOTE(
-            JSON_EXTRACT(user.metadata, '$.acquisitionSource')
-          ) = :source
-        )`,
-          { source },
-        )
-        .getCount(),
-    ]);
-
-    const totalCost = activities.reduce(
-      (sum, activity) => sum + Number(activity.cost || 0),
-      0,
-    );
-
-    return userCount > 0 ? totalCost / userCount : 0;
+  /**
+   * Legacy SEOActivity rows do not carry a reliable currency/campaign mapping.
+   * CAC is now computed only from AcquisitionCost ledger entries in
+   * AcquisitionGrowthService. This legacy helper deliberately returns null.
+   */
+  private async getCACForSource(
+    _source: string,
+    _days: number,
+  ): Promise<number | null> {
+    return null;
   }
 
   async adjustSourceWeight(source: string, reward: number): Promise<void> {

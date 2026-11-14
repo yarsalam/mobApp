@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Request } from 'express';
-import { CreateAuthDto } from './dto/create-auth.dto';
+import { AcquisitionTouchDto, CreateAuthDto } from './dto/create-auth.dto';
 import { CompleteProfileDto } from './dto/complete-profile.dto';
 import { AuthRegistrationService } from './services/auth-registration.service';
 import { AuthLoginService } from './services/auth-login.service';
@@ -24,6 +24,10 @@ export class AuthService {
 
   async completeVerification(phone: string, clientDeviceId: string) {
     return this.registration.completeVerification(phone, clientDeviceId);
+  }
+
+  async updateAcquisitionLastTouch(userId: number, touch: AcquisitionTouchDto) {
+    return this.registration.updateAcquisitionLastTouch(userId, touch);
   }
 
   async completeProfile(dto: CompleteProfileDto, userFromReq: any) {
