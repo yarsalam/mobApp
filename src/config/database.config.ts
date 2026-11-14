@@ -6,6 +6,7 @@ import { ProfileVisitor } from 'src/profile-visitors/entities/profile-visitor.en
 import { UserImage } from 'src/user_images/entities/user_image.entity';
 import { Message } from 'src/message/entities/message.entity';
 import { AppNotification } from 'src/notification/entities/notification.entity';
+import { UserPushState } from 'src/notification/entities/user-push-state.entity';
 import { UserDevice } from 'src/user-device/entities/user-device.entity';
 import { UserPhone } from 'src/user-phones/entities/user-phone.entity';
 import { Interaction } from 'src/interaction/entities/interaction.entity';
@@ -97,6 +98,7 @@ export default registerAs('database', (): TypeOrmModuleOptions => ({
     UserImage,
     Message,
     AppNotification,
+    UserPushState,
     UserDevice,
     UserPhone,
     Interaction,
