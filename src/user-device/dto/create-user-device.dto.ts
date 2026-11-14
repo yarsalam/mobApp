@@ -60,13 +60,4 @@ export class CreateUserDeviceDto {
   @IsString()
   @MaxLength(200)
   deviceId?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(2048)
-  pushToken?: string;
-
-  @IsOptional()
-  @IsBoolean()
-  pushEnabled?: boolean;
 }
