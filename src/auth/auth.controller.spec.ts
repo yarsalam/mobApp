@@ -55,6 +55,20 @@ describe('AuthController sim-login security gate', () => {
     expect(authService.simLogin).not.toHaveBeenCalled();
   });
 
+  it('rejects staging or undefined runtime modes even when the flag is set', async () => {
+    for (const nodeEnv of ['staging', undefined]) {
+      const { controller, authService } = makeController({
+        nodeEnv,
+        enabled: 'true',
+      });
+
+      await expect(
+        controller.simLogin({ phone: '09123456789' }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(authService.simLogin).not.toHaveBeenCalled();
+    }
+  });
+
   it('rejects invalid phone numbers before creating or looking up a user', async () => {
     const { controller, authService } = makeController({ enabled: 'true' });
 
