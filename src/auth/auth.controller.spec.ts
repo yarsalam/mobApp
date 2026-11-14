@@ -16,7 +16,11 @@ function makeController(options?: {
   };
   const configService = {
     get: jest.fn((key: string) => {
-      if (key === 'NODE_ENV') return options?.nodeEnv ?? 'development';
+      if (key === 'NODE_ENV') {
+        return options && Object.prototype.hasOwnProperty.call(options, 'nodeEnv')
+          ? options.nodeEnv
+          : 'development';
+      }
       if (key === 'ENABLE_SIM_LOGIN') return options?.enabled;
       return undefined;
     }),
