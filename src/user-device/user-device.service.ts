@@ -3,7 +3,6 @@ import {
   BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
-
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
 import { CreateUserDeviceDto } from './dto/create-user-device.dto';
@@ -20,12 +19,6 @@ export class UserDeviceService {
   ) {}
 
   async createOrUpdateToken(dto: CreateUserDeviceDto): Promise<UserDevice> {
-    /**
-     * قبلاً: await this.userRepo.findOne({ where: { id: dto.userId } })
-     * این یک کوئری اضافه بود — user را از جایی که صداش زدیم می‌دانستیم.
-     * TypeORM برای ManyToOne یک entity reference ساده هم کافی است:
-     * { id: userId } as User  — بدون هیچ SELECT.
-     */
     if (!Number.isSafeInteger(dto.userId) || dto.userId <= 0) {
       throw new BadRequestException('شناسه کاربر معتبر نیست');
     }
@@ -38,42 +31,77 @@ export class UserDeviceService {
       throw new BadRequestException('شناسه دستگاه معتبر نیست');
     }
 
+    if (dto.pushEnabled === true && !dto.pushToken?.trim()) {
+      throw new BadRequestException('توکن push برای فعال‌سازی اعلان لازم است');
+    }
+
     const userExists = await this.userRepo.exist({
       where: { id: dto.userId },
     });
+    if (!userExists) throw new NotFoundException('کاربر یافت نشد');
 
-    if (!userExists) {
-      throw new NotFoundException('کاربر یافت نشد');
-    }
+    // pushToken is select:false; explicitly select it so routine device
+    // refreshes preserve the existing token when the caller has no new token.
+    const existing = await this.userDeviceRepo
+      .createQueryBuilder('device')
+      .addSelect('device.pushToken')
+      .where('device.userId = :userId', { userId: dto.userId })
+      .andWhere('device.deviceId = :deviceId', { deviceId: dto.deviceId })
+      .getOne();
 
-    const userRef = { id: dto.userId } as User;
+    const pushToken =
+      dto.pushToken !== undefined
+        ? dto.pushToken.trim() || null
+        : existing?.pushToken ?? null;
+    const pushEnabled =
+      dto.pushEnabled !== undefined
+        ? dto.pushEnabled && Boolean(pushToken)
+        : Boolean(existing?.pushEnabled && pushToken);
 
     const deviceData = {
-      user: userRef,
+      user: { id: dto.userId } as User,
       ipAddress: dto.ipAddress,
       platform: dto.platform,
-      model: dto.model ?? 'unknown',
-      brand: dto.brand ?? 'unknown',
+      model: dto.model ?? existing?.model ?? 'unknown',
+      brand: dto.brand ?? existing?.brand ?? 'unknown',
       deviceId: dto.deviceId,
-      osVersion: dto.osVersion,
-      appVersion: dto.appVersion,
-      country: dto.country,
-      city: dto.city,
-      isVPN: dto.isVpn,
+      osVersion: dto.osVersion ?? existing?.osVersion,
+      appVersion: dto.appVersion ?? existing?.appVersion,
+      country: dto.country ?? existing?.country,
+      city: dto.city ?? existing?.city,
+      timezone: dto.timezone ?? existing?.timezone,
+      isVPN: dto.isVpn ?? existing?.isVPN ?? false,
       isOnline: true,
+      pushToken,
+      pushEnabled,
     };
-
-    const existing = await this.userDeviceRepo.findOne({
-      where: { user: { id: dto.userId }, deviceId: dto.deviceId },
-    });
 
     if (existing) {
       Object.assign(existing, deviceData);
       return this.userDeviceRepo.save(existing);
     }
 
-    const newDevice = this.userDeviceRepo.create(deviceData);
-    return this.userDeviceRepo.save(newDevice);
+    return this.userDeviceRepo.save(this.userDeviceRepo.create(deviceData));
+  }
+
+  async disablePush(userId: number, deviceId: string): Promise<void> {
+    if (
+      !Number.isSafeInteger(userId) ||
+      userId <= 0 ||
+      typeof deviceId !== 'string' ||
+      deviceId.trim().length < 8 ||
+      deviceId.length > 200
+    ) {
+      throw new BadRequestException('شناسه دستگاه معتبر نیست');
+    }
+
+    await this.userDeviceRepo
+      .createQueryBuilder()
+      .update(UserDevice)
+      .set({ pushToken: null, pushEnabled: false })
+      .where('userId = :userId', { userId })
+      .andWhere('deviceId = :deviceId', { deviceId })
+      .execute();
   }
 
   async countRequestsByIp(ip: string, sinceMinutes = 30): Promise<number> {
@@ -97,10 +125,7 @@ export class UserDeviceService {
     deviceId: string,
   ): Promise<UserDevice | null> {
     return this.userDeviceRepo.findOne({
-      where: {
-        user: { id: userId },
-        deviceId,
-      },
+      where: { user: { id: userId }, deviceId },
     });
   }
 }
