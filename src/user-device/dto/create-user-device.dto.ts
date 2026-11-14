@@ -1,4 +1,11 @@
-import { IsOptional, IsString, IsNumber, IsIn } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  IsNumber,
+  IsIn,
+  IsBoolean,
+  MaxLength,
+} from 'class-validator';
 
 export class CreateUserDeviceDto {
   @IsNumber()
@@ -41,9 +48,16 @@ export class CreateUserDeviceDto {
   city?: string;
 
   @IsOptional()
+  @IsBoolean()
   isVpn?: boolean;
 
   @IsOptional()
   @IsString()
+  @MaxLength(80)
+  timezone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
   deviceId?: string;
 }

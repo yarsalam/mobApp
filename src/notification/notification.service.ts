@@ -1,26 +1,19 @@
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { MoreThan, In, Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import {
   AppNotification,
   NotificationType,
-} from './entities/notification.entity';
-import { NotificationOrchestrator } from './orchestrator.notification';
-import { UserPushState } from './entities/user-push-state.entity';
-import {
   INTERACTION_TYPES,
   SYSTEM_TYPES,
 } from './entities/notification.entity';
+import { NotificationOrchestrator } from './orchestrator.notification';
 
 @Injectable()
 export class NotificationService {
   constructor(
     @InjectRepository(AppNotification)
     private readonly notifRepo: Repository<AppNotification>,
-
-    @InjectRepository(UserPushState)
-    private readonly pushStateRepo: Repository<UserPushState>,
-
     private readonly orchestrator: NotificationOrchestrator,
   ) {}
 
@@ -32,14 +25,18 @@ export class NotificationService {
     message: string;
     related_id?: number;
   }) {
-    const notif = this.notifRepo.create({
-      ...data,
-      type: data.type,
+    const notification = this.notifRepo.create(data);
+    await this.notifRepo.save(notification);
+
+    // Persistence is authoritative. Online users receive the same record over
+    // their authenticated Socket.IO room; offline users fetch it after reconnect.
+    void this.orchestrator.dispatch(notification).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Notification ${notification.id} socket dispatch failed: ${message}`,
+      );
     });
-    await this.notifRepo.save(notif);
-    // dispatch به صورت fire-and-forget — ساخت notif را کند نمی‌کند
-    this.orchestrator.dispatch(notif).catch(() => {});
-    return notif;
+    return notification;
   }
 
   async createNotificationsForUsers(
@@ -47,21 +44,14 @@ export class NotificationService {
     type: NotificationType,
     message: string,
   ) {
-    // حذف شناسه‌های نامعتبر و تکراری
     const validUserIds = [
       ...new Set(userIds.filter((id) => Number.isSafeInteger(id) && id > 0)),
     ];
-
     const results = await Promise.allSettled(
       validUserIds.map((userId) =>
-        this.createNotification({
-          user_id: userId,
-          type,
-          message,
-        }),
+        this.createNotification({ user_id: userId, type, message }),
       ),
     );
-
     const failedCount = results.filter(
       (result) => result.status === 'rejected',
     ).length;
@@ -71,7 +61,6 @@ export class NotificationService {
         `Notification creation failed for ${failedCount} recipients`,
       );
     }
-
     return {
       requested: userIds.length,
       attempted: validUserIds.length,
@@ -84,28 +73,26 @@ export class NotificationService {
     return this.notifRepo.find({
       where: { user_id: userId },
       order: { created_at: 'DESC' },
-      take: 100,
+      take: 500,
     });
   }
 
   async markAsRead(notificationId: number, userId: number) {
     const result = await this.notifRepo.update(
-      {
-        id: notificationId,
-        user_id: userId,
-      },
-      {
-        is_read: true,
-      },
+      { id: notificationId, user_id: userId },
+      { is_read: true },
     );
+    if (!result.affected) throw new ForbiddenException();
+    return { success: true };
+  }
 
-    if (!result.affected) {
-      throw new ForbiddenException();
-    }
-
-    return {
-      success: true,
-    };
+  async markClicked(notificationId: number, userId: number) {
+    const result = await this.notifRepo.update(
+      { id: notificationId, user_id: userId },
+      { clicked: true },
+    );
+    if (!result.affected) throw new ForbiddenException();
+    return { success: true };
   }
 
   async countUnread(userId: number) {
@@ -115,25 +102,9 @@ export class NotificationService {
   }
 
   async getPendingCount(userId: number) {
-    const state = await this.pushStateRepo.findOne({
-      where: { user_id: userId },
+    const count = await this.notifRepo.count({
+      where: { user_id: userId, is_read: false },
     });
-
-    const where: any = { user_id: userId, is_read: false };
-
-    if (state?.last_push_sent_at) {
-      where.created_at = MoreThan(state.last_push_sent_at);
-    }
-
-    const count = await this.notifRepo.count({ where });
-
-    if (count > 0) {
-      await this.pushStateRepo.upsert(
-        { user_id: userId, last_push_sent_at: new Date() },
-        ['user_id'],
-      );
-    }
-
     return { hasUnread: count > 0, count };
   }
 
@@ -155,7 +126,11 @@ export class NotificationService {
 
   async getInteractionCount(userId: number) {
     return this.notifRepo.count({
-      where: { user_id: userId, type: In(INTERACTION_TYPES), is_read: false },
+      where: {
+        user_id: userId,
+        type: In(INTERACTION_TYPES),
+        is_read: false,
+      },
     });
   }
 
