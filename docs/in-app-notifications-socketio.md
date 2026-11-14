@@ -24,4 +24,4 @@ Socket.IO and local notification presentation work only while the app can execut
 
 ## Database
 
-`docs/sql/20261114_reengagement_fcm_push.sql` now contains only the enum extension for the in-app `reengagement` notification type. Review and apply that migration explicitly in staging before production. No migration is applied by this branch; TypeORM `DB_SYNC` must remain false.
+`docs/sql/20261114_reengagement_in_app.sql` now contains only the enum extension for the in-app `reengagement` notification type. Review and apply that migration explicitly in staging before production. No migration is applied by this branch; TypeORM `DB_SYNC` must remain false.
