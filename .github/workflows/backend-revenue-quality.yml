@@ -1,6 +1,18 @@
 name: Backend Revenue Quality
 
 on:
+  push:
+    branches: [feature/reengagement-fcm-push]
+    paths:
+      - "src/notification/**"
+      - "src/user-device/**"
+      - "src/users/entities/user.entity.ts"
+      - "src/config/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".env.example"
+      - "docs/sql/**"
+      - ".github/workflows/backend-revenue-quality.yml"
   pull_request:
     branches: [main]
     paths:
@@ -76,6 +88,8 @@ jobs:
           ai-assistant/context/user-context.service.spec.ts
           moderation/moderation.service.spec.ts
           database.config.spec.ts
+          notification/channels/push.channel.spec.ts
+          notification/reengagement.service.spec.ts
 
       - name: MySQL wallet concurrency and rollback integration tests
         env:
