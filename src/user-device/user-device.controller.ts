@@ -6,13 +6,11 @@ import {
   UseGuards,
   Req,
   ForbiddenException,
-  IsString,
-  MaxLength,
 } from '@nestjs/common';
+import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { UserDeviceService } from './user-device.service';
 import { CreateUserDeviceDto } from './dto/create-user-device.dto';
-import { IsNotEmpty } from 'class-validator';
 
 class DisablePushDto {
   @IsString()
