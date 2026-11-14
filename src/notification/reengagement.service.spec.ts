@@ -28,7 +28,11 @@ describe('ReengagementService policy', () => {
   it('does not query or schedule recipients before FCM is configured', async () => {
     const userRepo = { createQueryBuilder: jest.fn() };
     const pushChannel = { isConfigured: jest.fn().mockReturnValue(false) };
-    Object.assign(service, { userRepo, pushChannel });
+    Object.assign(service, {
+      userRepo,
+      pushChannel,
+      logger: { debug: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() },
+    });
 
     await service.scheduleReengagement();
 
