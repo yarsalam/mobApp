@@ -50,9 +50,11 @@ export class UserDeviceService {
       .getOne();
 
     const pushToken =
-      dto.pushToken !== undefined
-        ? dto.pushToken.trim() || null
-        : existing?.pushToken ?? null;
+      dto.pushEnabled === false
+        ? null
+        : dto.pushToken !== undefined
+          ? dto.pushToken.trim() || null
+          : existing?.pushToken ?? null;
     const pushEnabled =
       dto.pushEnabled !== undefined
         ? dto.pushEnabled && Boolean(pushToken)
