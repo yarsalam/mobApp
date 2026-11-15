@@ -97,6 +97,36 @@ describe('PaymentsService purchase attribution', () => {
     },
   );
 
+  it('persists promotion attribution on the commercial purchase event', async () => {
+    const h = makeService('female');
+
+    await h.service.grantBundle(7, 'bundle-monthly', {
+      amountRials: 250_000,
+      source: 'wallet',
+      idempotencyKey: 'wallet-checkout:promotion-test',
+      promotionAttribution: {
+        promotionId: 'promo-0123456789abcdef',
+        variant: 'boost',
+        phase: 'warm',
+      },
+    });
+
+    expect(h.eventService.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: expect.any(String),
+        metadata: expect.objectContaining({
+          bundleCode: 'bundle-monthly',
+          isCommercialPurchase: true,
+          promotion: {
+            promotionId: 'promo-0123456789abcdef',
+            variant: 'boost',
+            phase: 'warm',
+          },
+        }),
+      }),
+    );
+  });
+
   it('stores unknown instead of inventing a gender when the profile value is absent', async () => {
     const h = makeService(null);
 
