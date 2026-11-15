@@ -71,6 +71,7 @@ jobs:
           personality.service.spec.ts
           app.controller.spec.ts
           payments.service.spec.ts
+          payments.controller.spec.ts
           wallet.service.spec.ts
           card-transfer.provider.spec.ts
           crypto.provider.spec.ts
