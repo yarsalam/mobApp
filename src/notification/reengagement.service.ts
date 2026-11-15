@@ -74,15 +74,33 @@ export class ReengagementService {
   async scheduleReengagement(): Promise<void> {
     const now = new Date();
     const oneDayAgo = new Date(now.getTime() - this.dayMs);
-    const candidates = await this.userRepo
-      .createQueryBuilder('user')
-      .select(['user.id', 'user.lastActive'])
-      .where('user.status = :status', { status: 'active' })
-      .andWhere('user.lastActive IS NOT NULL')
-      .andWhere('user.lastActive <= :cutoff', { cutoff: oneDayAgo })
-      .orderBy('user.lastActive', 'ASC')
-      .take(500)
-      .getMany();
+    const cursorKey = 'reengagement:scan-cursor';
+    const cursorRaw = await this.redis.get(cursorKey);
+    let cursorId = Number.parseInt(cursorRaw || '0', 10);
+    if (!Number.isSafeInteger(cursorId) || cursorId < 0) cursorId = 0;
+
+    const loadCandidates = (afterId: number) =>
+      this.userRepo
+        .createQueryBuilder('user')
+        .select(['user.id', 'user.lastActive'])
+        .where('user.status = :status', { status: 'active' })
+        .andWhere('user.lastActive IS NOT NULL')
+        .andWhere('user.lastActive <= :cutoff', { cutoff: oneDayAgo })
+        .andWhere('user.id > :cursorId', { cursorId: afterId })
+        .orderBy('user.id', 'ASC')
+        .take(500)
+        .getMany();
+
+    let candidates = await loadCandidates(cursorId);
+    if (!candidates.length && cursorId > 0) {
+      // Wrap around so accounts beyond the previous page are not starved.
+      cursorId = 0;
+      candidates = await loadCandidates(cursorId);
+    }
+    if (!candidates.length) {
+      if (cursorId === 0) await this.redis.set(cursorKey, '0');
+      return;
+    }
 
     let considered = 0;
     let scheduled = 0;
@@ -153,6 +171,10 @@ export class ReengagementService {
       }
     }
 
+    await this.redis.set(
+      cursorKey,
+      String(candidates[candidates.length - 1].id),
+    );
     this.logger.log(
       `In-app re-engagement scan complete: ${candidates.length} candidates, ${considered} eligible, ${scheduled} notifications persisted`,
     );
