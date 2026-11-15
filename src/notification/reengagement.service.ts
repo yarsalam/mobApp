@@ -72,6 +72,9 @@ export class ReengagementService {
 
   @Cron('0 * * * *')
   async scheduleReengagement(): Promise<void> {
+    // Fail closed until the enum migration is reviewed and applied in staging.
+    if (process.env.ENABLE_REENGAGEMENT_NOTIFICATIONS !== 'true') return;
+
     const now = new Date();
     const oneDayAgo = new Date(now.getTime() - this.dayMs);
     const cursorKey = 'reengagement:scan-cursor';
