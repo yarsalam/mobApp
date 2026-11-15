@@ -25,6 +25,33 @@ describe('ReengagementService policy', () => {
     expect(service['isWithinContactHours'](undefined, morningInTehran)).toBe(false);
   });
 
+  it('rotates the inactive-user scan cursor instead of starving later accounts', async () => {
+    const query = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getMany: jest.fn(async () => []),
+    };
+    const redis = {
+      get: jest.fn(async () => '500'),
+      set: jest.fn(async () => 'OK'),
+    };
+    Object.assign(service, {
+      userRepo: { createQueryBuilder: jest.fn(() => query) },
+      redis,
+    });
+
+    await service.scheduleReengagement();
+
+    expect(query.andWhere).toHaveBeenCalledWith('user.id > :cursorId', {
+      cursorId: 500,
+    });
+    expect(query.orderBy).toHaveBeenCalledWith('user.id', 'ASC');
+    expect(redis.set).toHaveBeenCalledWith('reengagement:scan-cursor', '0');
+  });
+
   it('uses stored device timezone without requiring a remote-push token', async () => {
     const query = {
       select: jest.fn().mockReturnThis(),
