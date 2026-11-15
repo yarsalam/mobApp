@@ -25,14 +25,16 @@ describe('ReengagementService policy', () => {
     expect(service['isWithinContactHours'](undefined, morningInTehran)).toBe(false);
   });
 
-  it('uses stored device timezone without requiring a remote-push token', async () => {
+  it('uses only the most recently updated device timezone', async () => {
     const query = {
       select: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
-      getMany: jest.fn(async () => [
-        { id: 2, timezone: 'Asia/Tehran', updatedAt: new Date() },
-      ]),
+      getOne: jest.fn(async () => ({
+        id: 2,
+        timezone: 'Asia/Tehran',
+        updatedAt: new Date('2026-01-01T05:00:00.000Z'),
+      })),
     };
     Object.assign(service, {
       deviceRepo: { createQueryBuilder: jest.fn(() => query) },
@@ -45,10 +47,26 @@ describe('ReengagementService policy', () => {
     expect(query.where).toHaveBeenCalledWith('device.userId = :userId', {
       userId: 7,
     });
-    expect(query.select).toHaveBeenCalledWith([
-      'device.id',
-      'device.timezone',
-      'device.updatedAt',
-    ]);
+    expect(query.orderBy).toHaveBeenCalledWith('device.updatedAt', 'DESC');
+    expect(query.getOne).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fall back to an older device timezone when the latest device is outside contact hours', async () => {
+    const query = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getOne: jest.fn(async () => ({
+        id: 2,
+        timezone: 'Asia/Tehran',
+        updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+      })),
+    };
+    Object.assign(service, {
+      deviceRepo: { createQueryBuilder: jest.fn(() => query) },
+    });
+
+    const now = new Date('2026-01-01T03:00:00.000Z');
+    await expect(service['getEligibleDeviceTimezone'](7, now)).resolves.toBeUndefined();
   });
 });
