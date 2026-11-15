@@ -1,12 +1,24 @@
 name: Backend Revenue Quality
 
 on:
-  pull_request:
-    branches: [main]
+  push:
+    branches: [feature/reengagement-fcm-push]
     paths:
+      - "src/notification/**"
       - "src/auth/**"
       - "src/debug/**"
       - "src/common/guards/**"
+      - "src/user-device/**"
+      - "src/users/entities/user.entity.ts"
+      - "src/config/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".env.example"
+      - "docs/sql/**"
+      - ".github/workflows/backend-revenue-quality.yml"
+  pull_request:
+    branches: [main]
+    paths:
       - "src/personality/**"
       - "src/feature-store/**"
       - "src/suggestion/scoring/**"
@@ -64,7 +76,7 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Revenue, payments and moderation unit tests
+      - name: Revenue, payments, promotion and notification unit tests
         run: >-
           npm test -- --runInBand
           revenue-analytics.service.spec.ts
@@ -81,8 +93,12 @@ jobs:
           moderation/moderation.service.spec.ts
           database.config.spec.ts
           feed/services/feed-promotion.service.spec.ts
+          notification/reengagement.service.spec.ts
+          notification/orchestrator.notification.spec.ts
+          notification/notification.gateway.spec.ts
           auth/auth.controller.spec.ts
           common/guards/development-only.guard.spec.ts
+          notification/notification.service.spec.ts
 
       - name: MySQL wallet concurrency and rollback integration tests
         env:
