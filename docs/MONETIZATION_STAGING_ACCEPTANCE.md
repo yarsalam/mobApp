@@ -1,3 +1,7 @@
+> **Superseded for current Notifications/Promotion acceptance.** This document describes an earlier promotion experiment contract. For Backend PR #30 and Mobile PRs #21/#22, do not follow the legacy `/feed/impression`, experiment-training, or conversion-window steps below. The active contract records `PROMOTION_SHOWN` when the Backend assembles the feed, then records authenticated click/dismiss and the wallet purchase attribution. Use `docs/NOTIFICATIONS_PROMOTION_STAGING_ACCEPTANCE.md` for the current Staging runbook.
+
+---
+
 # Monetization staging acceptance contract
 
 This document describes the staging-only integration contract for the Monetization service. It does not authorize enabling randomized promotion experiments or model training in production.
