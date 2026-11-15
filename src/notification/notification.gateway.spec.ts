@@ -57,10 +57,8 @@ describe('NotificationGateway authenticated Socket.IO contract', () => {
     const emit = jest.fn();
     const to = jest.fn(() => ({ emit }));
     gateway.server = {
-      sockets: {
-        adapter: {
-          rooms: new Map([['user_42', new Set(['socket-1'])]]),
-        },
+      adapter: {
+        rooms: new Map([['user_42', new Set(['socket-1'])]]),
       },
       to,
     } as any;
