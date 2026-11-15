@@ -1,11 +1,10 @@
 import { registerAs } from '@nestjs/config';
 
 export default registerAs('cors', () => ({
-  // origin: [
-  //   process.env.FRONTEND_URL || 'http://localhost:3000',
-  //   'http://localhost:4000',
-  //   'https://admin.example.com',
-  // ],
+  origin: [
+    ...(process.env.CORS_ORIGINS || '').split(','),
+    process.env.FRONTEND_URL || '',
+  ].map((origin) => origin.trim()).filter(Boolean),
   methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'],
   allowedHeaders: [
     'Content-Type',
