@@ -54,6 +54,7 @@ async function bootstrap() {
       'X-Model',
       'X-App-Version',
       'X-Os-Version',
+      'X-Timezone',
     ],
     credentials: true,
   });
