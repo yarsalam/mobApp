@@ -114,7 +114,18 @@ export class PaymentsController {
 
     // Promotion attribution is metadata only; it never changes price or eligibility.
     // Resolve the ID server-side and bind it to the authenticated recipient.
-    const promotionId = body?.promotionId?.trim();
+    const suppliedPromotionId = body?.promotionId;
+    if (
+      suppliedPromotionId !== undefined &&
+      (typeof suppliedPromotionId !== 'string' ||
+        suppliedPromotionId.trim().length === 0)
+    ) {
+      throw new NotFoundException('Promotion not found');
+    }
+    const promotionId =
+      typeof suppliedPromotionId === 'string'
+        ? suppliedPromotionId.trim()
+        : undefined;
     let promotionAttribution:
       | { promotionId: string; variant: string; phase?: string }
       | undefined;
