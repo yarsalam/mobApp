@@ -18,6 +18,10 @@
 - A rolling Redis counter caps automated reminders at three per user per 30 days.
 - These reminders are stored in the in-app inbox and delivered over Socket.IO when connected. They are never sent through an external push provider.
 
+## Deployment topology
+
+The current production Compose overlay defines one Backend service instance. The gateway checks the Socket.IO namespace's local room adapter, which is correct for this single-instance topology. Before running multiple Backend replicas, add and validate the Socket.IO Redis adapter so room membership and broadcasts are shared across instances. The database-backed inbox remains the source of truth either way.
+
 ## Platform limitation
 
 Socket.IO and local notification presentation work only while the app can execute and maintain its connection. If the operating system fully suspends or terminates the app, the server cannot wake it or guarantee an immediate notification without a platform push service. Yarsalam does not use such a service. The notification remains stored and is fetched on the next authenticated app connection.
