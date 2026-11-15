@@ -133,7 +133,7 @@ export class AuthRegistrationService {
       // با pool_size=10 و 50 کاربر همزمان، این موازی‌سازی بیشترین
       // اثر را در کاهش latency دارد.
       const [device] = await Promise.all([
-        this.userDeviceService.createOrUpdateToken({
+        this.userDeviceService.createOrUpdateDevice({
           userId: user.id,
           userAgent: (req.headers['user-agent'] as string) || 'unknown',
           ipAddress: ci.ip || '0.0.0.0',
@@ -150,6 +150,7 @@ export class AuthRegistrationService {
           country: ci.country,
           city: ci.city,
           isVpn: ci.isVpn ?? false,
+          timezone: (req.headers['x-timezone'] as string) || ci.timezone,
         }),
         existingUser
           ? Promise.resolve()
