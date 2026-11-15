@@ -1,4 +1,5 @@
-import { Controller, Get, Param } from '@nestjs/common';
+import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { DevelopmentOnlyGuard } from 'src/common/guards/development-only.guard';
 import { VectorSearchService } from '../suggestion/retrieval/vector-search.service';
 import { SuggestionService } from '../suggestion/suggestion.service';
 import { RelationStatusService } from '../relation-status/relation-status.service';
@@ -7,6 +8,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 @Controller('debug')
+@UseGuards(DevelopmentOnlyGuard)
 export class DebugController {
   constructor(
     private readonly vectorSearch: VectorSearchService,

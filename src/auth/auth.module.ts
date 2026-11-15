@@ -25,6 +25,7 @@ import { AuthRegistrationService } from './services/auth-registration.service';
 import { AuthLoginService } from './services/auth-login.service';
 import { AuthProfileService } from './services/auth-profile.service';
 import { DebugAuthController } from './debug-auth.controller';
+import { DevelopmentOnlyGuard } from 'src/common/guards/development-only.guard';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { DebugAuthController } from './debug-auth.controller';
     AuthProfileService,
     JwtStrategy,
     RecaptchaService,
+    DevelopmentOnlyGuard,
   ],
   controllers: [AuthController, DebugAuthController],
   exports: [AuthService, JwtModule],

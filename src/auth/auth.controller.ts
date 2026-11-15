@@ -7,6 +7,7 @@ import {
   Get,
   UseGuards,
   BadRequestException,
+  NotFoundException,
   Query,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
@@ -23,6 +24,7 @@ import { RequestHelper } from 'src/helpers/RequestHelper';
 import { UserEventService } from 'src/user-event/user-event.service';
 import { GetUser } from './decorator/get-user/get-user.decorator';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import { EventType } from 'src/user-event/type/event-type.enum';
 
 @Controller('auth')
@@ -32,6 +34,7 @@ export class AuthController {
     private readonly recaptchaService: RecaptchaService,
     private readonly userEventService: UserEventService,
     private readonly jwtService: JwtService,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
@@ -126,16 +129,34 @@ export class AuthController {
   }
 
   /**
-   * ابزار توسعه/بنچ‌مارک: مستقیماً یک کاربر کامل می‌سازد و JWT برمی‌گرداند.
-   * در production وجود ندارد — با 404 پاسخ می‌دهد.
+   * Staging-only synthetic account helper.
+   * Disabled by default and unconditionally unavailable in production.
    */
-
   @Post('sim-login')
-  async simLogin(@Body() body: { phone: string; gender?: string }) {
-    const user = await this.authService.simLogin(
-      body.phone,
-      body.gender || 'male',
-    );
+  async simLogin(@Body() body: { phone?: unknown; gender?: unknown }) {
+    const nodeEnv = this.configService.get<string>('NODE_ENV');
+    const enabled = this.configService.get<string>('ENABLE_SIM_LOGIN');
+
+    if (
+      !['development', 'test'].includes(nodeEnv ?? '') ||
+      enabled !== 'true'
+    ) {
+      throw new NotFoundException();
+    }
+
+    if (
+      typeof body?.phone !== 'string' ||
+      !/^(09|۰۹)[0-9۰-۹]{9}$/.test(body.phone)
+    ) {
+      throw new BadRequestException('A valid Iranian staging phone number is required');
+    }
+
+    const gender = body.gender === undefined ? 'men' : body.gender;
+    if (typeof gender !== 'string' || !['men', 'women'].includes(gender)) {
+      throw new BadRequestException('gender must be men or women');
+    }
+
+    const user = await this.authService.simLogin(body.phone, gender);
     const token = this.jwtService.sign(
       { sub: user.id, phone: user.phone },
       { expiresIn: '30d' },
