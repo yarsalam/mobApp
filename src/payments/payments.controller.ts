@@ -4,6 +4,7 @@ import {
   Headers,
   BadRequestException,
   Get,
+  Inject,
   NotFoundException,
   Param,
   ParseIntPipe,
@@ -12,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { Redis } from 'ioredis';
 import { PaymentsService } from './payments.service';
 import { AdminApiGuard } from 'src/admin-api/guards/api-key.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -21,6 +23,7 @@ import { CardTransferProvider } from './wallet/providers/card-transfer.provider'
 import { CryptoProvider } from './wallet/providers/crypto.provider';
 import { ManualVerifierService } from './wallet/verification/manual-verifier.service';
 import { ProductBundle } from 'src/product/entities/product-bundle.entity';
+import { REDIS_CLIENT } from 'src/redis/redis.constants';
 
 @Controller('payments')
 export class PaymentsController {
@@ -32,6 +35,7 @@ export class PaymentsController {
     private readonly walletService: WalletService,
     @InjectRepository(ProductBundle)
     private readonly bundleRepo: Repository<ProductBundle>,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
   // ─── کاربر: دریافت موجودی wallet ────────────────────────────
@@ -93,6 +97,7 @@ export class PaymentsController {
   async buyWithWallet(
     @CurrentUser('sub') userId: number,
     @Param('bundleCode') bundleCode: string,
+    @Body() body?: { promotionId?: unknown },
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     const stableKey = idempotencyKey?.trim();
@@ -100,6 +105,56 @@ export class PaymentsController {
       throw new BadRequestException(
         'Idempotency-Key header is required and must be at most 80 characters',
       );
+    }
+
+    // A promotion is attribution only: it must never change price, eligibility
+    // or wallet debit. Resolve it server-side and bind it to the authenticated
+    // owner before any balance-changing operation.
+    let promotionAttribution:
+      | { promotionId: string; variant: string; phase?: string }
+      | undefined;
+    if (body?.promotionId !== undefined && body.promotionId !== null) {
+      const promotionId = body.promotionId;
+      if (
+        typeof promotionId !== 'string' ||
+        promotionId.length < 16 ||
+        promotionId.length > 128 ||
+        !/^[A-Za-z0-9_-]+$/.test(promotionId)
+      ) {
+        throw new NotFoundException('Promotion not found');
+      }
+
+      const raw = await this.redis.get(`promo:map:${promotionId}`);
+      if (!raw) throw new NotFoundException('Promotion not found');
+
+      let mapping: {
+        userId?: unknown;
+        variant?: unknown;
+        phase?: unknown;
+      };
+      try {
+        mapping = JSON.parse(raw) as typeof mapping;
+      } catch {
+        throw new NotFoundException('Promotion not found');
+      }
+
+      if (
+        Number(mapping.userId) !== userId ||
+        typeof mapping.variant !== 'string' ||
+        !/^[a-z][a-z0-9_-]{0,31}$/i.test(mapping.variant) ||
+        (mapping.phase !== undefined &&
+          (typeof mapping.phase !== 'string' ||
+            !/^[a-z][a-z0-9_-]{0,31}$/i.test(mapping.phase)))
+      ) {
+        // Do not disclose whether another user's promotion ID exists.
+        throw new NotFoundException('Promotion not found');
+      }
+
+      promotionAttribution = {
+        promotionId,
+        variant: mapping.variant,
+        ...(typeof mapping.phase === 'string' ? { phase: mapping.phase } : {}),
+      };
     }
 
     const bundle = await this.bundleRepo.findOne({
@@ -115,11 +170,12 @@ export class PaymentsController {
       `wallet-checkout:${stableKey}:debit`,
     );
 
-    // grant محصول
+    // ثبت خرید و انتساب اصلی promotion در رویداد تجاری immutable.
     await this.paymentsService.grantBundle(userId, bundleCode, {
       amountRials: bundle.price,
       source: 'wallet',
       idempotencyKey: `wallet-checkout:${stableKey}`,
+      ...(promotionAttribution ? { promotionAttribution } : {}),
     });
 
     return { success: true, message: 'خرید با موفقیت انجام شد' };
