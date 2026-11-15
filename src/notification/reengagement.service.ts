@@ -56,18 +56,18 @@ export class ReengagementService {
     userId: number,
     now: Date,
   ): Promise<string | undefined> {
-    // Device metadata (including timezone) is collected by Yarsalam itself.
-    // No push registration/token is required for an in-app reminder.
-    const devices = await this.deviceRepo
+    // Use only the most recently updated device. Falling back to an older
+    // device can authorize a reminder at the wrong local time for a user who
+    // has moved or switched their active device.
+    const latestDevice = await this.deviceRepo
       .createQueryBuilder('device')
       .select(['device.id', 'device.timezone', 'device.updatedAt'])
       .where('device.userId = :userId', { userId })
       .orderBy('device.updatedAt', 'DESC')
-      .getMany();
+      .getOne();
 
-    return devices.find((device) =>
-      this.isWithinContactHours(device.timezone, now),
-    )?.timezone;
+    const timezone = latestDevice?.timezone;
+    return this.isWithinContactHours(timezone, now) ? timezone : undefined;
   }
 
   @Cron('0 * * * *')
