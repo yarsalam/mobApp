@@ -39,6 +39,8 @@ describe('ReengagementService policy', () => {
   });
 
   it('rotates the inactive-user scan cursor instead of starving later accounts', async () => {
+    const previous = process.env.ENABLE_REENGAGEMENT_NOTIFICATIONS;
+    process.env.ENABLE_REENGAGEMENT_NOTIFICATIONS = 'true';
     const query = {
       select: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
@@ -63,6 +65,8 @@ describe('ReengagementService policy', () => {
     });
     expect(query.orderBy).toHaveBeenCalledWith('user.id', 'ASC');
     expect(redis.set).toHaveBeenCalledWith('reengagement:scan-cursor', '0');
+    if (previous === undefined) delete process.env.ENABLE_REENGAGEMENT_NOTIFICATIONS;
+    else process.env.ENABLE_REENGAGEMENT_NOTIFICATIONS = previous;
   });
 
   it('uses stored device timezone without requiring a remote-push token', async () => {
