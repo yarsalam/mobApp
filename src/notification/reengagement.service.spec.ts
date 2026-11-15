@@ -6,6 +6,19 @@ describe('ReengagementService policy', () => {
     ReengagementService.prototype,
   ) as ReengagementService & Record<string, any>;
 
+  it('keeps the scheduler disabled until explicitly enabled after migration', async () => {
+    const previous = process.env.ENABLE_REENGAGEMENT_NOTIFICATIONS;
+    process.env.ENABLE_REENGAGEMENT_NOTIFICATIONS = 'false';
+    const createQueryBuilder = jest.fn();
+    Object.assign(service, {userRepo: {createQueryBuilder}});
+
+    await service.scheduleReengagement();
+
+    expect(createQueryBuilder).not.toHaveBeenCalled();
+    if (previous === undefined) delete process.env.ENABLE_REENGAGEMENT_NOTIFICATIONS;
+    else process.env.ENABLE_REENGAGEMENT_NOTIFICATIONS = previous;
+  });
+
   it('uses staged reminders without sending missed stages in a burst', () => {
     expect(service['getStage'](0)).toBeNull();
     expect(service['getStage'](1)).toBe('1d');
