@@ -29,6 +29,7 @@ on:
       - "src/redis/redis.service.ts"
       - "src/message/**"
       - "src/payments/**"
+      - "src/feed/**"
       - "src/user-event/**"
       - "python-ai/services/ml_service/**"
       - "python-ai/tests/test_matching_scoring.py"
@@ -72,7 +73,7 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Revenue, payments and moderation unit tests
+      - name: Revenue, payments, promotion and notification unit tests
         run: >-
           npm test -- --runInBand
           revenue-analytics.service.spec.ts
@@ -88,6 +89,7 @@ jobs:
           ai-assistant/context/user-context.service.spec.ts
           moderation/moderation.service.spec.ts
           database.config.spec.ts
+          feed/services/feed-promotion.service.spec.ts
           notification/reengagement.service.spec.ts
           notification/orchestrator.notification.spec.ts
           notification/notification.service.spec.ts
