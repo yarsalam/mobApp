@@ -12,6 +12,7 @@ import * as jwt from 'jsonwebtoken';
 import { User } from 'src/users/entities/user.entity';
 
 const socketAllowedOrigins = [
+  'https://novertex.ir',
   ...(process.env.CORS_ORIGINS || '').split(','),
   process.env.FRONTEND_URL || '',
 ].map((origin) => origin.trim()).filter(Boolean);
