@@ -44,6 +44,11 @@ export class PaymentsService {
       amountRials: number;
       source: 'wallet' | 'payment';
       idempotencyKey?: string;
+      promotionAttribution?: {
+        promotionId: string;
+        variant: string;
+        phase?: string;
+      };
     },
   ) {
     try {
@@ -107,6 +112,9 @@ export class PaymentsService {
                 amountRials: purchaseContext.amountRials,
                 currency: 'IRT',
                 source: purchaseContext.source,
+                ...(purchaseContext.promotionAttribution
+                  ? { promotion: purchaseContext.promotionAttribution }
+                  : {}),
               }
             : { source: 'admin_or_system_grant' }),
         },
