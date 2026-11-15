@@ -40,6 +40,7 @@ async function bootstrap() {
   // app.useGlobalInterceptors(new LoggingInterceptor());
 
   const configuredCorsOrigins = [
+    'https://novertex.ir',
     ...(configService.get<string>('CORS_ORIGINS') || '').split(','),
     configService.get<string>('FRONTEND_URL') || '',
   ]
