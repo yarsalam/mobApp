@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Headers,
+  Inject,
   BadRequestException,
   Get,
   NotFoundException,
@@ -21,6 +22,8 @@ import { CardTransferProvider } from './wallet/providers/card-transfer.provider'
 import { CryptoProvider } from './wallet/providers/crypto.provider';
 import { ManualVerifierService } from './wallet/verification/manual-verifier.service';
 import { ProductBundle } from 'src/product/entities/product-bundle.entity';
+import { Redis } from 'ioredis';
+import { REDIS_CLIENT } from '../redis/redis.constants';
 
 @Controller('payments')
 export class PaymentsController {
@@ -32,6 +35,7 @@ export class PaymentsController {
     private readonly walletService: WalletService,
     @InjectRepository(ProductBundle)
     private readonly bundleRepo: Repository<ProductBundle>,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
   // ─── کاربر: دریافت موجودی wallet ────────────────────────────
@@ -93,6 +97,7 @@ export class PaymentsController {
   async buyWithWallet(
     @CurrentUser('sub') userId: number,
     @Param('bundleCode') bundleCode: string,
+    @Body() body?: { promotionId?: string },
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     const stableKey = idempotencyKey?.trim();
@@ -107,6 +112,45 @@ export class PaymentsController {
     });
     if (!bundle) throw new NotFoundException('محصول یافت نشد');
 
+    // Promotion attribution is metadata only; it never changes price or eligibility.
+    // Resolve the ID server-side and bind it to the authenticated recipient.
+    const promotionId = body?.promotionId?.trim();
+    let promotionAttribution:
+      | { promotionId: string; variant: string; phase?: string }
+      | undefined;
+    if (promotionId) {
+      if (promotionId.length < 16 || promotionId.length > 128) {
+        throw new NotFoundException('Promotion not found');
+      }
+      const promotionRaw = await this.redis.get(`promo:map:${promotionId}`);
+      if (!promotionRaw) throw new NotFoundException('Promotion not found');
+
+      let promotionMap: {
+        userId?: unknown;
+        variant?: unknown;
+        phase?: unknown;
+      };
+      try {
+        promotionMap = JSON.parse(promotionRaw) as typeof promotionMap;
+      } catch {
+        throw new NotFoundException('Promotion not found');
+      }
+      if (
+        Number(promotionMap.userId) !== userId ||
+        typeof promotionMap.variant !== 'string' ||
+        !/^[a-z][a-z0-9_-]{0,31}$/i.test(promotionMap.variant)
+      ) {
+        throw new NotFoundException('Promotion not found');
+      }
+      promotionAttribution = {
+        promotionId,
+        variant: promotionMap.variant,
+        ...(typeof promotionMap.phase === 'string'
+          ? { phase: promotionMap.phase }
+          : {}),
+      };
+    }
+
     // کسر از wallet به ریال
     await this.walletService.debitOnce(
       userId,
@@ -120,6 +164,7 @@ export class PaymentsController {
       amountRials: bundle.price,
       source: 'wallet',
       idempotencyKey: `wallet-checkout:${stableKey}`,
+      ...(promotionAttribution ? { promotionAttribution } : {}),
     });
 
     return { success: true, message: 'خرید با موفقیت انجام شد' };
