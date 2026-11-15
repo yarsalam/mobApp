@@ -4,7 +4,7 @@ import {
   OnGatewayConnection,
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
-import { Server, Socket } from 'socket.io';
+import { Namespace, Socket } from 'socket.io';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -30,7 +30,7 @@ export class NotificationGateway
   private readonly logger = new Logger(NotificationGateway.name);
 
   @WebSocketServer()
-  server: Server;
+  server: Namespace;
 
   constructor(
     @InjectRepository(User)
@@ -71,7 +71,7 @@ export class NotificationGateway
   }
 
   isOnline(userId: number): boolean {
-    const room = this.server?.sockets?.adapter?.rooms?.get(`user_${userId}`);
+    const room = this.server?.adapter?.rooms?.get(`user_${userId}`);
     return Boolean(room && room.size > 0);
   }
 
