@@ -32,7 +32,8 @@ services:
       - .env.staging
     environment:
       NODE_ENV: development
-      DB_SYNC: "true"
+      DB_SYNC: "false"
+      ENABLE_REENGAGEMENT_NOTIFICATIONS: "false"
       DB_POOL_SIZE: 10
       DB_HOST: user-mysql
       DB_PORT: 3306
