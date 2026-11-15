@@ -11,10 +11,11 @@ describe('NotificationGateway authenticated Socket.IO contract', () => {
   });
 
   it('joins only the authenticated user room and records a valid connection', async () => {
-    process.env.JWT_SECRET = 'notification-test-secret';
+    const secret = 'notification-test-secret';
+    process.env.JWT_SECRET = secret;
     const userRepo = { update: jest.fn(async () => ({ affected: 1 })) };
     const gateway = new NotificationGateway(userRepo as any);
-    const token = jwt.sign({ sub: '42' }, process.env.JWT_SECRET);
+    const token = jwt.sign({ sub: '42' }, secret);
     const client = {
       handshake: { auth: { token } },
       join: jest.fn(async () => undefined),
