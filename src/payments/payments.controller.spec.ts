@@ -10,9 +10,11 @@ function makeController() {
     active: true,
     price: 100_000,
   }));
-  const redisGet = jest.fn(async () =>
-    JSON.stringify({ userId: 42, variant: 'boost', phase: 'warm' }),
-  );
+  const redisGet = jest
+    .fn<() => Promise<string | null>>()
+    .mockResolvedValue(
+      JSON.stringify({ userId: 42, variant: 'boost', phase: 'warm' }),
+    );
 
   const controller = new PaymentsController(
     { grantBundle } as any,
