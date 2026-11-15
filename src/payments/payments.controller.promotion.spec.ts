@@ -125,5 +125,17 @@ describe('PaymentsController promotion purchase attribution', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(shortId.redisGet).not.toHaveBeenCalled();
     expect(shortId.debitOnce).not.toHaveBeenCalled();
+
+    const nonStringId = makeController(null);
+    await expect(
+      nonStringId.controller.buyWithWallet(
+        42,
+        'vip-month',
+        { promotionId: 123 as any },
+        'non-string-id-key',
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(nonStringId.redisGet).not.toHaveBeenCalled();
+    expect(nonStringId.debitOnce).not.toHaveBeenCalled();
   });
 });
