@@ -11,7 +11,18 @@ import { Repository } from 'typeorm';
 import * as jwt from 'jsonwebtoken';
 import { User } from 'src/users/entities/user.entity';
 
-@WebSocketGateway({ cors: true, namespace: '/notification' })
+const socketAllowedOrigins = [
+  ...(process.env.CORS_ORIGINS || '').split(','),
+  process.env.FRONTEND_URL || '',
+].map((origin) => origin.trim()).filter(Boolean);
+
+@WebSocketGateway({
+  cors: {
+    origin: socketAllowedOrigins.length ? socketAllowedOrigins : false,
+    credentials: true,
+  },
+  namespace: '/notification',
+})
 @Injectable()
 export class NotificationGateway
   implements OnGatewayConnection, OnGatewayDisconnect
