@@ -5,6 +5,7 @@ on:
     branches: [feature/reengagement-fcm-push]
     paths:
       - "src/notification/**"
+      - "src/user-device/**"
       - "src/auth/**"
       - "src/debug/**"
       - "src/common/guards/**"
@@ -103,6 +104,7 @@ jobs:
           auth/auth.controller.spec.ts
           common/guards/development-only.guard.spec.ts
           notification/notification.service.spec.ts
+          user-device/user-device.service.spec.ts
 
       - name: MySQL wallet concurrency and rollback integration tests
         env:
