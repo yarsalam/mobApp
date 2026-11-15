@@ -16,6 +16,7 @@
 - In-app reminders are scheduled only between 09:00 and 21:00 in that device's local time.
 - Redis stage claims prevent duplicate notifications across hourly scans and workers.
 - A rolling Redis counter caps automated reminders at three per user per 30 days.
+- These reminders are disabled by default. Set `ENABLE_REENGAGEMENT_NOTIFICATIONS=true` only after the enum migration has been reviewed and applied in staging.
 - These reminders are stored in the in-app inbox and delivered over Socket.IO when connected. They are never sent through an external push provider.
 
 ## Deployment topology
