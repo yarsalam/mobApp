@@ -92,6 +92,7 @@ jobs:
           feed/services/feed-promotion.service.spec.ts
           notification/reengagement.service.spec.ts
           notification/orchestrator.notification.spec.ts
+          notification/notification.gateway.spec.ts
           notification/notification.service.spec.ts
 
       - name: MySQL wallet concurrency and rollback integration tests
