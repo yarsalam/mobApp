@@ -19,5 +19,4 @@ export default registerAs('cors', () => ({
     'X-Timezone',
   ],
   credentials: true,
-  origin: true,
 }));
