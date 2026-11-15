@@ -70,6 +70,32 @@ describe('PaymentsService purchase attribution', () => {
     expect(purchaseEvent.metadata.genderAtPurchase).toBe('female');
   });
 
+  it('persists originating promotion metadata on the immutable purchase event', async () => {
+    const h = makeService('female');
+    const promotion = {
+      promotionId: 'promo-0123456789abcdef',
+      variant: 'boost',
+      phase: 'warm',
+    };
+
+    await h.service.grantBundle(7, 'bundle-monthly', {
+      amountRials: 250_000,
+      source: 'wallet',
+      idempotencyKey: 'wallet-checkout:promotion-attribution',
+      promotionAttribution: promotion,
+    });
+
+    expect(h.eventService.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: expect.any(String),
+        metadata: expect.objectContaining({
+          isCommercialPurchase: true,
+          promotion,
+        }),
+        idempotencyKey: expect.stringMatching(/^purchase:/),
+      }),
+    );
+  });
 
   it.each(['male', 'man', 'm', 'مرد', 'آقا', 'اقا'])(
     'normalizes male profile value %s to the male snapshot',
