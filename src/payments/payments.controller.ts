@@ -274,6 +274,26 @@ export class PaymentsController {
     };
   }
 
+  private isInsufficientBalance(error: unknown): boolean {
+    const candidate = error as {
+      code?: string;
+      response?: { code?: string };
+      getResponse?: () => unknown;
+    };
+    if (candidate?.code === 'INSUFFICIENT_BALANCE') return true;
+    if (candidate?.response?.code === 'INSUFFICIENT_BALANCE') return true;
+    if (typeof candidate?.getResponse === 'function') {
+      const response = candidate.getResponse();
+      return (
+        typeof response === 'object' &&
+        response !== null &&
+        'code' in response &&
+        (response as { code?: unknown }).code === 'INSUFFICIENT_BALANCE'
+      );
+    }
+    return false;
+  }
+
   // ─── کاربر: آپلود رسید ───────────────────────────────────────
 
   @Post(':paymentId/proof')
