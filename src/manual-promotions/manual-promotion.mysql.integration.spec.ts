@@ -4,6 +4,10 @@ import { ManualPromotionService } from './manual-promotion.service';
 import { ManualPromotionCampaign } from './entities/manual-promotion-campaign.entity';
 import { ManualPromotionRedemption } from './entities/manual-promotion-redemption.entity';
 import { ProductBundle } from '../product/entities/product-bundle.entity';
+import { UserWallet } from '../payments/wallet/entities/user-wallet.entity';
+import { WalletService } from '../payments/wallet/wallet.service';
+import { PartitionedEvent } from '../user-event/entities/partitioned-event.entity';
+import { EventType } from '../user-event/type/event-type.enum';
 import { User } from '../users/entities/user.entity';
 
 const mysqlUrl = process.env.MYSQL_INTEGRATION_URL;
@@ -73,6 +77,36 @@ const bundleSchema = new EntitySchema<ProductBundle>({
   },
 });
 
+const walletSchema = new EntitySchema<UserWallet>({
+  name: 'UserWallet',
+  target: UserWallet,
+  tableName: 'user_wallets',
+  columns: {
+    id: { type: Number, primary: true, generated: true },
+    userId: { type: Number, unique: true },
+    balance: { type: 'bigint', default: 0 },
+    currency: { type: 'varchar', length: 5, default: 'IRT' },
+  },
+});
+
+const eventSchema = new EntitySchema<PartitionedEvent>({
+  name: 'PartitionedEvent',
+  target: PartitionedEvent,
+  tableName: 'user_events',
+  columns: {
+    id: { type: Number, primary: true, generated: true },
+    userId: { type: Number },
+    type: { type: 'varchar', length: 100 },
+    metadata: { type: 'json', nullable: true },
+    idempotencyKey: { type: 'varchar', length: 128, nullable: true },
+    createdAt: { type: 'datetime', createDate: true },
+  },
+  uniques: [{
+    name: 'UQ_manual_wallet_event_idempotency',
+    columns: ['userId', 'idempotencyKey'],
+  }],
+});
+
 const userSchema = new EntitySchema<User>({
   name: 'User',
   target: User,
@@ -87,13 +121,21 @@ const userSchema = new EntitySchema<User>({
 mysqlDescribe('Manual promotion MySQL reservation integration', () => {
   let dataSource: DataSource;
   let service: ManualPromotionService;
+  let walletService: WalletService;
   const campaignId = '11111111-1111-4111-8111-111111111111';
 
   beforeAll(async () => {
     dataSource = new DataSource({
       type: 'mysql',
       url: mysqlUrl,
-      entities: [campaignSchema, redemptionSchema, bundleSchema, userSchema],
+      entities: [
+        campaignSchema,
+        redemptionSchema,
+        bundleSchema,
+        userSchema,
+        walletSchema,
+        eventSchema,
+      ],
       synchronize: true,
       dropSchema: true,
       logging: false,
@@ -108,6 +150,22 @@ mysqlDescribe('Manual promotion MySQL reservation integration', () => {
       phases,
       dataSource,
     );
+    const eventService = {
+      logWithManager: async (manager: any, event: any) => {
+        await manager.getRepository(PartitionedEvent).insert({
+          userId: event.userId,
+          type: event.type,
+          metadata: event.metadata,
+          idempotencyKey: event.idempotencyKey ?? null,
+        });
+        return true;
+      },
+    };
+    walletService = new WalletService(
+      dataSource.getRepository(UserWallet),
+      eventService as any,
+      dataSource,
+    );
   });
 
   afterAll(async () => {
@@ -117,6 +175,8 @@ mysqlDescribe('Manual promotion MySQL reservation integration', () => {
   beforeEach(async () => {
     await dataSource.getRepository(ManualPromotionRedemption).clear();
     await dataSource.getRepository(ManualPromotionCampaign).clear();
+    await dataSource.getRepository(PartitionedEvent).clear();
+    await dataSource.getRepository(UserWallet).clear();
     await dataSource.getRepository(ProductBundle).clear();
     await dataSource.getRepository(User).clear();
 
@@ -183,6 +243,73 @@ mysqlDescribe('Manual promotion MySQL reservation integration', () => {
     expect(await dataSource.getRepository(ManualPromotionRedemption).count({
       where: { campaignId, status: 'redeemed' },
     })).toBe(1);
+  });
+
+  it('charges the discounted wallet price once, redeems once, and records the realized discount', async () => {
+    const userId = 9101;
+    const checkoutKey = 'manual-e2e-checkout-9101';
+    const debitKey = `wallet-checkout:${checkoutKey}:debit`;
+
+    await walletService.creditOnce(userId, 100_000, 'staging-test-seed', 'manual-e2e-seed-9101');
+
+    const quote = await service.getQuote(userId, campaignId, 'vip-month');
+    expect(quote).toMatchObject({
+      basePriceRials: 100_000,
+      discountRials: 20_000,
+      payablePriceRials: 80_000,
+    });
+
+    const reservation = await service.reserveForCheckout(
+      userId,
+      campaignId,
+      'vip-month',
+      checkoutKey,
+    );
+    expect(reservation).toMatchObject({
+      basePriceRials: 100_000,
+      discountRials: 20_000,
+      payablePriceRials: 80_000,
+    });
+
+    await walletService.debitOnce(
+      userId,
+      reservation.payablePriceRials,
+      'buy:vip-month',
+      debitKey,
+    );
+    await service.markRedeemed(campaignId, reservation.redemptionId, userId);
+
+    // Retry after an ambiguous client timeout: the reservation and wallet
+    // receipt must both replay without charging a second time.
+    const replayReservation = await service.reserveForCheckout(
+      userId,
+      campaignId,
+      'vip-month',
+      checkoutKey,
+    );
+    await walletService.debitOnce(
+      userId,
+      replayReservation.payablePriceRials,
+      'buy:vip-month',
+      debitKey,
+    );
+    await service.markRedeemed(campaignId, reservation.redemptionId, userId);
+
+    const wallet = await dataSource.getRepository(UserWallet).findOneByOrFail({ userId });
+    const debitReceipts = await dataSource.getRepository(PartitionedEvent).count({
+      where: { userId, type: EventType.CREDITS_SPENT, idempotencyKey: debitKey },
+    });
+    const report = await service.getCampaignReport(campaignId);
+
+    expect(Number(wallet.balance)).toBe(20_000);
+    expect(debitReceipts).toBe(1);
+    expect(report).toMatchObject({
+      reserved: 0,
+      redeemed: 1,
+      released: 0,
+      discountRials: 20_000,
+      active: true,
+    });
   });
 
   it('releases a reservation after a definitive insufficient-balance result so the next eligible buyer can use the cap', async () => {
