@@ -16,6 +16,8 @@ on:
       - ".env.example"
       - "docs/sql/**"
       - "src/manual-promotions/**"
+      - "src/product/**"
+      - "src/admin-api/controllers/product/**"
       - "src/payments/**"
       - "src/feed/**"
       - "src/admin-api/controllers/growth/**"
@@ -109,6 +111,7 @@ jobs:
           payments/promotion-engine.service.spec.ts
           payments/promotion-exposure.service.spec.ts
           manual-promotions/manual-promotion.service.spec.ts
+          product/product.service.spec.ts
           notification/reengagement.service.spec.ts
           notification/orchestrator.notification.spec.ts
           notification/notification.gateway.spec.ts
