@@ -41,6 +41,8 @@ import { Personality } from 'src/personality/entities/personality.entity';
 import { UserDailyMetrics } from 'src/user-metrics/entities/user-daily-metrics.entity';
 import { UserWallet } from 'src/payments/wallet/entities/user-wallet.entity';
 import { EventOutbox } from 'src/user-event/entities/event-outbox.entity';
+import { ManualPromotionCampaign } from 'src/manual-promotions/entities/manual-promotion-campaign.entity';
+import { ManualPromotionRedemption } from 'src/manual-promotions/entities/manual-promotion-redemption.entity';
 
 const logger = new Logger('DatabaseConfig');
 
@@ -132,6 +134,8 @@ export default registerAs('database', (): TypeOrmModuleOptions => ({
     ArchiveRequest,
     RequestLog,
     EventOutbox,
+    ManualPromotionCampaign,
+    ManualPromotionRedemption,
   ],
   synchronize: resolveSynchronize(),
   // logging: resolveLogging(),

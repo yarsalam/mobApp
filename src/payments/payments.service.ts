@@ -48,6 +48,14 @@ export class PaymentsService {
         promotionId: string;
         variant: string;
         phase?: string;
+        campaignId?: string;
+      };
+      manualPromotion?: {
+        campaignId: string;
+        redemptionId: string;
+        basePriceRials: number;
+        discountRials: number;
+        payablePriceRials: number;
       };
     },
   ) {
@@ -115,6 +123,9 @@ export class PaymentsService {
                 ...(purchaseContext.promotionAttribution
                   ? { promotion: purchaseContext.promotionAttribution }
                   : {}),
+                ...(purchaseContext.manualPromotion
+                  ? { manualPromotion: purchaseContext.manualPromotion }
+                  : {}),
               }
             : { source: 'admin_or_system_grant' }),
         },
@@ -124,7 +135,7 @@ export class PaymentsService {
       try {
         await this.phaseService.markEverPaid(userId);
         await this.phaseService.learnFromFeedback(userId, 'purchase', {
-          amount: bundle.price,
+          amount: purchaseContext?.amountRials ?? bundle.price,
           productType: bundleCode,
         });
       } catch (e: unknown) {

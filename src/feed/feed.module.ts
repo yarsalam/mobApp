@@ -10,6 +10,7 @@ import { SEOModule } from '../seo/seo.module';
 import { VipModule } from '../payments/vip/vip.module';
 import { CreditsModule } from '../payments/credits/credits.module';
 import { RelationStatusModule } from '../relation-status/relation-status.module';
+import { ManualPromotionsModule } from '../manual-promotions/manual-promotions.module';
 
 // سرویس‌های جدید
 import { FeedCandidateService } from './services/feed-candidate.service';
@@ -31,6 +32,7 @@ import { FeedController } from './feed.controller';
     VipModule,
     CreditsModule,
     RelationStatusModule,
+    ManualPromotionsModule,
   ],
   controllers: [FeedController],
   providers: [

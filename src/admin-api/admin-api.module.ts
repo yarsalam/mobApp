@@ -87,6 +87,8 @@ import { RelationStatusModule } from 'src/relation-status/relation-status.module
 import { NotificationModule } from 'src/notification/notification.module';
 import { AiImageModule } from 'src/ai-image/ai-image.module';
 import { UserDeviceModule } from 'src/user-device/user-device.module';
+import { ManualPromotionsModule } from 'src/manual-promotions/manual-promotions.module';
+import { ManualPromotionsController } from './controllers/growth/manual-promotions.controller';
 @Module({
   imports: [
     TypeOrmModule.forFeature([
@@ -141,6 +143,7 @@ import { UserDeviceModule } from 'src/user-device/user-device.module';
     BadgeModule,
     UserMetricsModule,
     UserPhonesModule,
+    ManualPromotionsModule,
   ],
   controllers: [
     AdminApiController,
@@ -158,6 +161,7 @@ import { UserDeviceModule } from 'src/user-device/user-device.module';
     SeoStudioController,
     SocialController,
     MonetizationController,
+    ManualPromotionsController,
     FeedSimulatorController,
     AlgorithmTuningController,
     FeedbackController,

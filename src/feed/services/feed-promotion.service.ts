@@ -8,6 +8,7 @@ import { UserEventService } from '../../user-event/user-event.service';
 import { FeedItem, PromotionConfig } from '../types/feed.types';
 import { FeedPhase } from '../types/feed-phase.interface';
 import { EventType } from 'src/user-event/type/event-type.enum';
+import { ManualPromotionService } from 'src/manual-promotions/manual-promotion.service';
 
 @Injectable()
 export class FeedPromotionService {
@@ -85,6 +86,7 @@ export class FeedPromotionService {
     private readonly exposureService: PromotionExposureService,
     private readonly userEventService: UserEventService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
+    private readonly manualPromotionService: ManualPromotionService,
   ) {}
 
   getAllowedPromotionTypes(phase: FeedPhase): string[] {
@@ -246,6 +248,84 @@ export class FeedPromotionService {
     };
   }
 
+  private async createManualPromotion(
+    userId: number,
+    phase: FeedPhase,
+    feedPosition: number,
+  ): Promise<FeedItem | null> {
+    if (!(await this.exposureService.canShow(userId, 'manual_discount'))) return null;
+    const candidate = await this.manualPromotionService.getCampaignForFeed(
+      userId,
+      phase.phase,
+    );
+    if (!candidate) return null;
+
+    const { campaign, quote } = candidate;
+    const promotionId = randomUUID();
+    await this.redis.set(
+      `promo:map:${promotionId}`,
+      JSON.stringify({
+        userId,
+        variant: 'manual_discount',
+        score: 1,
+        phase: phase.phase,
+        tone: 'soft_sell',
+        campaignId: campaign.id,
+      }),
+      'EX',
+      604800,
+    );
+    await this.exposureService.trackImpression(userId, 'manual_discount');
+    await this.userEventService.log({
+      userId,
+      type: EventType.PROMOTION_SHOWN,
+      metadata: {
+        variant: 'manual_discount',
+        promotionKind: 'manual_discount',
+        manualCampaignId: campaign.id,
+        bundleCode: quote.bundleCode,
+        basePriceRials: quote.basePriceRials,
+        discountRials: quote.discountRials,
+        payablePriceRials: quote.payablePriceRials,
+        position: feedPosition,
+        promotionId,
+      },
+      idempotencyKey: `manual-promotion-shown:${promotionId}`,
+    });
+
+    const discountLabel = campaign.discountType === 'percent'
+      ? `${campaign.discountValue}٪ تخفیف`
+      : `${Math.ceil(quote.discountRials / 10).toLocaleString('fa-IR')} تومان تخفیف`;
+
+    return {
+      id: promotionId,
+      type: 'promotion',
+      expiresAt: new Date(quote.expiresAt),
+      score: 1,
+      data: {
+        variant: 'manual_discount',
+        title: campaign.title,
+        subtitle: `${campaign.subtitle}\n${discountLabel}`,
+        ctaText: campaign.ctaText,
+        ctaColor: '#16A34A',
+        gradientColors: ['#123524', '#166534', '#111827'],
+        titleColor: '#FFFFFF',
+        promoImage: '',
+        navigationTarget: 'Products',
+        navigationParams: {
+          type: 'bundle',
+          bundleCode: quote.bundleCode,
+          manualPromotionId: campaign.id,
+        },
+        manualPromotionId: campaign.id,
+        bundleCode: quote.bundleCode,
+        discountLabel,
+        basePriceRials: quote.basePriceRials,
+        payablePriceRials: quote.payablePriceRials,
+      },
+    };
+  }
+
   private async recordPromotionInteraction(
     userId: number,
     promotionId: string,
@@ -269,6 +349,7 @@ export class FeedPromotionService {
       variant?: unknown;
       phase?: unknown;
       score?: unknown;
+      campaignId?: unknown;
     };
     try {
       metadata = JSON.parse(raw) as typeof metadata;
@@ -312,6 +393,9 @@ export class FeedPromotionService {
             typeof metadata.score === 'number' && Number.isFinite(metadata.score)
               ? metadata.score
               : null,
+          ...(typeof metadata.campaignId === 'string'
+            ? { manualCampaignId: metadata.campaignId }
+            : {}),
         },
         idempotencyKey: `promotion:${promotionId}:${interaction}`,
       });
@@ -346,10 +430,22 @@ export class FeedPromotionService {
     phase: FeedPhase,
     positions: number[],
   ): Promise<(FeedItem | null)[]> {
-    return Promise.all(
-      positions.map((pos) =>
-        this.decideAndCreatePromotion(userId, allowedTypes, phase, pos),
+    const manualPromotion = positions.length
+      ? await this.createManualPromotion(userId, phase, positions[0])
+      : null;
+    const automaticPromotions = await Promise.all(
+      positions.map((pos, index) =>
+        manualPromotion && index === 0
+          ? Promise.resolve(null)
+          : this.decideAndCreatePromotion(userId, allowedTypes, phase, pos),
       ),
     );
+
+    // An explicitly configured manual offer gets the first available slot.
+    // The automatic phase-aware engine continues filling the remaining slots.
+    if (manualPromotion && automaticPromotions.length > 0) {
+      automaticPromotions[0] = manualPromotion;
+    }
+    return automaticPromotions;
   }
 }

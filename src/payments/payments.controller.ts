@@ -10,6 +10,7 @@ import {
   ParseIntPipe,
   Post,
   UseGuards,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -24,6 +25,7 @@ import { ManualVerifierService } from './wallet/verification/manual-verifier.ser
 import { ProductBundle } from 'src/product/entities/product-bundle.entity';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../redis/redis.constants';
+import { ManualPromotionService } from 'src/manual-promotions/manual-promotion.service';
 
 @Controller('payments')
 export class PaymentsController {
@@ -36,6 +38,7 @@ export class PaymentsController {
     @InjectRepository(ProductBundle)
     private readonly bundleRepo: Repository<ProductBundle>,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
+    @Optional() private readonly manualPromotionService?: ManualPromotionService,
   ) {}
 
   // ─── کاربر: دریافت موجودی wallet ────────────────────────────
@@ -97,7 +100,7 @@ export class PaymentsController {
   async buyWithWallet(
     @CurrentUser('sub') userId: number,
     @Param('bundleCode') bundleCode: string,
-    @Body() body?: { promotionId?: string },
+    @Body() body?: { promotionId?: string; manualPromotionId?: string },
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     const stableKey = idempotencyKey?.trim();
@@ -112,9 +115,18 @@ export class PaymentsController {
     });
     if (!bundle) throw new NotFoundException('محصول یافت نشد');
 
-    // Promotion attribution is metadata only; it never changes price or eligibility.
-    // Resolve the ID server-side and bind it to the authenticated recipient.
+    // Automatic promotion IDs are attribution-only. A manual campaign ID is
+    // a separate, server-validated discount authorization and must match the
+    // campaign bound to the displayed promotion.
     const suppliedPromotionId = body?.promotionId;
+    if (body?.manualPromotionId !== undefined &&
+        typeof body.manualPromotionId !== 'string') {
+      throw new NotFoundException('Promotion not found');
+    }
+    const manualPromotionId = body?.manualPromotionId?.trim();
+    if (manualPromotionId && !suppliedPromotionId) {
+      throw new NotFoundException('Promotion not found');
+    }
     if (
       suppliedPromotionId !== undefined &&
       (typeof suppliedPromotionId !== 'string' ||
@@ -140,6 +152,7 @@ export class PaymentsController {
         userId?: unknown;
         variant?: unknown;
         phase?: unknown;
+        campaignId?: unknown;
       };
       try {
         promotionMap = JSON.parse(promotionRaw) as typeof promotionMap;
@@ -153,32 +166,112 @@ export class PaymentsController {
       ) {
         throw new NotFoundException('Promotion not found');
       }
+      if (
+        (manualPromotionId &&
+          (promotionMap.variant !== 'manual_discount' ||
+            promotionMap.campaignId !== manualPromotionId)) ||
+        (!manualPromotionId && typeof promotionMap.campaignId === 'string')
+      ) {
+        throw new NotFoundException('Promotion not found');
+      }
       promotionAttribution = {
         promotionId,
         variant: promotionMap.variant,
         ...(typeof promotionMap.phase === 'string'
           ? { phase: promotionMap.phase }
           : {}),
+        ...(typeof promotionMap.campaignId === 'string'
+          ? { campaignId: promotionMap.campaignId }
+          : {}),
       };
     }
 
-    // کسر از wallet به ریال
-    await this.walletService.debitOnce(
-      userId,
-      bundle.price,
-      `buy:${bundleCode}`,
-      `wallet-checkout:${stableKey}:debit`,
-    );
+    let manualRedemption:
+      | {
+          campaignId: string;
+          redemptionId: string;
+          bundleCode: string;
+          basePriceRials: number;
+          discountRials: number;
+          payablePriceRials: number;
+        }
+      | undefined;
+
+    if (manualPromotionId) {
+      if (!this.manualPromotionService) {
+        throw new NotFoundException('Promotion not found');
+      }
+      manualRedemption = await this.manualPromotionService.reserveForCheckout(
+        userId,
+        manualPromotionId,
+        bundleCode,
+        stableKey,
+      );
+    }
+    const payablePriceRials =
+      manualRedemption?.payablePriceRials ?? bundle.price;
+
+    // The wallet receipt and balance debit remain atomic. A definitive
+    // insufficient-balance result releases only this reservation; ambiguous
+    // failures retain it so the same idempotency key can safely resume.
+    try {
+      await this.walletService.debitOnce(
+        userId,
+        payablePriceRials,
+        `buy:${bundleCode}`,
+        `wallet-checkout:${stableKey}:debit`,
+      );
+    } catch (error: unknown) {
+      if (manualRedemption && this.isInsufficientBalance(error)) {
+        await this.manualPromotionService!.releaseReservation(
+          manualRedemption.campaignId,
+          manualRedemption.redemptionId,
+          userId,
+        );
+      }
+      throw error;
+    }
+
+    if (manualRedemption) {
+      await this.manualPromotionService!.markRedeemed(
+        manualRedemption.campaignId,
+        manualRedemption.redemptionId,
+        userId,
+      );
+    }
 
     // grant محصول
     await this.paymentsService.grantBundle(userId, bundleCode, {
-      amountRials: bundle.price,
+      amountRials: payablePriceRials,
       source: 'wallet',
       idempotencyKey: `wallet-checkout:${stableKey}`,
       ...(promotionAttribution ? { promotionAttribution } : {}),
+      ...(manualRedemption
+        ? {
+            manualPromotion: {
+              campaignId: manualRedemption.campaignId,
+              redemptionId: manualRedemption.redemptionId,
+              basePriceRials: manualRedemption.basePriceRials,
+              discountRials: manualRedemption.discountRials,
+              payablePriceRials: manualRedemption.payablePriceRials,
+            },
+          }
+        : {}),
     });
 
-    return { success: true, message: 'خرید با موفقیت انجام شد' };
+    return {
+      success: true,
+      message: 'خرید با موفقیت انجام شد',
+      ...(manualRedemption
+        ? {
+            manualPromotion: {
+              campaignId: manualRedemption.campaignId,
+              discountRials: manualRedemption.discountRials,
+              payablePriceRials: manualRedemption.payablePriceRials,
+            },
+          }
+        : {}),
+    };
   }
 
   // ─── کاربر: آپلود رسید ───────────────────────────────────────
