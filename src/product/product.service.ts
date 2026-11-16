@@ -7,8 +7,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ProductBundle } from './entities/product-bundle.entity';
 
-type BundleItemType = 'credits' | 'boost' | 'vip';
-interface BundleItemInput {
+export type BundleItemType = 'credits' | 'boost' | 'vip';
+export interface BundleItemInput {
   type: BundleItemType;
   amount: number;
   durationDays?: number;
