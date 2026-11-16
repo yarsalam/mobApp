@@ -227,8 +227,16 @@ export class FeedPromotionService {
       604800,
     );
 
-    // ردیابی و لاگ
-    await this.exposureService.trackImpression(userId, decision.variant);
+    // Count the impression before showing the card. If the exposure ledger
+    // is unavailable, suppress this promotion instead of bypassing its cap.
+    const impressionTracked = await this.exposureService.trackImpression(
+      userId,
+      decision.variant,
+    );
+    if (!impressionTracked) {
+      await this.redis.del(`promo:map:${promotionId}`).catch(() => undefined);
+      return null;
+    }
     await this.userEventService.log({
       userId,
       type: EventType.PROMOTION_SHOWN,
@@ -275,7 +283,14 @@ export class FeedPromotionService {
       'EX',
       604800,
     );
-    await this.exposureService.trackImpression(userId, 'manual_discount');
+    const impressionTracked = await this.exposureService.trackImpression(
+      userId,
+      'manual_discount',
+    );
+    if (!impressionTracked) {
+      await this.redis.del(`promo:map:${promotionId}`).catch(() => undefined);
+      return null;
+    }
     await this.userEventService.log({
       userId,
       type: EventType.PROMOTION_SHOWN,
