@@ -1,12 +1,24 @@
 name: Backend Revenue Quality
 
 on:
-  pull_request:
-    branches: [main]
+  push:
+    branches: [feature/reengagement-fcm-push]
     paths:
+      - "src/notification/**"
+      - "src/user-device/**"
       - "src/auth/**"
       - "src/debug/**"
       - "src/common/guards/**"
+      - "src/users/entities/user.entity.ts"
+      - "src/config/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".env.example"
+      - "docs/sql/**"
+      - ".github/workflows/backend-revenue-quality.yml"
+  pull_request:
+    branches: [main]
+    paths:
       - "src/personality/**"
       - "src/feature-store/**"
       - "src/suggestion/scoring/**"
@@ -17,6 +29,11 @@ on:
       - "src/app.controller.ts"
       - "src/app.controller.spec.ts"
       - "src/config/**"
+      - "src/auth/**"
+      - "src/debug/**"
+      - "src/common/guards/**"
+      - "src/notification/**"
+      - "src/user-device/**"
       - "src/redis/redis.service.ts"
       - "src/message/**"
       - "src/payments/**"
@@ -64,13 +81,14 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Revenue, payments and moderation unit tests
+      - name: Revenue, payments, promotion and notification unit tests
         run: >-
           npm test -- --runInBand
           revenue-analytics.service.spec.ts
           personality.service.spec.ts
           app.controller.spec.ts
           payments.service.spec.ts
+          payments.controller.promotion.spec.ts
           wallet.service.spec.ts
           card-transfer.provider.spec.ts
           crypto.provider.spec.ts
@@ -81,8 +99,13 @@ jobs:
           moderation/moderation.service.spec.ts
           database.config.spec.ts
           feed/services/feed-promotion.service.spec.ts
+          notification/reengagement.service.spec.ts
+          notification/orchestrator.notification.spec.ts
+          notification/notification.gateway.spec.ts
           auth/auth.controller.spec.ts
           common/guards/development-only.guard.spec.ts
+          notification/notification.service.spec.ts
+          user-device/user-device.service.spec.ts
 
       - name: MySQL wallet concurrency and rollback integration tests
         env:

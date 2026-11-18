@@ -40,6 +40,14 @@ export class NotificationController {
     return this.notificationService.markAsRead(id, userId);
   }
 
+  @Post('click/:id')
+  async markClicked(
+    @GetUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.notificationService.markClicked(id, userId);
+  }
+
   @Get('unread/count')
   async countUnread(@GetUser('id') userId: number) {
     const count = await this.notificationService.countUnread(userId);

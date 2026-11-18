@@ -5,10 +5,9 @@ import {
   ManyToOne,
   CreateDateColumn,
   UpdateDateColumn,
+  Index,
 } from 'typeorm';
 import { User } from 'src/users/entities/user.entity';
-
-import { Index } from 'typeorm';
 
 @Entity()
 @Index(['deviceId'])
@@ -21,7 +20,7 @@ export class UserDevice {
   platform?: 'web' | 'mobile';
 
   @Column({ nullable: true })
-  deviceType?: string; // desktop / mobile / tablet
+  deviceType?: string;
 
   @Column({ nullable: true })
   os?: string;

@@ -8,7 +8,6 @@ import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 // import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 // import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
-import corsConfig from './config/cors.config';
 import { TraceInterceptor } from './ops/trace.interceptor';
 
 async function bootstrap() {
@@ -40,9 +39,24 @@ async function bootstrap() {
   // app.useGlobalFilters(new AllExceptionsFilter());
   // app.useGlobalInterceptors(new LoggingInterceptor());
 
+  const configuredCorsOrigins = [
+    'https://novertex.ir',
+    ...(configService.get<string>('CORS_ORIGINS') || '').split(','),
+    configService.get<string>('FRONTEND_URL') || '',
+  ]
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  const allowedCorsOrigins = new Set(configuredCorsOrigins);
+
   app.enableCors({
-    // origin: corsConfig,
-    origin: true,
+    // Native app/server-to-server requests without Origin remain supported.
+    // Browser origins must be explicitly configured; no wildcard reflection.
+    origin: (origin, callback) => {
+      if (!origin || allowedCorsOrigins.has(origin)) {
+        return callback(null, true);
+      }
+      return callback(null, false);
+    },
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     allowedHeaders: [
       'Content-Type',
@@ -54,6 +68,7 @@ async function bootstrap() {
       'X-Model',
       'X-App-Version',
       'X-Os-Version',
+      'X-Timezone',
     ],
     credentials: true,
   });
