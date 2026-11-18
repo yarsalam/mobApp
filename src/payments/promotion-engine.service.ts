@@ -37,17 +37,35 @@ export class PromotionEngineService {
     allowedVariants: string[],
     context?: any,
   ): Promise<DecisionResult> {
+    let features: any;
     try {
-      const features = await this.featureService.getUserFeatures(userId);
+      features = await this.featureService.getUserFeatures(userId);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Could not load promotion features for user ${userId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return { variant: null, score: 0 };
+    }
 
-      const validVariants: string[] = [];
+    const validVariants: string[] = [];
+    try {
       for (const variant of allowedVariants) {
-        const canShow = await this.exposureService.canShow(userId, variant);
-        if (canShow) validVariants.push(variant);
+        if (await this.exposureService.canShow(userId, variant)) {
+          validVariants.push(variant);
+        }
       }
+    } catch (error: unknown) {
+      // Exposure limits are a safety boundary. If Redis cannot confirm them,
+      // do not use a fallback that could bypass a cap or cooldown.
+      this.logger.error(
+        `Could not verify promotion exposure for user ${userId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return { variant: null, score: 0 };
+    }
 
-      if (validVariants.length === 0) return { variant: null, score: 0 };
+    if (validVariants.length === 0) return { variant: null, score: 0 };
 
+    try {
       const response = await firstValueFrom(
         this.httpService.post(`${this.mlUrl}/api/predict-promotion`, {
           user_id: userId,
@@ -58,16 +76,32 @@ export class PromotionEngineService {
       );
 
       const best = response.data;
+      if (
+        !best ||
+        typeof best.variant !== 'string' ||
+        !validVariants.includes(best.variant) ||
+        typeof best.score !== 'number' ||
+        !Number.isFinite(best.score)
+      ) {
+        throw new Error('AI monetization returned an invalid promotion decision');
+      }
       this.logger.debug(
         `ML decision for user ${userId}: ${best.variant} (${best.score.toFixed(3)})`,
       );
-
       if (best.score < 0.3) return { variant: null, score: best.score };
       return { variant: best.variant, score: best.score };
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Error in ML decision: ${message}`);
-      return this.ruleBasedFallback(userId, allowedVariants);
+      this.logger.error(
+        `Error in ML decision: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      try {
+        return await this.ruleBasedFallback(userId, validVariants);
+      } catch (fallbackError: unknown) {
+        this.logger.error(
+          `Rule-based promotion fallback failed: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`,
+        );
+        return { variant: null, score: 0 };
+      }
     }
   }
 

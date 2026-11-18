@@ -62,7 +62,6 @@ import { BrandSentimentService } from 'src/seo/services/brand-sentiment.service'
 import { DiversityOptimizerService } from 'src/suggestion/optimization/diversity-optimizer.service';
 import { ConversionAnalyticsService } from 'src/ai-feedback/services/conversion-analytics.service';
 import { AiFeedback } from 'src/ai-feedback/entities/ai-feedback.entity';
-import { ProductService } from 'src/product/product.service';
 import { IntelligenceSnapshotController } from './controllers/intelligence/intelligence-snapshot.controller';
 import { AdminApiVerificationController } from './controllers/verification/admin-api-verification.controller';
 import { AdminApiModerationLiveController } from './controllers/moderation/admin-api-moderation-live.controller';
@@ -87,6 +86,8 @@ import { RelationStatusModule } from 'src/relation-status/relation-status.module
 import { NotificationModule } from 'src/notification/notification.module';
 import { AiImageModule } from 'src/ai-image/ai-image.module';
 import { UserDeviceModule } from 'src/user-device/user-device.module';
+import { ManualPromotionsModule } from 'src/manual-promotions/manual-promotions.module';
+import { ManualPromotionsController } from './controllers/growth/manual-promotions.controller';
 @Module({
   imports: [
     TypeOrmModule.forFeature([
@@ -141,6 +142,7 @@ import { UserDeviceModule } from 'src/user-device/user-device.module';
     BadgeModule,
     UserMetricsModule,
     UserPhonesModule,
+    ManualPromotionsModule,
   ],
   controllers: [
     AdminApiController,
@@ -158,6 +160,7 @@ import { UserDeviceModule } from 'src/user-device/user-device.module';
     SeoStudioController,
     SocialController,
     MonetizationController,
+    ManualPromotionsController,
     FeedSimulatorController,
     AlgorithmTuningController,
     FeedbackController,
@@ -179,7 +182,6 @@ import { UserDeviceModule } from 'src/user-device/user-device.module';
     BrandSentimentService,
     DiversityOptimizerService,
     ConversionAnalyticsService,
-    ProductService,
   ],
 })
 export class AdminApiModule {}

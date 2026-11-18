@@ -27,7 +27,7 @@ export interface FeedRelation {
 }
 
 export interface PromotionConfig {
-  variant: 'boost' | 'vip' | 'credit' | 'profile' | 'bundle';
+  variant: 'boost' | 'vip' | 'credit' | 'profile' | 'bundle' | 'manual_discount';
   title: string;
   subtitle: string;
   ctaText: string;
@@ -37,6 +37,11 @@ export interface PromotionConfig {
   promoImage: string;
   navigationTarget: string;
   navigationParams?: Record<string, any>;
+  manualPromotionId?: string;
+  bundleCode?: string;
+  discountLabel?: string;
+  basePriceRials?: number;
+  payablePriceRials?: number;
 }
 
 export interface FeedItem {

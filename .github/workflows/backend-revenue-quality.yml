@@ -2,7 +2,7 @@ name: Backend Revenue Quality
 
 on:
   push:
-    branches: [feature/reengagement-fcm-push]
+    branches: [feature/reengagement-fcm-push, feat/manual-promotions-end-to-end-2026-11-16]
     paths:
       - "src/notification/**"
       - "src/user-device/**"
@@ -15,9 +15,15 @@ on:
       - "package-lock.json"
       - ".env.example"
       - "docs/sql/**"
+      - "src/manual-promotions/**"
+      - "src/product/**"
+      - "src/admin-api/controllers/product/**"
+      - "src/payments/**"
+      - "src/feed/**"
+      - "src/admin-api/controllers/growth/**"
       - ".github/workflows/backend-revenue-quality.yml"
   pull_request:
-    branches: [main]
+    branches: [main, feature/notifications-socketio-final]
     paths:
       - "src/personality/**"
       - "src/feature-store/**"
@@ -44,6 +50,9 @@ on:
       - "python-ai/services/ai_moderation/**"
       - "python-ai/tests/test_ai_moderation_fail_closed.py"
       - "src/admin-api/controllers/revenue/**"
+      - "src/admin-api/controllers/growth/**"
+      - "src/manual-promotions/**"
+      - "docs/sql/**"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/backend-revenue-quality.yml"
@@ -99,6 +108,10 @@ jobs:
           moderation/moderation.service.spec.ts
           database.config.spec.ts
           feed/services/feed-promotion.service.spec.ts
+          payments/promotion-engine.service.spec.ts
+          payments/promotion-exposure.service.spec.ts
+          manual-promotions/manual-promotion.service.spec.ts
+          product/product.service.spec.ts
           notification/reengagement.service.spec.ts
           notification/orchestrator.notification.spec.ts
           notification/notification.gateway.spec.ts
@@ -111,6 +124,11 @@ jobs:
         env:
           MYSQL_INTEGRATION_URL: mysql://root:test-root@127.0.0.1:3306/yarsalam_test
         run: npm test -- --runInBand wallet.mysql.integration.spec.ts
+
+      - name: MySQL manual-promotion budget and idempotency integration tests
+        env:
+          MYSQL_INTEGRATION_URL: mysql://root:test-root@127.0.0.1:3306/yarsalam_test
+        run: npm test -- --runInBand manual-promotion.mysql.integration.spec.ts
 
       - name: Compile backend
         run: npm run build

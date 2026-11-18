@@ -20,6 +20,7 @@ export class PromotionExposureService {
     credits: 4,
     profile: 1,
     bundle: 2,
+    manual_discount: 2,
   };
 
   private readonly COOLDOWN_HOURS: Record<string, number> = {
@@ -29,6 +30,7 @@ export class PromotionExposureService {
     credits: 4,
     profile: 24,
     bundle: 48,
+    manual_discount: 6,
   };
 
   constructor(
@@ -67,11 +69,11 @@ export class PromotionExposureService {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`Error in canShow: ${message}`);
-      return true;
+      return false;
     }
   }
 
-  async trackImpression(userId: number, variant: string) {
+  async trackImpression(userId: number, variant: string): Promise<boolean> {
     try {
       const today = this.getTodayDate();
       const dailyKey = `promo:daily:${userId}:${variant}:${today}`;
@@ -79,9 +81,11 @@ export class PromotionExposureService {
       await this.redis.expire(dailyKey, 86400);
       const lastShownKey = `promo:last:${userId}:${variant}`;
       await this.redis.set(lastShownKey, Date.now().toString(), 'EX', 86400);
+      return true;
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`Error in trackImpression: ${message}`);
+      return false;
     }
   }
 
