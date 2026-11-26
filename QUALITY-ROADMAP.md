@@ -169,3 +169,10 @@
 2. اجرای تست integration در محیط کنترل‌شده برای پنج route و بررسی نمایش خطا در UI.
 3. بررسی مصرف‌کنندگان دیگر و سیاست error handling سایر سرویس‌های Safety؛ اصلاح آن‌ها جداگانه و با تست انجام شود.
 4. بررسی secret و connectivity در runtime بدون چاپ یا افشای مقدار کلید.
+
+
+### وضعیت PR و CI — تکمیل پیگیری
+
+- PR شمارهٔ 44 در Admin باز است و GitHub آن را از نظر mergeability در وضعیت `clean` گزارش کرده است: https://github.com/yarsalam/admin-panel/pull/44
+- برای head commit برابر `8ea27560bfe39ba6e528ead42a8f82ab47648ae5`، GitHub Actions workflow run مرتبط و commit status ثبت‌شده‌ای برنگرداند؛ بنابراین نتیجهٔ CI موجود نیست، نه اینکه تست‌ها موفق شده باشند.
+- PR هنوز merge نشده است. تا زمان اجرای Jest و بررسی runtime، ادغام آن را موفقیت تأییدشده تلقی نمی‌کنیم.
