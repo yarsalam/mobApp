@@ -12,6 +12,9 @@ on:
       - "package.json"
       - ".github/workflows/admin-safety-user-advice.yml"
 
+  push:
+    branches: [fix/admin-safety-ai-advice-errors]
+
 permissions:
   contents: read
 
