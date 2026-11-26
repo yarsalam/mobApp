@@ -98,3 +98,50 @@
 2. بررسی `UserApiClientModule` در Admin و تطبیق endpointهای مورد استفاده با Backend اصلی.
 3. ادامهٔ تطبیق APIهای Mobile و Admin، با تمرکز بر مسیرهای دارای اختلاف احتمالی.
 4. پس از تکمیل inventory، ساخت ماتریس نهایی و سپس اجرای تست‌های موجود.
+## یافته‌های بررسی ارتباط Admin Server ↔ Backend اصلی
+
+### معماری و پیکربندی — تأییدشده از کد
+
+- `UserApiClientModule` ثبت و export می‌کند `UserApiClientService` را؛ این سرویس در زمان ساخت، `USER_API_BASE_URL` و `USER_API_KEY` را با `getOrThrow` می‌خواند. نبود هرکدام باعث خطای startup در هر ماژولی می‌شود که این سرویس را inject کند.
+- `docker-compose.yml` پنل، `USER_API_BASE_URL=http://backend:5000` و `USER_API_KEY=your-super-secret-key` را تنظیم می‌کند.
+- شبکهٔ Compose پنل external با نام `yarsalam_network` است؛ شبکهٔ Compose Backend نیز با نام واقعی `yarsalam_network` ساخته می‌شود. نام DNS سرویس Backend در شبکه `backend` است؛ بنابراین URL تنظیم‌شده از نظر نام سرویس/پورت با Compose Backend سازگار است، مشروط به اینکه هر دو stack به همان شبکه متصل باشند.
+- کلاینت هدر `x-api-key` را می‌فرستد. `AdminApiGuard` در Backend مقدار این هدر را با `process.env.INTERNAL_API_KEY` مقایسه می‌کند. پس مقدار `USER_API_KEY` در Admin باید دقیقاً با `INTERNAL_API_KEY` در محیط Backend برابر باشد. فایل `.env` واقعی Backend در این ممیزی خوانده نشده و برابری مقدار runtime هنوز تأیید نشده است.
+
+### تطبیق endpointهای Safety — تأییدشده از کد
+
+| جریان Admin | مسیر upstream ارسال‌شده | مسیر Backend | نتیجهٔ بررسی کد |
+|---|---|---|---|
+| اطلاعات پایه/تصاویر/فعالیت/مالی/گزارش‌ها/لاگ moderation/AI advice کاربر | `/admin-api/safety/users/:id/...` | همین prefix و routeها در `SafetyUsersController` | منطبق برای مسیرهای خوانده‌شده |
+| Trust/devices/phones/personality/badges/metrics/notifications/relations/images actions | `/admin-api/safety/users/:id/...` | همین prefix و routeها در `SafetyUserDetailController` | منطبق برای مسیرهای خوانده‌شده |
+| فهرست/جزئیات/تحلیل/resolve تیکت | `/admin-api/safety/tickets...` | `SafetyTicketsController` | منطبق |
+| افزودن پیام تیکت | `/admin-api/safety/tickets/:id/messages` | `POST :id/messages` | منطبق |
+| تحلیل مجدد تیکت | همان `/messages` از Admin service | Backend همچنین `POST :id/re-analyze` دارد؛ هر دو در Backend به `TicketService.addMessage` ختم می‌شوند | مسیر مستقیم متفاوت است، ولی عملیات فعلی از endpoint پیام پشتیبانی استفاده می‌کند؛ نیازمند تست معنایی |
+| عملیات moderation flagged/approve/reject | `/admin-api/safety/moderation/...` | `SafetyModerationController` | منطبق برای مسیرهای خوانده‌شده |
+| گزارش‌ها: list/confirm/reject/block/unblock | `/reports...` | `SafetyReportsController` فقط زیر `/admin-api/safety/reports...` route دارد؛ جست‌وجوی کد برای `@Controller('reports')` نتیجه‌ای نداد | **ناسازگاری قطعی مسیر در source** |
+
+### اشکال‌های مهم و ریسک‌ها
+
+1. **ناسازگاری مسیر گزارش‌ها (High):** `apps/server/src/safety/services/reports.service.ts` درخواست‌ها را به `/reports` و `/reports/:id/...` می‌فرستد، اما Backend مسیرها را زیر `/admin-api/safety/reports` ثبت کرده است. در نتیجه فهرست گزارش‌ها در Admin به‌دلیل `.catch(() => [])` احتمالاً به‌صورت فهرست خالی نمایش داده می‌شود و عملیات confirm/reject/block/unblock احتمالاً خطای upstream می‌گیرند. این مورد از روی source تأیید شده؛ هنوز با اجرای runtime بازتولید نشده است.
+2. **خطای upstream پنهان می‌شود (High):** چند متد خواندنی در `UsersService`، `TicketsService`، `ReportsService` و `UserDetailService` خطا را به `null` یا `[]` تبدیل می‌کنند. بنابراین قطعی شبکه، 401 ناشی از API key و 404 مسیر می‌تواند در UI شبیه «داده‌ای وجود ندارد» دیده شود. endpoint تجمیعی `get360` نیز با `Promise.allSettled` خطاهای هر بخش را به null تبدیل می‌کند.
+3. **کلید داخلی باید هماهنگ باشد (High):** Compose Admin مقدار نمونهٔ `your-super-secret-key` دارد، درحالی‌که Backend از `INTERNAL_API_KEY` در `.env` استفاده می‌کند. مقدار واقعی `.env` قابل مشاهده نیست؛ باید برابری دقیق دو مقدار در محیط اجرا بررسی شود و کلید نمونه هرگز برای production استفاده نشود.
+4. **Verification از مسیر متفاوت عبور می‌کند:** Admin `UsersService.verifyFace` مستقیماً به `AI_VERIFICATION_URL` (پیش‌فرض `http://ai_verification:8017`) درخواست می‌زند؛ endpoint متناظر Backend در `SafetyUsersController` فعلاً placeholder با پاسخ ثابت `verified:false` است. پس جریان فعلی Admin متکی به دسترسی مستقیم Admin container به سرویس Python است، نه آن endpoint Backend. این دو مسیر نباید با هم اشتباه گرفته شوند.
+5. **گزارش‌گیری moderation دو منبع دارد:** `ModerationService.getModerationStats` مستقیماً `/stats` سرویس Python را می‌خواند، درحالی‌که Backend نیز endpoint `/admin-api/safety/moderation/stats` برای شمارش تصاویر دارد. لازم است مشخص شود UI دقیقاً کدام قرارداد/معنای آماری را انتظار دارد؛ فعلاً این را اختلاف قطعی نمی‌نامیم.
+
+### نتیجهٔ این مرحله
+
+- ارتباط شبکه‌ای و URL پایه در Compose از نظر نام شبکه، نام سرویس و پورت با تعریف دو Compose سازگار است؛ اما اتصال واقعی runtime آزمایش نشده است.
+- قرارداد هدر API key در کد روشن است، اما برابری مقدار secrets در محیط واقعی بررسی نشده است.
+- اکثر endpointهای Safety که خوانده شدند در مسیر Admin-to-Backend منطبق‌اند.
+- یک ناسازگاری قطعی مسیر در Reports شناسایی شد و باید پیش از اعلام سلامت کامل Admin اصلاح و با تست integration پوشش داده شود.
+- هیچ فایلی در کد اجرایی تغییر نکرده و هیچ تست runtime اجرا نشده است.
+
+## آخرین نقطهٔ توقف — پس از بررسی UserApiClient
+
+بررسی `UserApiClientService`، ماژول Safety، سرویس‌های Admin، Controllerهای Admin و Controllerهای متناظر Backend انجام شد. مهم‌ترین یافته، route mismatch در Reports است؛ ریسک دوم، پنهان‌سازی خطاهای upstream به‌صورت آرایه/مقدار خالی است. هماهنگی secret و اتصال واقعی Docker هنوز نیازمند بررسی محیط اجراست.
+
+## اقدام بعدی
+
+1. ابتدا ناسازگاری مسیر Reports را در سطح طراحی ثبت و با یک تست contract/integration قابل بازتولید کنیم؛ قبل از تغییر کد، دامنهٔ اثر همهٔ consumerهای `/reports` را بررسی کنیم.
+2. مسیرهای frontend و Admin façade برای گزارش‌ها را کامل بررسی کنیم و سپس اصلاح هماهنگ دو طرف را فقط با مجوز کاربر انجام دهیم.
+3. در محیط اجرا، بدون افشای مقدار secret، فقط وجود و برابری `USER_API_KEY` و `INTERNAL_API_KEY` و دسترسی DNS/HTTP از Admin container به Backend را بررسی کنیم.
+4. برای خطاهای upstream، قرارداد پاسخ خطا/observability تعریف کنیم تا خطای اتصال با دادهٔ خالی اشتباه نشود.
