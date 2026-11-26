@@ -1,0 +1,30 @@
+name: Admin Safety User Advice Contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/admin-api/controllers/safety/safety-users.controller.ts"
+      - "src/admin-api/controllers/safety/safety-users.controller.spec.ts"
+      - "src/admin-api/controllers/safety/safety-user-advice.ts"
+      - "package.json"
+      - ".github/workflows/admin-safety-user-advice.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  user-advice-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install backend dependencies
+        run: npm install --legacy-peer-deps --no-package-lock
+      - name: Run admin safety controller contract tests
+        run: npm test -- --runInBand admin-api/controllers/safety/safety-users.controller.spec.ts
+      - name: Build NestJS backend
+        run: npm run build
