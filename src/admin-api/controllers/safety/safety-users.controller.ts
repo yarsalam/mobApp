@@ -1,6 +1,8 @@
 import {
   Controller,
   Get,
+  NotFoundException,
+  ServiceUnavailableException,
   Post,
   Param,
   Body,
@@ -71,7 +73,7 @@ export class SafetyUsersController {
       where: { id },
       relations: ['userImages'],
     });
-    if (!user) throw new Error('User not found');
+    if (!user) throw new NotFoundException('User not found');
     return user;
   }
 
@@ -152,8 +154,8 @@ export class SafetyUsersController {
         .join(' — ');
 
       return { tips, personality_summary };
-    } catch (error: any) {
-      return { tips: [], personality_summary: null };
+    } catch {
+      throw new ServiceUnavailableException('AI advice is temporarily unavailable');
     }
   }
 
