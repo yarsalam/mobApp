@@ -42,6 +42,12 @@ export class CryptoProvider {
     if (!Number.isSafeInteger(amountCents) || amountCents <= 0) {
       throw new BadRequestException('amountCents must be a positive safe integer');
     }
+    const tokenContract = process.env.USDT_TRC20_CONTRACT?.trim() ?? '';
+    if (!/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(tokenContract)) {
+      throw new ServiceUnavailableException(
+        'USDT TRC20 token contract is not configured; crypto deposits are unavailable.',
+      );
+    }
     if (!/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(this.WALLET_ADDRESS_TRC20)) {
       throw new ServiceUnavailableException(
         'USDT TRC20 deposits are not configured. Contact support or use another payment method.',
