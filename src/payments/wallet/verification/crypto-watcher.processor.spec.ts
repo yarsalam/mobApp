@@ -178,7 +178,7 @@ describe('CryptoWatcherProcessor TRC20 transfer validation', () => {
 
   it('does not auto-settle legacy payments without a conversion snapshot', async () => {
     const h = createHarness('5000000');
-    h.payment.metadata = {};
+    h.payment.metadata = undefined as any;
 
     try {
       await expect(
