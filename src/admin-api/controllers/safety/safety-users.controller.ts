@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  NotFoundException,
   Post,
   Param,
   Body,
@@ -24,6 +25,7 @@ import { ProfileVisitor } from '../../../profile-visitors/entities/profile-visit
 import { Interaction } from '../../../interaction/entities/interaction.entity';
 import { Message } from '../../../message/entities/message.entity';
 import { UserImage } from '../../../user_images/entities/user_image.entity';
+import { loadSafetyUserAdvice } from './safety-user-advice';
 
 @Controller('admin-api/safety/users')
 @UseGuards(AdminApiGuard)
@@ -71,7 +73,7 @@ export class SafetyUsersController {
       where: { id },
       relations: ['userImages'],
     });
-    if (!user) throw new Error('User not found');
+    if (!user) throw new NotFoundException('User not found');
     return user;
   }
 
@@ -120,43 +122,9 @@ export class SafetyUsersController {
   // getAdvice خروجی کامل آنالیز می‌دهد — باید به فرمت { tips, personality_summary } تبدیل شود
 
   @Get(':id/ai-advice')
-  async getAiAdvice(@Param('id') id: number) {
-    try {
-      const advice = await this.aiAssistantService.getAdvice(id);
-
-      // advice.topProblems → tips (راه‌حل‌های مشکلات)
-      const tips: string[] = (advice?.topProblems ?? []).map(
-        (p: any) => `${p.description} — ${p.solution}`,
-      );
-
-      // advice.summary → personality_summary
-      const phase = advice?.summary?.currentPhase ?? 'cold';
-      const phaseLabel =
-        phase === 'cold' ? 'سرد' : phase === 'warm' ? 'گرم' : 'داغ';
-
-      const problemsCount = advice?.summary?.problemsCount ?? 0;
-      const hasCritical = advice?.summary?.hasCriticalProblem ?? false;
-
-      const personality_summary = [
-        `فاز فعلی کاربر: ${phaseLabel}`,
-        hasCritical
-          ? '⚠️ مشکل بحرانی در پروفایل شناسایی شده'
-          : problemsCount > 0
-            ? `${problemsCount} مشکل شناسایی‌شده در پروفایل`
-            : '✅ پروفایل بدون مشکل مهم',
-        advice?.optimizationPlan?.estimatedTimeToNextPhase
-          ? `زمان تخمینی به فاز بعدی: ${advice.optimizationPlan.estimatedTimeToNextPhase}`
-          : '',
-      ]
-        .filter(Boolean)
-        .join(' — ');
-
-      return { tips, personality_summary };
-    } catch (error: any) {
-      return { tips: [], personality_summary: null };
-    }
+  getAiAdvice(@Param('id') id: number) {
+    return loadSafetyUserAdvice(id, this.aiAssistantService);
   }
-
   @Post(':id/re-analyze')
   async reAnalyze(
     @Param('id') id: number,
