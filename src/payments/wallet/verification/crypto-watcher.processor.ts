@@ -8,7 +8,7 @@ import { firstValueFrom } from 'rxjs';
 import { EntitlementService } from '../entitlement/entitlement.service';
 import { Payment } from 'src/payments/entities/payment.entity';
 import { WalletService } from '../wallet.service';
-import { isCryptoAutoSettlementEnabled } from '../crypto-rate';
+import { isCryptoAutoSettlementEnabled, usdtRialsToCents } from '../crypto-rate';
 
 /**
  * این processor دو job می‌گیرد:
@@ -131,20 +131,25 @@ export class CryptoWatcherProcessor extends WorkerHost {
       const requestedAmountRials = Number(payment.metadata?.requestedAmountRials);
       const snapshottedRate = Number(payment.metadata?.rateRialsPerUsdt);
       if (
-        !(Number.isSafeInteger(requestedAmountRials) && requestedAmountRials > 0) &&
-        !(Number.isSafeInteger(snapshottedRate) && snapshottedRate > 0)
+        !Number.isSafeInteger(requestedAmountRials) ||
+        requestedAmountRials <= 0 ||
+        !Number.isSafeInteger(snapshottedRate) ||
+        snapshottedRate <= 0
       ) {
         throw new Error(
-          'Crypto payment has no conversion-rate snapshot; manual reconciliation is required.',
+          'Crypto payment has an incomplete conversion-rate snapshot; manual reconciliation is required.',
         );
       }
-      const amountRials =
-        Number.isSafeInteger(requestedAmountRials) && requestedAmountRials > 0
-          ? requestedAmountRials
-          : WalletService.usdtCentsToRials(
-              Number(payment.amount),
-              snapshottedRate,
-            );
+      const expectedAmountCents = usdtRialsToCents(
+        requestedAmountRials,
+        snapshottedRate,
+      );
+      if (expectedAmountCents !== Number(payment.amount)) {
+        throw new Error(
+          'Crypto payment amount does not match its conversion snapshot; manual reconciliation is required.',
+        );
+      }
+      const amountRials = requestedAmountRials;
 
       if (payment.productCode === 'wallet_charge') {
         await this.walletService.creditOnce(
