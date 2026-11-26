@@ -270,3 +270,26 @@
 - PR #45 باز است؛ CI در آخرین مشاهده در مرحلهٔ نصب وابستگی‌ها بود. پس از تکمیل، نتیجهٔ Jest و build و در صورت شکست، log دقیق بررسی خواهد شد. ادغام فقط پس از CI سبز انجام می‌شود.
 - سپس برای `UserDetailService.get360` قرارداد partial-failure با وضعیت صریح هر بخش و UI بررسی می‌شود؛ بعد error masking سرویس‌های Tickets/Moderation/Dashboard/Users با تست مستقل اصلاح خواهد شد.
 - مسیر runtime بین Admin و Backend، secret واقعی و رفتار Docker هنوز آزمایش نشده‌اند؛ هیچ ادعای runtime یا deployment مطرح نیست.
+
+
+### نتیجهٔ نهایی PR شمارهٔ 45 — Risk fail-closed (2026-11-26)
+
+- GitHub Actions run `45805447096` با وضعیت `completed / success` پایان یافت.
+- هر سه مرحلهٔ اصلی موفق شدند: نصب وابستگی‌ها، اجرای تست‌های `RiskService fail-closed` و build سرور Admin.
+- PR شمارهٔ 45 با روش squash ادغام شد: https://github.com/yarsalam/admin-panel/pull/45
+- merge commit: `22dbc2ea6869804cf8e12d33c1080feaa11dbe9d`.
+- پس از ادغام، فایل سرویس، تست و workflow مستقیماً از `main` خوانده شدند؛ محتوای اصلاح‌شده در main تأیید شد.
+- نتیجه: **RiskService fail-open اصلاح و ادغام شد؛ تست contract و build در CI موفق‌اند.** این نتیجه به معنی آزمون runtime/Docker یا deployment نیست.
+
+### بررسی دقیق‌تر Reports و مسیر User 360
+
+- مسیرهای frontend Reports به Controller façade پنل و سپس سرویس upstream اصلاح‌شده منطبق‌اند؛ فایل‌های `useReports.ts` و `ReportsTab.tsx` بررسی شدند.
+- مسیر User 360 از frontend به `GET /safety/users/:id/360` می‌رسد. در backend پنل، `UserDetailService.get360` برای ۱۵ منبع از `Promise.allSettled` استفاده می‌کند و rejection را به `null` تبدیل می‌کند. در کنار catchهای fallback متدهای جزئی، این رفتار قابلیت تشخیص خطای هر بخش را از بین می‌برد.
+- صفحهٔ User 360 فقط در صورت نبود profile خطای کلی نشان می‌دهد؛ سایر بخش‌ها ممکن است با مقدار null/خالی به تب‌ها برسند. در `ReportsTab` نیز مقداردهی پیش‌فرض `reports = []` فقط برای undefined است و null را پوشش نمی‌دهد؛ بنابراین failure جزئی می‌تواند علاوه بر پنهان شدن، باعث خطای رندر شود. این یک نقص source-level است و runtime آن هنوز مشاهده نشده است.
+
+### آخرین نقطهٔ توقف
+
+- دو اصلاح Safety در Admin به main رسیده‌اند: Reports route contract (PR #44) و Risk fail-closed (PR #45). CI هر دو اصلاح مربوطه موفق بوده است.
+- مهم‌ترین شکاف بعدی، قرارداد partial failure در User 360 و خطاهای پنهان‌شده در Users/Tickets/Moderation/Dashboard است.
+- اقدام بعدی: طراحی پاسخ بخش‌بندی‌شده با وضعیت صریح هر منبع در User 360، اصلاح UI برای نمایش خطای هر تب، و تست قرارداد برای شکست‌های جزئی؛ سپس بررسی جداگانهٔ fallbackهای Tickets/Moderation/Dashboard/Users.
+- runtime integration بین Admin و Backend، شبکهٔ Docker، secrets و رفتار واقعی سرویس‌ها همچنان **بررسی‌نشده** هستند.
