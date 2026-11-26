@@ -430,3 +430,14 @@
 - علت خطای build قبلی با مستند رسمی Qdrant تأیید شد: از نسخهٔ REST client 1.19 به بعد search حذف و query جایگزین شده است. مرجع: https://github.com/qdrant/qdrant-js/blob/master/packages/js-client-rest/CHANGELOG.md
 - فراخوانی‌های retrieval ساختاریافته و semantic به query مهاجرت کرده و مصرف result.points جایگزین آرایهٔ مستقیم شده است.
 - Runtime image validation برای commit نهایی شاخه با run 45812165948 در حال اجراست؛ scan و ادغام هنوز تأیید نشده‌اند.
+
+
+### تکمیل Backend AI Advice و Qdrant — PR #35
+
+- PR #34 به‌دلیل قدیمی شدن base و ناسازگاری merge بسته شد؛ PR #35 بر مبنای main جاری ساخته شد.
+- PR #35 ادغام شد؛ merge commit: 3b477b1abd97723fd0b8ff5cbb9917c4ec59f294.
+- AI Advice در زمان شکست سرویس به HTTP 503 تبدیل می‌شود و دیگر پاسخ موفق خالی تولید نمی‌کند؛ نبود پروفایل کاربر نیز HTTP 404 است.
+- هر دو مسیر Qdrant (structural و semantic) از search به query و result.points مهاجرت کردند.
+- CI روی head نهایی PR: focused Jest tests موفق، NestJS build موفق، runtime image build موفق، vulnerability scan موفق و image candidate artifact آپلود شد.
+- workflow Backend runtime image اکنون push به شاخهٔ ممیزی را نیز برای build/scan می‌پذیرد؛ مراحل انتشار latest و image immutable همچنان فقط روی main مجازند.
+- ادغام PR به معنی استقرار یا اتصال end-to-end به سرویس‌های AI و دیتابیس نیست.
