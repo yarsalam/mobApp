@@ -6,6 +6,9 @@ on:
     paths:
       - "src/admin-api/controllers/safety/safety-users.controller.ts"
       - "src/admin-api/controllers/safety/safety-users.controller.spec.ts"
+      - "src/admin-api/controllers/safety/safety-user-advice.ts"
+      - "src/suggestion/retrieval/vector-search.service.ts"
+      - "src/suggestion/retrieval/vector-search.service.spec.ts"
       - "package.json"
       - ".github/workflows/admin-safety-user-advice.yml"
 
@@ -24,6 +27,6 @@ jobs:
       - name: Install backend dependencies
         run: npm install --legacy-peer-deps --no-package-lock
       - name: Run admin safety controller contract tests
-        run: npm test -- --runInBand admin-api/controllers/safety/safety-users.controller.spec.ts
+        run: npm test -- --runInBand admin-api/controllers/safety/safety-users.controller.spec.ts suggestion/retrieval/vector-search.service.spec.ts
       - name: Build NestJS backend
         run: npm run build
