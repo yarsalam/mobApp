@@ -460,3 +460,37 @@
 - CI روی head فعلی PR: تست‌های bootstrap/CORS/JWT موفق؛ Admin server build موفق؛ Compose config validation موفق؛ ساخت و اجرای stack ایزوله در حال انجام است و هنوز login/CORS smoke و image scan نهایی نشده‌اند.
 - محدودیت schema: مخزن Admin هیچ TypeORM migration ندارد. CI فقط روی دیتابیس disposable با DB_SYNC=true تست می‌کند. Production compose به‌صورت پیش‌فرض DB_SYNC=false دارد؛ پیش از استقرار پایدار باید migration اولیه یا برنامهٔ امن bootstrap schema مشخص شود.
 - برای staging یک دیتابیس تازه و جدا می‌توان DB_SYNC=true را موقتاً به‌کار برد؛ برای دیتابیس موجود یا persistent نباید بدون backup و برنامهٔ migration فعال شود.
+
+
+
+## ممیزی تکمیلی Payments و مانع امنیتی Admin — 2026-11-26
+
+### Crypto settlement — نقص snapshot پیدا و اصلاح شد
+
+- شاخهٔ Backend: `fix/payments-crypto-token-validation`
+- commit اصلاح: `412d9ed1b719f864354276718c44e8cd7da9de7a`
+- در بازبینی watcher مشخص شد شرط اعتبارسنجی snapshot با عملگر AND نوشته شده بود؛ در نتیجه اگر فقط یکی از دو مقدار `requestedAmountRials` یا `rateRialsPerUsdt` معتبر بود، snapshot ناقص می‌توانست پذیرفته شود.
+- شرط به الزام مستقل هر دو مقدار تغییر کرد؛ علاوه بر آن، مقدار USDT cents دوباره از مبلغ ریالی و نرخ snapshot محاسبه می‌شود و باید دقیقاً با مبلغ ثبت‌شدهٔ Payment برابر باشد. مغایرت به‌جای credit خودکار به manual reconciliation می‌رود.
+- workflow اختصاصی پس از commit جدید در حال اجراست: run `45820300785`. تا پایان آن، نتیجهٔ تست این اصلاح تأییدشده محسوب نمی‌شود.
+- این تغییر به‌تنهایی آمادگی پرداخت کریپتو برای production را اثبات نمی‌کند؛ attribution اختصاصی، replay/idempotency در سطح تراکنش بلاک‌چین، و تست واقعی TronGrid/کیف‌پول همچنان نیازمند بررسی‌اند. Auto-settlement production باید تا رفع این موارد خاموش بماند.
+
+### Admin Production Stack — مانع scan هنوز باز است
+
+- PR #50 همچنان باز و ادغام‌نشده است: https://github.com/yarsalam/admin-panel/pull/50
+- run `45815915785` با شکست پایان یافت؛ stack smoke انجام شد اما مرحلهٔ vulnerability scan باعث fail شدن job شد.
+- گزارش اسکن: 33 مورد HIGH و 1 مورد CRITICAL. از جمله:
+  - `proxy-addr 2.0.7` — CRITICAL، نسخهٔ اصلاحی گزارش‌شده 2.0.8.
+  - `sigstore 3.1.0` — HIGH، نسخهٔ اصلاحی گزارش‌شده 4.1.1.
+  - `multer` — چندین DoS، نسخهٔ اصلاحی گزارش‌شده 2.5.0.
+  - `nodemailer 8.0.11` — آسیب‌پذیری‌های SSRF/file read و DoS؛ نسخه‌های اصلاحی در گزارش 9.0.1 و 9.1.0/10.0.6 بسته به advisory.
+  - `pacote 19.0.2/20.0.1` — DoS، نسخهٔ اصلاحی 21.5.1.
+  - `picomatch 4.0.3` — ReDoS؛ نسخهٔ اصلاحی 4.0.4.
+- lockfile بخشی از overrideهای قبلی را دارد، اما scan تصویر نهایی همچنان نسخه‌های آسیب‌پذیر را شناسایی کرده است؛ صرف تغییر override بدون بازتولید lockfile و بررسی dependency tree کافی نیست.
+- PR #50 تا رفع یافته‌های HIGH/CRITICAL و سبز شدن مجدد کل CI ادغام نمی‌شود.
+
+### وضعیت مرحله
+
+- Crypto: یک نقص منطقی در اعتبارسنجی snapshot اصلاح شده؛ CI commit اصلاحی در حال اجرا.
+- Admin deployment: source hardening موجود است، اما vulnerability gate شکست خورده و PR قابل ادغام نیست.
+- Runtime end-to-end روی VPS و اتصال واقعی Admin ↔ Backend ↔ DB/Redis/AI هنوز اجرا نشده است.
+- اقدام بعدی: تکمیل run `45820300785`، سپس اصلاح dependency tree/lockfile در Admin با ارتقای هدفمند و تست سازگاری؛ پس از آن ادامهٔ تست‌های contract و ادغام فقط با CI سبز.
