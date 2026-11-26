@@ -176,3 +176,12 @@
 - PR شمارهٔ 44 در Admin باز است و GitHub آن را از نظر mergeability در وضعیت `clean` گزارش کرده است: https://github.com/yarsalam/admin-panel/pull/44
 - برای head commit برابر `8ea27560bfe39ba6e528ead42a8f82ab47648ae5`، GitHub Actions workflow run مرتبط و commit status ثبت‌شده‌ای برنگرداند؛ بنابراین نتیجهٔ CI موجود نیست، نه اینکه تست‌ها موفق شده باشند.
 - PR هنوز merge نشده است. تا زمان اجرای Jest و بررسی runtime، ادغام آن را موفقیت تأییدشده تلقی نمی‌کنیم.
+
+
+### پیگیری اجرای تست PR Reports — 2026-11-26
+
+- در شاخهٔ Admin workflow جدید `.github/workflows/safety-reports-contract.yml` اضافه شد تا روی PRهای مرتبط، نصب وابستگی‌ها، تست contract گزارش‌ها و build سرویس NestJS اجرا شوند.
+- Commit workflow: `76714327bf0b8e0bbaddb185a646daf3ca19718c`.
+- اجرای GitHub Actions با شناسهٔ `45794536084` شروع شده است: https://github.com/yarsalam/admin-panel/actions/runs/45794536084
+- آخرین مشاهدهٔ job: در حال اجرا در مرحلهٔ `actions/setup-node@v4`؛ نصب وابستگی‌ها، Jest و build هنوز شروع نشده‌اند. بنابراین هنوز نتیجهٔ تست یا build نداریم.
+- runtime integration از محیط Docker کاربر در دسترس این بررسی نیست و باید بعد از نتیجهٔ CI، با دسترسی به محیط واقعی انجام شود.
