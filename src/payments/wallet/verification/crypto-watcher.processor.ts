@@ -125,14 +125,21 @@ export class CryptoWatcherProcessor extends WorkerHost {
       // Payment.amount is stored in USDT cents, while the wallet balance is IRT rials.
       const requestedAmountRials = Number(payment.metadata?.requestedAmountRials);
       const snapshottedRate = Number(payment.metadata?.rateRialsPerUsdt);
-      const amountRials = Number.isSafeInteger(requestedAmountRials) && requestedAmountRials > 0
-        ? requestedAmountRials
-        : WalletService.usdtCentsToRials(
-            Number(payment.amount),
-            Number.isSafeInteger(snapshottedRate) && snapshottedRate > 0
-              ? snapshottedRate
-              : undefined,
-          );
+      if (
+        !(Number.isSafeInteger(requestedAmountRials) && requestedAmountRials > 0) &&
+        !(Number.isSafeInteger(snapshottedRate) && snapshottedRate > 0)
+      ) {
+        throw new Error(
+          'Crypto payment has no conversion-rate snapshot; manual reconciliation is required.',
+        );
+      }
+      const amountRials =
+        Number.isSafeInteger(requestedAmountRials) && requestedAmountRials > 0
+          ? requestedAmountRials
+          : WalletService.usdtCentsToRials(
+              Number(payment.amount),
+              snapshottedRate,
+            );
 
       if (payment.productCode === 'wallet_charge') {
         await this.walletService.creditOnce(
