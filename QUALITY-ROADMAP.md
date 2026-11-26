@@ -365,3 +365,48 @@
 - تست‌های GitHub Actions و container smoke، فقط همان build و سناریوهای داخل workflow را تأیید می‌کنند.
 - ارتباط end-to-end بین Admin، Backend اصلی، MySQL/Redis و سرویس‌های AI با پیکربندی واقعی هنوز اثبات نشده است.
 - تست end-to-end روی VPS پس از استقرار کنترل‌شده انجام می‌شود؛ secrets باید فقط در محیط سرور تنظیم شوند و هرگز در log/چت منتشر نشوند.
+
+
+## به‌روزرسانی ممیزی Safety و CI — 2026-11-26
+
+### ادغام اصلاحات Admin
+
+- PR #46 — Tickets: ادغام‌شده با commit 5097d2456c5fcce4dc1ddbd1179f4b47b8740377. تست اختصاصی، build سرور و Runtime Image/Smoke در CI موفق شدند.
+- PR #48 — Moderation: ادغام‌شده با commit 2ad70573cea16ab39c82f8bf3733cff8d47710ff. خطاهای خواندن flagged images/messages دیگر به فهرست خالی تبدیل نمی‌شوند؛ UI خطای مستقل و retry دارد. تست contract، server build، web type-check و runtime image validation در CI موفق شدند.
+- PR #47 — User 360: هنوز باز است. head فعلی 41d3c553388c69c5c5ffb0902ef84814e58ad7a7. تست اختصاصی User 360، تست‌های UsersService، server build، web type-check و Revenue Admin Validation موفق‌اند. Runtime Image Validation در آخرین بررسی هنوز در مرحلهٔ build بود؛ ادغام فقط پس از تکمیل آن انجام می‌شود.
+
+### دامنهٔ User 360 و UsersService
+
+- تمام ۱۵ loader aggregate دیگر خطاهای upstream را در متدهای جزئی پنهان نمی‌کنند.
+- پاسخ aggregate داده‌های موفق را نگه می‌دارد، collectionهای شکست‌خورده را با fallback نوع‌دار امن می‌کند و فیلد _errors را برای تشخیص بخش‌های ناموفق برمی‌گرداند.
+- UI برای دادهٔ ناقص هشدار می‌دهد و failure را از «بدون داده» تفکیک می‌کند.
+- مسیرهای مستقیم UsersService برای profile/images/activity/financial/reports/moderation-logs نیز دیگر fallback خاموش ندارند؛ مسیرهای re-analysis و face verification نیز خطا را propagate می‌کنند.
+- تست‌های focused برای خطای User 360، empty collection واقعی، profile/images و AI actions اضافه شده‌اند.
+
+### Moderation
+
+- PR #48 اصلاح read contract برای فهرست تصاویر و پیام‌های پرچم‌دار را ادغام کرد.
+- عملیات manual-check، batch-check، آمار مستقیم AI و پاک‌سازی cache هنوز consumer/runtime مستقل ندارند و جداگانه بررسی می‌شوند؛ در این مرحله نباید سلامت آن‌ها را تأییدشده فرض کرد.
+
+### Backend AI Advice و مانع Build
+
+- PR #34 در مخزن Backend: https://github.com/yarsalam/mobApp/pull/34
+- هدف: خطای AI Advice به HTTP 503 تبدیل شود، نه پاسخ موفق خالی؛ نبود کاربر نیز 404 باشد.
+- تست focused helper loadSafetyUserAdvice با دو تست موفق شد.
+- CI build اولیه به مانع مستقل و واقعی رسید: نسخهٔ محدودهٔ ^1.18.0 از @qdrant/js-client-rest می‌تواند به نسخه‌های جدید برسد؛ در نسخهٔ 1.19 متد REST search حذف شده و باید از query استفاده شود. کد دو فراخوانی search داشت.
+- در همان شاخه، هر دو مسیر Qdrant به query و پاسخ result.points مهاجرت داده شدند و تست قرارداد برای retrieval ساختاریافته و semantic اضافه شد.
+- این تغییرات در حال اعتبارسنجی مجدد هستند؛ تا سبز شدن تست و build، PR #34 ادغام نمی‌شود.
+
+### محدودهٔ Runtime و یکپارچگی
+
+- CIهای Admin شامل build تصویر runtime، vulnerability scan و smoke test سرور/مسیر login هستند؛ این‌ها جایگزین اتصال واقعی به Backend، MySQL، Redis و سرویس‌های AI نیستند.
+- Backend/Admin live end-to-end هنوز روی سرور واقعی اجرا نشده است.
+- پس از ادغام PRهای Safety و سبز شدن Buildهای Backend، آماده‌سازی VPS و اجرای تست‌های واقعی end-to-end شروع می‌شود؛ secrets فقط روی VPS و خارج از GitHub source/log تنظیم می‌شوند.
+
+### آخرین نقطهٔ توقف و اقدام بعدی
+
+1. تکمیل Runtime Image Validation برای PR #47 و ادغام آن در صورت موفقیت.
+2. تکمیل workflow جدید PR #34؛ رفع هر خطای تازهٔ build/test و ادغام فقط پس از موفقیت همهٔ checks.
+3. تکمیل audit منبع‌به‌مصرف‌کننده برای مسیرهای باقی‌ماندهٔ Moderation و legacy Dashboard.
+4. پس از بسته‌شدن Safety، شروع ممیزی Payments/Wallet/VIP/Boost و سپس احراز هویت.
+5. اجرای تست یکپارچهٔ واقعی پس از استقرار کنترل‌شده روی VPS.
