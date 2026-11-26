@@ -13,7 +13,7 @@ on:
       - ".github/workflows/admin-safety-user-advice.yml"
 
   push:
-    branches: [fix/admin-safety-ai-advice-errors]
+    branches: [fix/admin-safety-ai-advice-errors-v2]
 
 permissions:
   contents: read
