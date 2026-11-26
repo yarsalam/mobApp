@@ -185,3 +185,32 @@
 - اجرای GitHub Actions با شناسهٔ `45794536084` شروع شده است: https://github.com/yarsalam/admin-panel/actions/runs/45794536084
 - آخرین مشاهدهٔ job: در حال اجرا در مرحلهٔ `actions/setup-node@v4`؛ نصب وابستگی‌ها، Jest و build هنوز شروع نشده‌اند. بنابراین هنوز نتیجهٔ تست یا build نداریم.
 - runtime integration از محیط Docker کاربر در دسترس این بررسی نیست و باید بعد از نتیجهٔ CI، با دسترسی به محیط واقعی انجام شود.
+
+
+### نتیجهٔ قطعی CI برای Reports — 2026-11-26
+
+- اجرای workflow با شناسهٔ `45794536084` در مخزن Admin اکنون `completed / success` است.
+- Job `reports-contract` با شناسهٔ `139821697581` موفق شد.
+- تمام stepهای job از جمله نصب وابستگی‌ها، اجرای `ReportsService API contract` tests و `Build admin server` با نتیجهٔ `success` ثبت شده‌اند.
+- بنابراین **تست واحد contract و build سرور Admin واقعاً در GitHub Actions اجرا و پاس شده‌اند**. این نتیجه فقط همان تست و build را پوشش می‌دهد و runtime integration را ثابت نمی‌کند.
+- اجرای CI: https://github.com/yarsalam/admin-panel/actions/runs/45794536084
+
+### بازبینی تکمیلی مسیر Reports پس از CI
+
+- Controller façade پنل در `apps/server/src/safety/controllers/reports.controller.ts` با prefix `safety/reports`، Guard احراز هویت JWT پنل، و routeهای GET/confirm/reject/block/unblock خوانده شد.
+- این Controller متدهای `ReportsService` را فراخوانی می‌کند؛ پس اصلاح prefix در سرویس upstream، مسیر façade پنل را تغییر نداده و قرارداد frontend-facing موجود را حفظ می‌کند.
+- Controller واقعی Backend در `src/admin-api/controllers/safety/safety-reports.controller.ts` دارای prefix `admin-api/safety/reports` و Guard از نوع `AdminApiGuard` است. متدهای list، confirm، reject، block و unblock با مسیرهای اصلاح‌شدهٔ Admin تطبیق دارند.
+- در نتیجه، برای پنج عملیات Reports، زنجیرهٔ source-level از Controller پنل تا سرویس upstream و Controller Backend بررسی شده است.
+- نکتهٔ باقی‌مانده: تست موجود mock-based است و به HTTP واقعی، احراز هویت API key، DB یا شبکهٔ Docker وصل نمی‌شود. رفتار کامل داده و مجوزها هنوز runtime-verified نیست.
+- PR شمارهٔ 44 همچنان جدا از main است و merge نشده است.
+
+### آخرین نقطهٔ توقف — پس از CI Reports
+
+اصلاح Reports در شاخهٔ PR با تست contract و build موفق اعتبارسنجی شده و زنجیرهٔ Controller پنل تا Controller Backend نیز از روی source بازبینی شده است. موارد باقی‌مانده برای این جریان عبارت‌اند از آزمون integration واقعی در محیط کنترل‌شده، بررسی مصرف‌کننده‌های UI در frontend و بررسی سایر ریسک‌های Safety (به‌ویژه تبدیل خطاهای upstream به دادهٔ خالی/null). هیچ ادعایی دربارهٔ سلامت runtime یا Docker مطرح نمی‌شود.
+
+### اقدام بعدی
+
+1. بررسی دقیق مصرف‌کنندهٔ frontend پنل برای Reports و اطمینان از سازگاری مسیر façade و شکل پاسخ‌ها.
+2. بررسی و اولویت‌بندی error masking در سایر سرویس‌های Safety و نوشتن تست برای رفتار خطا، قبل از اصلاح گسترده.
+3. اجرای integration پنج عملیات Reports در Docker با secrets واقعیِ تنظیم‌شده، بدون چاپ یا افشای مقدار آن‌ها؛ این مرحله به دسترسی به محیط اجرا نیاز دارد.
+4. پس از تکمیل این شواهد، تصمیم‌گیری دربارهٔ PR؛ ادغام در main بدون اجازهٔ صریح انجام نمی‌شود.
