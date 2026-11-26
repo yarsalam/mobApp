@@ -3,10 +3,15 @@ import { of } from 'rxjs';
 import { CryptoWatcherProcessor } from './crypto-watcher.processor';
 
 const PAYMENT_ID = 42;
+const TOKEN_CONTRACT = 'TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
 function createHarness(value: unknown) {
   const previousMockSetting = process.env.CRYPTO_WATCHER_MOCK;
+  const previousContract = process.env.USDT_TRC20_CONTRACT;
+  const previousNodeEnv = process.env.NODE_ENV;
   process.env.CRYPTO_WATCHER_MOCK = 'false';
+  process.env.USDT_TRC20_CONTRACT = TOKEN_CONTRACT;
+  process.env.NODE_ENV = 'test';
 
   const now = Date.now();
   const payment = {
@@ -19,11 +24,13 @@ function createHarness(value: unknown) {
     amount: 500,
     walletAddress: 'TWallet',
     createdAt: new Date(now - 60_000),
+    metadata: { requestedAmountRials: 4_500_000, rateRialsPerUsdt: 900_000 },
   };
 
   const tx = {
-    transaction_id: 'trc20-transfer-42',
+    transaction_id: 'a'.repeat(64),
     value,
+    token_info: { address: TOKEN_CONTRACT },
     block_timestamp: now,
     to: payment.walletAddress,
   };
@@ -52,11 +59,12 @@ function createHarness(value: unknown) {
   );
 
   const restoreEnvironment = () => {
-    if (previousMockSetting === undefined) {
-      delete process.env.CRYPTO_WATCHER_MOCK;
-    } else {
-      process.env.CRYPTO_WATCHER_MOCK = previousMockSetting;
-    }
+    if (previousMockSetting === undefined) delete process.env.CRYPTO_WATCHER_MOCK;
+    else process.env.CRYPTO_WATCHER_MOCK = previousMockSetting;
+    if (previousContract === undefined) delete process.env.USDT_TRC20_CONTRACT;
+    else process.env.USDT_TRC20_CONTRACT = previousContract;
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
   };
 
   return {
@@ -84,7 +92,9 @@ describe('CryptoWatcherProcessor TRC20 transfer validation', () => {
         expect.stringContaining('/v1/accounts/TWallet/transactions/trc20'),
         expect.objectContaining({
           params: expect.objectContaining({
-            limit: 20,
+            limit: 50,
+            only_confirmed: true,
+            contract_address: TOKEN_CONTRACT.toLowerCase(),
           }),
         }),
       );
@@ -132,4 +142,62 @@ describe('CryptoWatcherProcessor TRC20 transfer validation', () => {
       h.restoreEnvironment();
     }
   });
+  it('does not credit a transfer from a different TRC20 token contract', async () => {
+    const h = createHarness('5000000');
+    h.httpService.get.mockReturnValue(
+      of({
+        data: {
+          data: [
+            {
+              transaction_id: 'b'.repeat(64),
+              value: '5000000',
+              block_timestamp: Date.now(),
+              to: h.payment.walletAddress,
+              token_info: { address: 'TBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB' },
+            },
+          ],
+        },
+      }),
+    );
+
+    try {
+      await h.processor.process({
+        name: 'check-payment',
+        data: { paymentId: PAYMENT_ID },
+      } as any);
+
+      expect(h.walletService.creditOnce).not.toHaveBeenCalled();
+      expect(h.paymentRepo.update).toHaveBeenLastCalledWith(
+        { id: PAYMENT_ID, status: 'processing' },
+        { status: 'pending' },
+      );
+    } finally {
+      h.restoreEnvironment();
+    }
+  });
+
+  it('forbids mock auto-confirmation in production', () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousMockSetting = process.env.CRYPTO_WATCHER_MOCK;
+    process.env.NODE_ENV = 'production';
+    process.env.CRYPTO_WATCHER_MOCK = 'true';
+
+    try {
+      expect(
+        () =>
+          new CryptoWatcherProcessor(
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+          ),
+      ).toThrow('forbidden in production');
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      if (previousMockSetting === undefined) delete process.env.CRYPTO_WATCHER_MOCK;
+      else process.env.CRYPTO_WATCHER_MOCK = previousMockSetting;
+    }
+  });
+
 });
