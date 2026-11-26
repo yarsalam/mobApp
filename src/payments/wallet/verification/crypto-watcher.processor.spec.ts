@@ -176,6 +176,28 @@ describe('CryptoWatcherProcessor TRC20 transfer validation', () => {
     }
   });
 
+  it('does not auto-settle legacy payments without a conversion snapshot', async () => {
+    const h = createHarness('5000000');
+    h.payment.metadata = {};
+
+    try {
+      await expect(
+        h.processor.process({
+          name: 'check-payment',
+          data: { paymentId: PAYMENT_ID },
+        } as any),
+      ).rejects.toThrow('no conversion-rate snapshot');
+
+      expect(h.walletService.creditOnce).not.toHaveBeenCalled();
+      expect(h.paymentRepo.update).toHaveBeenLastCalledWith(
+        { id: PAYMENT_ID, status: 'processing' },
+        { status: 'pending' },
+      );
+    } finally {
+      h.restoreEnvironment();
+    }
+  });
+
   it('forbids mock auto-confirmation in production', () => {
     const previousNodeEnv = process.env.NODE_ENV;
     const previousMockSetting = process.env.CRYPTO_WATCHER_MOCK;
