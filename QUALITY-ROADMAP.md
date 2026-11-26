@@ -327,3 +327,10 @@
 2. طراحی قرارداد پاسخ User 360 با وضعیت صریح هر بخش (موفق/ناموجود/خطا) و اصلاح تب‌های UI تا خطا با دادهٔ خالی اشتباه نشود.
 3. بررسی موردی fallbackهای Users/Moderation/Dashboard و تست مصرف‌کنندهٔ هرکدام؛ فقط خطاهای واقعاً پنهان‌شده اصلاح شوند.
 4. اجرای runtime integration بین Admin و Backend در محیط کنترل‌شده، بدون افشای secrets؛ تا آن زمان runtime بررسی‌نشده باقی می‌ماند.
+
+
+### به‌روزرسانی CI تیکت‌ها — 2026-11-26
+
+- Workflow اختصاصی `Safety Tickets Contract` با run شناسهٔ `45808165404`، job `tickets-contract`، مراحل Install dependencies، Jest هدفمند و Build admin server را با نتیجهٔ `success` گذرانده است.
+- check اختصاصی در GitHub با وضعیت `completed / success` ثبت شده است: https://github.com/yarsalam/admin-panel/actions/runs/45808165404
+- دو check دیگر روی همان head هنوز در حال اجرا هستند: `build-and-smoke` (شامل ساخت image و بررسی runtime container) و `admin-revenue`. بنابراین PR #46 هنوز برای ادغام نهایی تأیید نشده و منتظر نتیجهٔ همهٔ checkهای مرتبط می‌ماند.
