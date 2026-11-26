@@ -34,6 +34,7 @@ export class CryptoProvider {
     userId: number,
     productCode: string,
     amountCents: number, // 500 = 5 USDT
+    conversionContext?: { requestedAmountRials: number; rateRialsPerUsdt: number },
   ): Promise<CryptoInitResult> {
     if (!Number.isSafeInteger(userId) || userId <= 0) {
       throw new BadRequestException('Invalid userId');
@@ -59,6 +60,12 @@ export class CryptoProvider {
       walletAddress: this.WALLET_ADDRESS_TRC20,
       network: 'TRC20',
       expiresAt,
+      metadata: conversionContext
+        ? {
+            requestedAmountRials: conversionContext.requestedAmountRials,
+            rateRialsPerUsdt: conversionContext.rateRialsPerUsdt,
+          }
+        : undefined,
     });
 
     await this.paymentRepo.save(payment);
