@@ -26,6 +26,7 @@ import { ProductBundle } from 'src/product/entities/product-bundle.entity';
 import { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../redis/redis.constants';
 import { ManualPromotionService } from 'src/manual-promotions/manual-promotion.service';
+import { getUsdtRateRials, usdtRialsToCents } from './wallet/crypto-rate';
 
 @Controller('payments')
 export class PaymentsController {
@@ -83,12 +84,14 @@ export class PaymentsController {
     @CurrentUser('sub') userId: number,
     @Body() body: { amountRials: number },
   ) {
-    // تبدیل ریال به سنت USDT برای crypto provider
-    const amountCents = Math.ceil(body.amountRials / (900 * 10)); // تقریبی
+    // Use one configured rate and persist the exact rial request on the payment.
+    const rateRialsPerUsdt = getUsdtRateRials();
+    const amountCents = usdtRialsToCents(body.amountRials, rateRialsPerUsdt);
     const result = await this.cryptoProvider.initiate(
       userId,
       'wallet_charge',
       amountCents,
+      { requestedAmountRials: body.amountRials, rateRialsPerUsdt },
     );
     return { success: true, data: result };
   }
