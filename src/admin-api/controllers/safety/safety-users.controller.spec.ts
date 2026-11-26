@@ -9,7 +9,7 @@ describe('SafetyUsersController error contract', () => {
   it('returns a 404 when the requested user profile does not exist', async () => {
     const controller = Object.assign(
       Object.create(SafetyUsersController.prototype),
-      { userRepo: { findOne: jest.fn().mockResolvedValue(null) } },
+      { userRepo: { findOne: jest.fn<() => Promise<any>>().mockResolvedValue(null) } },
     ) as SafetyUsersController;
 
     await expect(controller.getProfile(404)).rejects.toBeInstanceOf(
@@ -22,7 +22,7 @@ describe('SafetyUsersController error contract', () => {
       Object.create(SafetyUsersController.prototype),
       {
         aiAssistantService: {
-          getAdvice: jest.fn().mockRejectedValue(new Error('AI unavailable')),
+          getAdvice: jest.fn<() => Promise<any>>().mockRejectedValue(new Error('AI unavailable')),
         },
       },
     ) as SafetyUsersController;
@@ -37,7 +37,7 @@ describe('SafetyUsersController error contract', () => {
       Object.create(SafetyUsersController.prototype),
       {
         aiAssistantService: {
-          getAdvice: jest.fn().mockResolvedValue({
+          getAdvice: jest.fn<() => Promise<any>>().mockResolvedValue({
             topProblems: [{ description: 'Incomplete profile', solution: 'Add details' }],
             summary: { currentPhase: 'warm', problemsCount: 1, hasCriticalProblem: false },
             optimizationPlan: { estimatedTimeToNextPhase: '2 days' },
