@@ -421,3 +421,12 @@
   - Revenue Admin Validation: success.
   - Admin web runtime image validation: success؛ build، vulnerability scan، runtime server/login smoke، image content assertions و upload artifact همگی موفق.
 - PR #47 اکنون در main است. این CI Runtime Image/Smoke را برای Admin تأیید می‌کند، نه ارتباط زندهٔ Admin با Backend اصلی.
+
+
+### Backend AI Advice و Qdrant — نتیجهٔ اعتبارسنجی کد
+
+- در PR #34، workflow اختصاصی روی commit 4f6a2a6191b45cbf946797fe4278a26c16079f8b تست‌های AI Advice و Qdrant را با موفقیت اجرا کرد و NestJS build نیز موفق شد.
+- تست AI Advice: 2 تست موفق؛ تست Qdrant query contract: 2 تست موفق.
+- علت خطای build قبلی با مستند رسمی Qdrant تأیید شد: از نسخهٔ REST client 1.19 به بعد search حذف و query جایگزین شده است. مرجع: https://github.com/qdrant/qdrant-js/blob/master/packages/js-client-rest/CHANGELOG.md
+- فراخوانی‌های retrieval ساختاریافته و semantic به query مهاجرت کرده و مصرف result.points جایگزین آرایهٔ مستقیم شده است.
+- Runtime image validation برای commit نهایی شاخه با run 45812165948 در حال اجراست؛ scan و ادغام هنوز تأیید نشده‌اند.
