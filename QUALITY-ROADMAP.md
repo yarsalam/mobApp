@@ -236,3 +236,37 @@
 2. سایر Safety services را برای catchهایی که خطای upstream را به `[]` یا `null` تبدیل می‌کنند، با خواندن فایل کامل و بررسی UI مصرف‌کننده ممیزی کنیم؛ تغییرات فقط با تست هدفمند انجام شود.
 3. آزمون runtime بین Admin و Backend را در محیط Docker کنترل‌شده اجرا کنیم؛ متغیرهای secret فقط به‌صورت presence/equality بررسی شوند و مقدارشان چاپ نشود.
 4. پس از هر اصلاح، CI مربوطه و وضعیت post-merge را بررسی کنیم؛ هنوز هیچ ادعایی دربارهٔ آمادگی انتشار کل سامانه نداریم.
+
+
+## ممیزی تکمیلی Safety — Risk fail-closed و مصرف‌کننده‌های Reports (2026-11-26)
+
+### یافته‌های تأییدشده از Source
+
+- **High — RiskService fail-open:** در Admin، `RiskService.calculateRisk` پنج منبع ضروری (profile، financial، reports، activity و moderation-logs) را با `.catch(() => null/[])` دریافت می‌کرد. شکست هر درخواست می‌توانست به محاسبهٔ امتیاز ریسک بر مبنای شواهد ناقص و حتی نتیجهٔ ظاهراً کم‌ریسک منجر شود.
+- **اصلاح پیشنهادی در PR #45:** fallbackهای خاموش حذف شدند و `Promise.all` اکنون در صورت شکست هر منبع، خطا را منتشر می‌کند؛ در نتیجه ارزیابی ناقص به‌عنوان ریسک پایین گزارش نمی‌شود. مسیر مصرف‌کنندهٔ frontend در `apps/web/app/(admin)/safety/dashboard/page.tsx` از `GET /safety/risk/:userId` استفاده می‌کند و در خطای query، `ErrorState` نمایش می‌دهد.
+- برای این اصلاح، تست‌های مثبتِ دریافت کامل شواهد و تست شکست مستقل هر پنج endpoint اضافه شده‌اند. workflow اختصاصی `.github/workflows/safety-risk-contract.yml` نیز تست Jest و build سرور Admin را اجرا می‌کند.
+- PR شمارهٔ 45: https://github.com/yarsalam/admin-panel/pull/45
+- شاخه: `fix/safety-risk-fail-closed`؛ head فعلی: `3172fad35efcc6cd7b79c2b3b11a858f2921c051`.
+- اجرای CI با شناسهٔ `45805447096` آغاز شده است؛ در آخرین مشاهده نصب وابستگی‌ها در حال اجرا بود و تست و build هنوز نتیجه نداشتند. بنابراین **هیچ نتیجهٔ موفقی برای این PR اعلام نمی‌شود و ادغام انجام نشده است**.
+
+### مصرف‌کننده‌های Reports — تأییدشده از Source
+
+- هوک frontend در `apps/web/lib/api/safety/queries/useReports.ts` از `GET /safety/reports` استفاده می‌کند.
+- mutationهای frontend در `apps/web/lib/api/safety/mutations/useReports.ts` مسیرهای confirm/reject/block/unblock را از همین façade فراخوانی می‌کنند.
+- Controller پنل `Safety/ReportsController` با prefix برابر `safety/reports` و `JwtAuthGuard` این مسیرها را ارائه می‌کند؛ بنابراین مسیر frontend-facing با facade منطبق است.
+- تب گزارش‌های پروفایل در `ReportsTab.tsx` داده را از `data360.reports` می‌گیرد. UI فهرست مستقل `ReportsList.tsx` نیز وجود دارد؛ مصرف دقیق همهٔ صفحات/محل‌های استفادهٔ این component هنوز exhaustively بررسی نشده است.
+- در `UserDetailService.get360` از `Promise.allSettled` استفاده شده و rejection هر بخش به `null` تبدیل می‌شود؛ همراه با fallbackهای متدهای جزئی، این رفتار می‌تواند شکست upstream را به دادهٔ خالی/غایب تبدیل کند. اصلاح آن نیازمند قرارداد روشن برای وضعیت هر بخش و نمایش خطای متناظر در UI است؛ فعلاً بدون تغییر باقی مانده است.
+
+### سایر error maskingهای Safety — تأییدشده از Source، اصلاح‌نشده
+
+- `UsersService`: چند endpoint کاربر با fallbackهای `null` یا `[]`؛ تماس مستقیم AI verification نیز catch خاموش و `null` برمی‌گرداند.
+- `TicketsService`: فهرست تیکت‌ها، جزئیات و AI analysis با fallbackهای `[]` یا `null`.
+- `ModerationService`: flagged images/messages به `[]` و درخواست‌های AI moderation/stats/cache-clear به `null` تبدیل می‌شوند.
+- `DashboardService`: شکست KPI تیکت‌ها به مقادیر صفر و شکست برخی آمارها/AI insights به `null` تبدیل می‌شود.
+- این موارد هنوز به‌صورت موردی از نظر اهمیت دادهٔ اختیاری، تجربهٔ UI و قرارداد پاسخ بررسی نشده‌اند؛ بنابراین حذف دسته‌جمعی catchها انجام نشده است.
+
+### آخرین نقطهٔ توقف و اقدام بعدی
+
+- PR #45 باز است؛ CI در آخرین مشاهده در مرحلهٔ نصب وابستگی‌ها بود. پس از تکمیل، نتیجهٔ Jest و build و در صورت شکست، log دقیق بررسی خواهد شد. ادغام فقط پس از CI سبز انجام می‌شود.
+- سپس برای `UserDetailService.get360` قرارداد partial-failure با وضعیت صریح هر بخش و UI بررسی می‌شود؛ بعد error masking سرویس‌های Tickets/Moderation/Dashboard/Users با تست مستقل اصلاح خواهد شد.
+- مسیر runtime بین Admin و Backend، secret واقعی و رفتار Docker هنوز آزمایش نشده‌اند؛ هیچ ادعای runtime یا deployment مطرح نیست.
