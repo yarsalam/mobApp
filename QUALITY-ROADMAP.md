@@ -441,3 +441,22 @@
 - CI روی head نهایی PR: focused Jest tests موفق، NestJS build موفق، runtime image build موفق، vulnerability scan موفق و image candidate artifact آپلود شد.
 - workflow Backend runtime image اکنون push به شاخهٔ ممیزی را نیز برای build/scan می‌پذیرد؛ مراحل انتشار latest و image immutable همچنان فقط روی main مجازند.
 - ادغام PR به معنی استقرار یا اتصال end-to-end به سرویس‌های AI و دیتابیس نیست.
+
+
+## آمادگی استقرار Admin روی VPS — PR #50 در حال اعتبارسنجی
+
+- PR: https://github.com/yarsalam/admin-panel/pull/50
+- شاخه: chore/admin-vps-production-readiness-v2
+- PR #49 به‌دلیل branch base قدیمی بسته شد و PR #50 بر مبنای main جاری ساخته شد.
+- اصلاحات امنیتی:
+  - حذف Seeder حساب‌های ثابت admin/support/marketing/product با رمزهای معلوم.
+  - ساخت superadmin اولیه فقط با INITIAL_ADMIN_EMAIL و INITIAL_ADMIN_PASSWORD تنظیم‌شده؛ حداقل طول رمز 16 کاراکتر.
+  - JWT_SECRET اجباری و حداقل 32 کاراکتر؛ حذف fallback ثابت super-secret.
+  - CORS از ADMIN_CORS_ORIGINS/CORS_ORIGINS خوانده می‌شود و در production بدون allowlist باعث توقف startup می‌شود.
+  - DB_SYNC و DB_LOGGING از config خوانده می‌شوند؛ اطلاعات اتصال دیتابیس در production اجباری‌اند.
+- فایل‌های استقرار:
+  - docker-compose.production.yml برای Admin MySQL/Redis/backend/web، شبکهٔ خارجی yarsalam_network، volumeهای پایدار و portهای host محدود به 127.0.0.1.
+  - apps/server/Dockerfile.production و .env.production.example.
+- CI روی head فعلی PR: تست‌های bootstrap/CORS/JWT موفق؛ Admin server build موفق؛ Compose config validation موفق؛ ساخت و اجرای stack ایزوله در حال انجام است و هنوز login/CORS smoke و image scan نهایی نشده‌اند.
+- محدودیت schema: مخزن Admin هیچ TypeORM migration ندارد. CI فقط روی دیتابیس disposable با DB_SYNC=true تست می‌کند. Production compose به‌صورت پیش‌فرض DB_SYNC=false دارد؛ پیش از استقرار پایدار باید migration اولیه یا برنامهٔ امن bootstrap schema مشخص شود.
+- برای staging یک دیتابیس تازه و جدا می‌توان DB_SYNC=true را موقتاً به‌کار برد؛ برای دیتابیس موجود یا persistent نباید بدون backup و برنامهٔ migration فعال شود.
