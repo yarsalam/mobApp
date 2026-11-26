@@ -22,7 +22,7 @@ export class CryptoWatcherProcessor extends WorkerHost {
   private readonly logger = new Logger(CryptoWatcherProcessor.name);
   private readonly tronGridUrl =
     process.env.TRON_API_URL || 'https://api.trongrid.io';
-  private readonly isMock = process.env.CRYPTO_WATCHER_MOCK === 'true';
+  private readonly isMock: boolean;
 
   constructor(
     @InjectRepository(Payment)
@@ -32,6 +32,10 @@ export class CryptoWatcherProcessor extends WorkerHost {
     private readonly httpService: HttpService,
   ) {
     super();
+    this.isMock = process.env.CRYPTO_WATCHER_MOCK === 'true';
+    if (this.isMock && process.env.NODE_ENV === 'production') {
+      throw new Error('CRYPTO_WATCHER_MOCK=true is forbidden in production.');
+    }
   }
 
   async process(job: Job): Promise<void> {
@@ -119,7 +123,16 @@ export class CryptoWatcherProcessor extends WorkerHost {
       }
 
       // Payment.amount is stored in USDT cents, while the wallet balance is IRT rials.
-      const amountRials = WalletService.usdtCentsToRials(Number(payment.amount));
+      const requestedAmountRials = Number(payment.metadata?.requestedAmountRials);
+      const snapshottedRate = Number(payment.metadata?.rateRialsPerUsdt);
+      const amountRials = Number.isSafeInteger(requestedAmountRials) && requestedAmountRials > 0
+        ? requestedAmountRials
+        : WalletService.usdtCentsToRials(
+            Number(payment.amount),
+            Number.isSafeInteger(snapshottedRate) && snapshottedRate > 0
+              ? snapshottedRate
+              : undefined,
+          );
 
       if (payment.productCode === 'wallet_charge') {
         await this.walletService.creditOnce(
@@ -164,12 +177,18 @@ export class CryptoWatcherProcessor extends WorkerHost {
    */
   private async checkTronGrid(payment: Payment): Promise<boolean> {
     try {
+      const tokenContract = process.env.USDT_TRC20_CONTRACT?.trim().toLowerCase();
+      if (!tokenContract || !/^t[1-9a-hj-np-za-km-z]{33}$/.test(tokenContract)) {
+        throw new Error('USDT_TRC20_CONTRACT is missing or invalid');
+      }
       const url = `${this.tronGridUrl}/v1/accounts/${payment.walletAddress}/transactions/trc20`;
       const response = await firstValueFrom(
         this.httpService.get(url, {
           params: {
-            limit: 20,
-            contract_address: process.env.USDT_TRC20_CONTRACT,
+            limit: 50,
+            min_timestamp: payment.createdAt.getTime(),
+            only_confirmed: true,
+            contract_address: tokenContract,
           },
           headers: { 'TRON-PRO-API-KEY': process.env.TRONGRID_API_KEY },
         }),
@@ -181,8 +200,10 @@ export class CryptoWatcherProcessor extends WorkerHost {
       for (const tx of txs) {
         if (
           typeof tx.transaction_id !== 'string' ||
+          !/^[a-fA-F0-9]{64}$/.test(tx.transaction_id) ||
           typeof tx.value !== 'string' ||
-          !/^[0-9]+$/.test(tx.value)
+          !/^[0-9]+$/.test(tx.value) ||
+          String(tx.token_info?.address ?? '').trim().toLowerCase() !== tokenContract
         ) {
           continue;
         }
