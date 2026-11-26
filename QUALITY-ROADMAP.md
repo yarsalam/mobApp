@@ -293,3 +293,37 @@
 - مهم‌ترین شکاف بعدی، قرارداد partial failure در User 360 و خطاهای پنهان‌شده در Users/Tickets/Moderation/Dashboard است.
 - اقدام بعدی: طراحی پاسخ بخش‌بندی‌شده با وضعیت صریح هر منبع در User 360، اصلاح UI برای نمایش خطای هر تب، و تست قرارداد برای شکست‌های جزئی؛ سپس بررسی جداگانهٔ fallbackهای Tickets/Moderation/Dashboard/Users.
 - runtime integration بین Admin و Backend، شبکهٔ Docker، secrets و رفتار واقعی سرویس‌ها همچنان **بررسی‌نشده** هستند.
+
+
+## پیگیری ممیزی Safety — خطاهای تیکت و User 360 (2026-11-26)
+
+### یافته‌های تأییدشده از Source
+
+- در Admin، `TicketsService.getTickets`، `getTicketDetail` و `getAIAnalysis` خطاهای upstream را به‌ترتیب به `[]` و `null` تبدیل می‌کردند؛ در نتیجه خطای Backend می‌توانست به‌صورت «تیکتی وجود ندارد» یا «تحلیل AI موجود نیست» دیده شود.
+- صفحهٔ واقعی `apps/web/app/(admin)/safety/tickets/page.tsx` برای فهرست تیکت‌ها `isError` را نمایش می‌داد، اما خطای جزئیات و AI analysis را به‌طور مستقل نمایش نمی‌داد.
+- `UserDetailService.get360` پانزده منبع را با `Promise.allSettled` جمع می‌کند و rejection هر منبع را به `null` تبدیل می‌کند. صفحهٔ User 360 فقط در صورت نبود profile خطای کلی نشان می‌دهد؛ سایر بخش‌ها ممکن است با دادهٔ ناقص به تب‌ها برسند.
+- در `ReportsTab.tsx` مقدار پیش‌فرض `reports = []` مقدار `null` را پوشش نمی‌دهد؛ بنابراین null ناشی از failure جزئی می‌تواند در زمان render باعث دسترسی نامعتبر به `.length` شود. این یافته از Source است؛ runtime بازتولید نشده است.
+- `UsersService` و `UserDetailService` نیز fallbackهای متعدد `null` و `[]` دارند. حذف دسته‌جمعی آن‌ها بدون طراحی قرارداد partial-failure و UI مناسب انجام نمی‌شود.
+
+### اصلاح تیکت‌ها — PR شمارهٔ 46
+
+- شاخهٔ Admin: `fix/safety-ticket-error-propagation`.
+- در `TicketsService`، fallbackهای خاموش برای list/detail/AI analysis حذف شدند تا خطای upstream به React Query برسد.
+- در صفحهٔ تیکت‌ها، خطای جزئیات و خطای AI analysis به‌صورت ErrorState مستقل نمایش داده می‌شوند.
+- تست `tickets.service.spec.ts` برای فیلتر فهرست، propagation خطای list/detail/AI اضافه شد.
+- workflow اختصاصی `.github/workflows/safety-tickets-contract.yml` برای اجرای Jest هدفمند و build سرور Admin اضافه شد.
+- PR: https://github.com/yarsalam/admin-panel/pull/46
+- head فعلی: `55b12020de905d12815d91167dc584f915abd94f`.
+- GitHub Actions run: `45808165404`؛ در آخرین بررسی نصب وابستگی‌ها در حال اجرا بود و Jest/build هنوز نتیجه نداشتند. **تا تکمیل CI، تست موفق یا آمادگی ادغام اعلام نمی‌شود.**
+- Runtime integration با Backend مستقر و Docker هنوز انجام نشده است.
+
+### آخرین نقطهٔ توقف
+
+دو مسیر اصلی Safety error masking به‌صورت کد بررسی شدند: تیکت‌ها و User 360. برای تیکت‌ها PR اصلاحی و تست اختصاصی ایجاد شده و CI در حال اجراست. User 360 همچنان به طراحی قرارداد partial-failure نیاز دارد؛ تغییر صرفاً حذف `catch`ها کافی نیست، چون aggregate endpoint باید وضعیت هر بخش را به UI منتقل کند.
+
+### اقدام بعدی
+
+1. تکمیل CI مربوط به PR #46؛ در صورت شکست، بررسی log و اصلاح پیش از ادغام.
+2. طراحی قرارداد پاسخ User 360 با وضعیت صریح هر بخش (موفق/ناموجود/خطا) و اصلاح تب‌های UI تا خطا با دادهٔ خالی اشتباه نشود.
+3. بررسی موردی fallbackهای Users/Moderation/Dashboard و تست مصرف‌کنندهٔ هرکدام؛ فقط خطاهای واقعاً پنهان‌شده اصلاح شوند.
+4. اجرای runtime integration بین Admin و Backend در محیط کنترل‌شده، بدون افشای secrets؛ تا آن زمان runtime بررسی‌نشده باقی می‌ماند.
