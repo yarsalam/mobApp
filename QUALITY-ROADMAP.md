@@ -410,3 +410,14 @@
 3. تکمیل audit منبع‌به‌مصرف‌کننده برای مسیرهای باقی‌ماندهٔ Moderation و legacy Dashboard.
 4. پس از بسته‌شدن Safety، شروع ممیزی Payments/Wallet/VIP/Boost و سپس احراز هویت.
 5. اجرای تست یکپارچهٔ واقعی پس از استقرار کنترل‌شده روی VPS.
+
+
+### تکمیل و ادغام User 360 — اصلاح وضعیت قبلی
+
+- PR #47 پس از موفقیت تمام checkهای اجباری ادغام شد.
+- Merge commit: 9f1a151acefd5ffc1ecd8acd1d4528740fc0f836.
+- Checkهای نهایی روی head 41d3c553388c69c5c5ffb0902ef84814e58ad7a7:
+  - Safety User 360 Contract: success (focused Jest + Admin server build + Admin web type-check).
+  - Revenue Admin Validation: success.
+  - Admin web runtime image validation: success؛ build، vulnerability scan، runtime server/login smoke، image content assertions و upload artifact همگی موفق.
+- PR #47 اکنون در main است. این CI Runtime Image/Smoke را برای Admin تأیید می‌کند، نه ارتباط زندهٔ Admin با Backend اصلی.
