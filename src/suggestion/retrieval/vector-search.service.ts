@@ -211,8 +211,8 @@ export class VectorSearchService {
         });
       }
 
-      const result = await this.qdrant.search(QDRANT_COLLECTION, {
-        vector: searchVector,
+      const result = await this.qdrant.query(QDRANT_COLLECTION, {
+        query: searchVector,
         limit: Math.min(limit + 1, 500),
         filter: {
           must,
@@ -231,7 +231,7 @@ export class VectorSearchService {
        * duplicateها حذف می‌شوند و ترتیب رتبه حفظ می‌شود.
        */
       const ids = this.uniqueIds(
-        result
+        result.points
           .map((item) => Number(item.id))
           .filter(
             (id) => Number.isSafeInteger(id) && id > 0 && id !== excludeUserId,
@@ -471,8 +471,8 @@ export class VectorSearchService {
         });
       }
 
-      const result = await this.qdrant.search(QDRANT_SEMANTIC_COLLECTION, {
-        vector,
+      const result = await this.qdrant.query(QDRANT_SEMANTIC_COLLECTION, {
+        query: vector,
         limit: Math.min(limit + 1, 500),
         filter: {
           must,
@@ -487,7 +487,7 @@ export class VectorSearchService {
       });
 
       const ids = this.uniqueIds(
-        result.map((point) => Number(point.id)).filter((id) => id !== userId),
+        result.points.map((point) => Number(point.id)).filter((id) => id !== userId),
       );
 
       return this.validateActiveUsers(ids, targetGender);
