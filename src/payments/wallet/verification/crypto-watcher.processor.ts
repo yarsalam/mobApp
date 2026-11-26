@@ -137,7 +137,7 @@ export class CryptoWatcherProcessor extends WorkerHost {
         snapshottedRate <= 0
       ) {
         throw new Error(
-          'Crypto payment has an incomplete conversion-rate snapshot; manual reconciliation is required.',
+          'Crypto payment has no conversion-rate snapshot or has an incomplete snapshot; manual reconciliation is required.',
         );
       }
       const expectedAmountCents = usdtRialsToCents(
