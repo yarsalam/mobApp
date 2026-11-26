@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Payment } from 'src/payments/entities/payment.entity';
 import { EventType } from 'src/user-event/type/event-type.enum';
 import { UserEventService } from 'src/user-event/user-event.service';
+import { isCryptoAutoSettlementEnabled } from '../crypto-rate';
 import { Repository } from 'typeorm';
 
 export interface CryptoInitResult {
@@ -36,6 +37,11 @@ export class CryptoProvider {
     amountCents: number, // 500 = 5 USDT
     conversionContext?: { requestedAmountRials: number; rateRialsPerUsdt: number },
   ): Promise<CryptoInitResult> {
+    if (!isCryptoAutoSettlementEnabled()) {
+      throw new ServiceUnavailableException(
+        'Crypto deposits are disabled until unique payment attribution is enabled.',
+      );
+    }
     if (!Number.isSafeInteger(userId) || userId <= 0) {
       throw new BadRequestException('Invalid userId');
     }
