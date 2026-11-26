@@ -12,7 +12,7 @@ on:
       - "nest-cli.json"
       - ".github/workflows/backend-runtime-image.yml"
   push:
-    branches: [main]
+    branches: [main, fix/admin-safety-ai-advice-errors]
     paths:
       - "Dockerfile"
       - ".dockerignore"
