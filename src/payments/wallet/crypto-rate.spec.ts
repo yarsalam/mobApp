@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   getUsdtRateRials,
+  isCryptoAutoSettlementEnabled,
   usdtCentsToRials,
   usdtRialsToCents,
 } from './crypto-rate';
@@ -32,4 +33,11 @@ describe('USDT conversion rate', () => {
       'positive safe integer',
     );
   });
+  it('defaults crypto auto-settlement off in production and on outside production', () => {
+    expect(isCryptoAutoSettlementEnabled('production', undefined)).toBe(false);
+    expect(isCryptoAutoSettlementEnabled('production', 'true')).toBe(true);
+    expect(isCryptoAutoSettlementEnabled('development', undefined)).toBe(true);
+    expect(isCryptoAutoSettlementEnabled('development', 'false')).toBe(false);
+  });
+
 });
