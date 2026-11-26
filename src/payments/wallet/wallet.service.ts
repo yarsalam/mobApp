@@ -5,6 +5,7 @@ import { PartitionedEvent } from 'src/user-event/entities/partitioned-event.enti
 import { UserWallet } from './entities/user-wallet.entity';
 import { UserEventService } from 'src/user-event/user-event.service';
 import { EventType } from 'src/user-event/type/event-type.enum';
+import { usdtCentsToRials } from './crypto-rate';
 
 @Injectable()
 export class WalletService {
@@ -265,9 +266,8 @@ export class WalletService {
     return Number(wallet.balance);
   }
 
-  /** تبدیل USDT به ریال — نرخ موقت، بعداً از config بخوان */
-  static usdtCentsToRials(amountCents: number): number {
-    const USDT_TO_RIAL = 90000; // 1 USDT ≈ ۹۰,۰۰۰ تومان = ۹۰۰,۰۰۰ ریال
-    return Math.floor((amountCents / 100) * USDT_TO_RIAL * 10);
+  /** Convert USDT cents with the configured rate (or the rate snapshotted on a payment). */
+  static usdtCentsToRials(amountCents: number, rateRialsPerUsdt?: number): number {
+    return usdtCentsToRials(amountCents, rateRialsPerUsdt);
   }
 }
