@@ -19,11 +19,14 @@ export class CreditsService {
   ) {}
 
   async get(userId: number) {
-    let credits = await this.repo.findOne({ where: { userId } });
-    if (!credits) {
-      credits = this.repo.create({ userId, balance: 0 });
-      await this.repo.save(credits);
-    }
+    await this.repo
+      .createQueryBuilder()
+      .insert()
+      .values({ userId, balance: 0 })
+      .orIgnore()
+      .execute();
+    const credits = await this.repo.findOne({ where: { userId } });
+    if (!credits) throw new Error('Unable to initialize user credits');
     return credits;
   }
 
@@ -38,23 +41,47 @@ export class CreditsService {
   }
 
   async consume(userId: number, amount: number, reason: string) {
-    await this.ensureExists(userId); // اطمینان از وجود رکورد
-    const current = await this.get(userId);
-    if (current.balance < amount) {
-      throw new PaywallException({
-        type: 'credits',
-        reason,
-        required: amount,
-        balance: current.balance,
-      });
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      throw new Error('Credit userId must be a positive safe integer');
+    }
+    if (!Number.isSafeInteger(amount) || amount <= 0) {
+      throw new Error('Credit consumption amount must be a positive safe integer');
+    }
+    if (!reason?.trim()) {
+      throw new Error('Credit consumption reason is required');
     }
 
-    await this.repo.decrement({ userId }, 'balance', amount);
+    await this.dataSource.transaction(async (manager) => {
+      const credits = manager.getRepository(UserCredits);
+      await credits
+        .createQueryBuilder()
+        .insert()
+        .values({ userId, balance: 0 })
+        .orIgnore()
+        .execute();
 
-    await this.userEventService.log({
-      userId,
-      type: EventType.CREDITS_SPENT,
-      metadata: { amount, reason },
+      const debit = await credits
+        .createQueryBuilder()
+        .update(UserCredits)
+        .set({ balance: () => `balance - ${amount}` })
+        .where('userId = :userId AND balance >= :amount', { userId, amount })
+        .execute();
+
+      if (!debit.affected) {
+        const current = await credits.findOne({ where: { userId } });
+        throw new PaywallException({
+          type: 'credits',
+          reason,
+          required: amount,
+          balance: current?.balance ?? 0,
+        });
+      }
+
+      await this.userEventService.logWithManager(manager, {
+        userId,
+        type: EventType.CREDITS_SPENT,
+        metadata: { amount, reason },
+      });
     });
 
     return this.get(userId);
@@ -117,6 +144,9 @@ export class CreditsService {
   }
 
   async grant(userId: number, amount: number) {
+    if (!Number.isSafeInteger(amount) || amount <= 0) {
+      throw new Error('Credit grant amount must be a positive safe integer');
+    }
     await this.ensureExists(userId);
 
     await this.repo.increment({ userId }, 'balance', amount);
