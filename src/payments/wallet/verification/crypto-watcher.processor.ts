@@ -8,6 +8,7 @@ import { firstValueFrom } from 'rxjs';
 import { EntitlementService } from '../entitlement/entitlement.service';
 import { Payment } from 'src/payments/entities/payment.entity';
 import { WalletService } from '../wallet.service';
+import { isCryptoAutoSettlementEnabled } from '../crypto-rate';
 
 /**
  * این processor دو job می‌گیرد:
@@ -39,6 +40,10 @@ export class CryptoWatcherProcessor extends WorkerHost {
   }
 
   async process(job: Job): Promise<void> {
+    if (!isCryptoAutoSettlementEnabled()) {
+      this.logger.warn('Crypto auto-settlement is disabled by configuration.');
+      return;
+    }
     switch (job.name) {
       case 'check-pending':
         return this.checkAllPending();
