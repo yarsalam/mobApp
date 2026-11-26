@@ -1,0 +1,36 @@
+name: Crypto Payments Contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/payments/payments.controller.ts"
+      - "src/payments/wallet/crypto-rate.ts"
+      - "src/payments/wallet/crypto-rate.spec.ts"
+      - "src/payments/wallet/wallet.service.ts"
+      - "src/payments/wallet/providers/crypto.provider.ts"
+      - "src/payments/wallet/verification/crypto-watcher.processor.ts"
+      - "src/payments/wallet/verification/crypto-watcher.processor.spec.ts"
+      - "package.json"
+      - ".github/workflows/crypto-payments-contract.yml"
+  push:
+    branches: [fix/payments-crypto-token-validation]
+
+permissions:
+  contents: read
+
+jobs:
+  crypto-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install backend dependencies
+        run: npm install --legacy-peer-deps --no-package-lock
+      - name: Test crypto rate and TRC20 settlement contracts
+        run: npm test -- --runInBand payments/wallet/crypto-rate.spec.ts payments/wallet/verification/crypto-watcher.processor.spec.ts
+      - name: Build NestJS backend
+        run: npm run build
