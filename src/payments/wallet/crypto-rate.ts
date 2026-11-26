@@ -64,3 +64,11 @@ export function usdtCentsToRials(
   }
   return result;
 }
+
+export function isCryptoAutoSettlementEnabled(
+  nodeEnv = process.env.NODE_ENV,
+  configured = process.env.CRYPTO_AUTO_SETTLEMENT_ENABLED,
+): boolean {
+  if (nodeEnv === 'production') return configured === 'true';
+  return configured !== 'false';
+}
