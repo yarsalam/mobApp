@@ -334,3 +334,34 @@
 - Workflow اختصاصی `Safety Tickets Contract` با run شناسهٔ `45808165404`، job `tickets-contract`، مراحل Install dependencies، Jest هدفمند و Build admin server را با نتیجهٔ `success` گذرانده است.
 - check اختصاصی در GitHub با وضعیت `completed / success` ثبت شده است: https://github.com/yarsalam/admin-panel/actions/runs/45808165404
 - دو check دیگر روی همان head هنوز در حال اجرا هستند: `build-and-smoke` (شامل ساخت image و بررسی runtime container) و `admin-revenue`. بنابراین PR #46 هنوز برای ادغام نهایی تأیید نشده و منتظر نتیجهٔ همهٔ checkهای مرتبط می‌ماند.
+
+
+## ادامهٔ خودکار ممیزی و تعیین وضعیت PRها — 2026-11-26
+
+### تعیین تکلیف PR #46
+
+- PR #46 در مخزن Admin پس از موفقیت همهٔ checkهای مرتبط ادغام شد.
+- Merge commit: `5097d2456c5fcce4dc1ddbd1179f4b47b8740377`.
+- اصلاح TicketsService و نمایش خطاهای detail/AI در صفحهٔ تیکت‌ها اکنون در main است.
+- این ادغام به‌معنی تست یکپارچه با Backend مستقر نیست.
+
+### User 360 — اصلاح در حال اعتبارسنجی
+
+- PR #47: https://github.com/yarsalam/admin-panel/pull/47
+- شاخه: `fix/safety-user360-partial-errors`
+- head: `2590deb139da8073b353c5c7d9b4a65a19bdc554`
+- حذف catchهای خاموش از ۱۵ loader جزئی User 360 انجام شد.
+- خروجی aggregate همچنان داده‌های موفق را حفظ می‌کند؛ برای collectionهای شکست‌خورده fallback نوع‌دار امن می‌دهد و نام بخش‌های شکست‌خورده را در `_errors` گزارش می‌کند.
+- صفحهٔ User 360 هشدار partial-data می‌دهد؛ خطای Activity/Financial را از «بدون داده» تفکیک می‌کند؛ Reports/Overview در برابر null امن شده‌اند؛ خطاهای مستقل Images/Relations/Risk/AI/Notifications نیز در UI نمایش داده می‌شوند.
+- تست‌های جدید: شکست یک بخش نباید دادهٔ سایر بخش‌ها را حذف کند؛ collection خالی واقعی نباید failure تلقی شود.
+- CIهای شروع‌شده برای PR #47:
+  - `Safety User 360 Contract` run `45810458592`: در حال اجرا (Jest هدفمند، server build، web type-check).
+  - `Revenue Admin Validation` run `45810458363`: در حال اجرا.
+  - `Admin web runtime image validation` run `45810458335`: در حال اجرا؛ شامل build image، scan و smoke test سرور.
+- تا تکمیل همهٔ checkهای اجباری، PR #47 ادغام نمی‌شود.
+
+### مرز اعتبارسنجی
+
+- تست‌های GitHub Actions و container smoke، فقط همان build و سناریوهای داخل workflow را تأیید می‌کنند.
+- ارتباط end-to-end بین Admin، Backend اصلی، MySQL/Redis و سرویس‌های AI با پیکربندی واقعی هنوز اثبات نشده است.
+- تست end-to-end روی VPS پس از استقرار کنترل‌شده انجام می‌شود؛ secrets باید فقط در محیط سرور تنظیم شوند و هرگز در log/چت منتشر نشوند.
