@@ -214,3 +214,25 @@
 2. بررسی و اولویت‌بندی error masking در سایر سرویس‌های Safety و نوشتن تست برای رفتار خطا، قبل از اصلاح گسترده.
 3. اجرای integration پنج عملیات Reports در Docker با secrets واقعیِ تنظیم‌شده، بدون چاپ یا افشای مقدار آن‌ها؛ این مرحله به دسترسی به محیط اجرا نیاز دارد.
 4. پس از تکمیل این شواهد، تصمیم‌گیری دربارهٔ PR؛ ادغام در main بدون اجازهٔ صریح انجام نمی‌شود.
+
+
+### بررسی مصرف‌کنندهٔ Reports و ادغام PR — 2026-11-26
+
+- Controller façade پنل در `apps/server/src/safety/controllers/reports.controller.ts` بررسی شد: prefix داخلی `safety/reports`، محافظت با `JwtAuthGuard` پنل، و متدهای GET، confirm، reject، block و unblock. این Controller سرویس Reports را صدا می‌زند و با اصلاح upstream تغییری در قرارداد داخلی frontend ایجاد نشده است.
+- جست‌وجوی کد در GitHub برای یافتن مصرف‌کنندهٔ صفحه/هوک frontend با نام‌های عمومی Reports انجام شد، اما نتایج قابل اتکایی برنگرداند؛ بنابراین مصرف‌کننده‌های UI و شکل پاسخ‌های مورد انتظار frontend هنوز کامل ممیزی نشده‌اند. این بخش را تأییدشده تلقی نمی‌کنیم.
+- به درخواست صریح کاربر، PR شمارهٔ 44 در مخزن `yarsalam/admin-panel` با روش squash ادغام شد.
+- نتیجهٔ GitHub: `merged: true`؛ merge commit برابر `9cdaccc2786b3f23e924bd6d0990b90c1a3a45a6`.
+- پس از ادغام، فایل `apps/server/src/safety/services/reports.service.ts` و تست `reports.service.spec.ts` مستقیماً از شاخهٔ `main` خوانده شدند و محتوای اصلاح‌شده در main تأیید شد.
+- CI قبلی برای همین تغییرات با موفقیت اجرا شده بود: workflow run `45794536084`، job `reports-contract`؛ نصب وابستگی‌ها، Jest contract tests و build همگی موفق بودند.
+- ادغام PR به معنی اجرای مجدد CI روی commit نهایی، deploy، یا موفقیت runtime/Docker نیست. هیچ‌کدام از این سه مورد در این مرحله تأیید نشده‌اند.
+
+### وضعیت نهایی این مورد
+
+**Reports route mismatch: اصلاح و ادغام‌شده در main؛ تست contract و build در CI موفق؛ runtime integration و frontend end-to-end هنوز بررسی‌نشده.**
+
+### اقدام بعدی ممیزی
+
+1. در Admin، فایل‌ها و hooks/pages واقعی مصرف‌کنندهٔ Reports را از مسیرهای قطعی مخزن پیدا و قرارداد داده/خطا را تطبیق دهیم.
+2. سایر Safety services را برای catchهایی که خطای upstream را به `[]` یا `null` تبدیل می‌کنند، با خواندن فایل کامل و بررسی UI مصرف‌کننده ممیزی کنیم؛ تغییرات فقط با تست هدفمند انجام شود.
+3. آزمون runtime بین Admin و Backend را در محیط Docker کنترل‌شده اجرا کنیم؛ متغیرهای secret فقط به‌صورت presence/equality بررسی شوند و مقدارشان چاپ نشود.
+4. پس از هر اصلاح، CI مربوطه و وضعیت post-merge را بررسی کنیم؛ هنوز هیچ ادعایی دربارهٔ آمادگی انتشار کل سامانه نداریم.
