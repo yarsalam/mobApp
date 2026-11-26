@@ -21,18 +21,17 @@ export class BoostService {
   ) {}
 
   async get(userId: number) {
-    let boost = await this.repo.findOne({
+    await this.repo
+      .createQueryBuilder()
+      .insert()
+      .values({ user: { id: userId } as any, instantCount: 0 })
+      .orIgnore()
+      .execute();
+    const boost = await this.repo.findOne({
       where: { user: { id: userId } },
       relations: ['user'],
     });
-
-    if (!boost) {
-      boost = this.repo.create({
-        user: { id: userId } as any,
-        instantCount: 0,
-      });
-      await this.repo.save(boost);
-    }
+    if (!boost) throw new Error('Unable to initialize user boosts');
     return boost;
   }
 
@@ -42,32 +41,47 @@ export class BoostService {
 
   async activateInstant(userId: number) {
     const boost = await this.get(userId);
+    const activeUntil = new Date(Date.now() + 30 * 60 * 1000);
 
-    if (boost.instantCount <= 0) {
-      throw new PaywallException({ type: 'boost', message: 'Boost ندارید' });
-    }
+    const updated = await this.dataSource.transaction(async (manager) => {
+      const boosts = manager.getRepository(UserBoost);
+      const debit = await boosts
+        .createQueryBuilder()
+        .update(UserBoost)
+        .set({
+          instantCount: () => 'instantCount - 1',
+          activeUntil,
+          strength: 1,
+        })
+        .where('id = :id AND instantCount > 0', { id: boost.id })
+        .execute();
 
-    // رفع race condition: استفاده از decrement اتمیک
-    await this.repo.decrement({ id: boost.id }, 'instantCount', 1);
+      if (!debit.affected) {
+        throw new PaywallException({ type: 'boost', message: 'Boost ندارید' });
+      }
 
-    boost.activeUntil = new Date(Date.now() + 30 * 60 * 1000);
-    boost.strength = 1;
-    await this.repo.save(boost);
+      const saved = await boosts.findOne({
+        where: { id: boost.id },
+        relations: ['user'],
+      });
+      if (!saved) throw new Error('Boost entitlement disappeared during activation');
+
+      await this.userEventService.logWithManager(manager, {
+        userId,
+        type: EventType.BOOST_USED,
+        metadata: { type: 'instant' },
+      });
+      return saved;
+    });
 
     await this.boostQueueService.enqueue(userId, {
-      strength: boost.strength,
-      expiresAt: boost.activeUntil,
+      strength: updated.strength,
+      expiresAt: updated.activeUntil,
       source: 'instant',
     });
 
-    await this.userEventService.log({
-      userId,
-      type: EventType.BOOST_USED,
-      metadata: { type: 'instant' },
-    });
-
     await this.phaseService.learnFromFeedback(userId, 'boost_used');
-    return boost;
+    return updated;
   }
 
   async activateMonthly(userId: number, strength = 2) {
@@ -96,6 +110,9 @@ export class BoostService {
   }
 
   async grantInstant(userId: number, count: number) {
+    if (!Number.isSafeInteger(count) || count <= 0) {
+      throw new Error('Boost grant count must be a positive safe integer');
+    }
     await this.get(userId); // اطمینان از وجود رکورد
     // رفع race condition: استفاده از increment اتمیک
     await this.repo.increment(
@@ -169,13 +186,24 @@ export class BoostService {
 
   async grantFreeOnce(userId: number) {
     const boost = await this.get(userId);
-    if (boost.freeGranted) return;
+    if (boost.freeGranted) return boost;
 
     const phase = await this.phaseService.get(userId);
-    if (phase.phase !== 'cold') return;
+    if (phase.phase !== 'cold') return boost;
 
-    await this.repo.increment({ id: boost.id }, 'instantCount', 1);
-    await this.repo.update({ id: boost.id }, { freeGranted: true });
+    await this.repo
+      .createQueryBuilder()
+      .update(UserBoost)
+      .set({
+        instantCount: () => 'instantCount + 1',
+        freeGranted: true,
+      })
+      .where('id = :id AND freeGranted = :freeGranted', {
+        id: boost.id,
+        freeGranted: false,
+      })
+      .execute();
+
+    // A conditional update means concurrent calls can grant this only once.
     return this.get(userId);
   }
-}
