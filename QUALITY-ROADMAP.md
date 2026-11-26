@@ -494,3 +494,14 @@
 - Admin deployment: source hardening موجود است، اما vulnerability gate شکست خورده و PR قابل ادغام نیست.
 - Runtime end-to-end روی VPS و اتصال واقعی Admin ↔ Backend ↔ DB/Redis/AI هنوز اجرا نشده است.
 - اقدام بعدی: تکمیل run `45820300785`، سپس اصلاح dependency tree/lockfile در Admin با ارتقای هدفمند و تست سازگاری؛ پس از آن ادامهٔ تست‌های contract و ادغام فقط با CI سبز.
+
+
+### نتیجهٔ CI اصلاح snapshot پرداخت — 2026-11-26
+
+- اجرای مجدد workflow روی commit `561cbc146d77f58dae4ba08b6b0fab0096277588` موفق شد.
+- run: `45820456451` — https://github.com/yarsalam/mobApp/actions/runs/45820456451
+- هر دو suite هدفمند موفق شدند: 2 suite و 13 test؛ NestJS build نیز بدون خطا خاتمه یافت.
+- شکست اجرای قبلی فقط ناسازگاری متن assertion تست با پیام خطای به‌روزشده بود؛ متن خطا طوری اصلاح شد که هم نقص snapshot ناقص را توضیح دهد و هم قرارداد تست legacy را حفظ کند.
+- نتیجه صرفاً تأیید focused contract tests و build است. هنوز PR بازبینی/ادغام نشده و آزمون با TronGrid واقعی، تراکنش واقعی، concurrency/replay و اتصال کیف پول انجام نشده است.
+- PR Admin #50 همچنان باز است؛ آخرین scan در run `45815915785` برابر 32 HIGH و 1 CRITICAL گزارش کرده است. یافته‌های مهم در گزارش Trivy شامل axios 1.18.1، multer 2.1.1/2.2.0، nodemailer 8.0.11، picomatch 4.0.3 و proxy-addr 2.0.7 است. در lockfile فعلی picomatch override به 4.0.4 وجود دارد، اما تصویر اسکن‌شده هنوز 4.0.3 را شامل داشته؛ بنابراین باید علت اختلاف بین lockfile، نصب Docker و لایه‌های image مشخص شود، نه اینکه صرفاً override دیگری افزوده شود.
+- بررسی lockfile Admin نشان داد proxy-addr 2.0.7 و multer 2.1.1/2.2.0 و nodemailer 8.0.11 در snapshot lockfile حضور دارند؛ ارتقای امن آن‌ها باید همراه با بازتولید lockfile و build کامل image انجام شود. یافته‌های pacote و sigstore در lockfile جست‌وجوشده به‌صورت package snapshot مستقیم پیدا نشدند؛ منشأ دقیق آن‌ها هنوز باید از SBOM/layers و مسیرهای نصب استخراج شود.
