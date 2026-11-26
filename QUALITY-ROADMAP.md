@@ -145,3 +145,27 @@
 2. مسیرهای frontend و Admin façade برای گزارش‌ها را کامل بررسی کنیم و سپس اصلاح هماهنگ دو طرف را فقط با مجوز کاربر انجام دهیم.
 3. در محیط اجرا، بدون افشای مقدار secret، فقط وجود و برابری `USER_API_KEY` و `INTERNAL_API_KEY` و دسترسی DNS/HTTP از Admin container به Backend را بررسی کنیم.
 4. برای خطاهای upstream، قرارداد پاسخ خطا/observability تعریف کنیم تا خطای اتصال با دادهٔ خالی اشتباه نشود.
+
+## پیگیری اصلاح Reports — 2026-11-26
+
+### اصلاح پیشنهادی اعمال‌شده در شاخهٔ Admin
+
+- در مخزن Admin شاخهٔ `fix/safety-reports-api-contract` ساخته شد.
+- `ReportsService` در این شاخه به prefix واقعی Backend یعنی `/admin-api/safety/reports` تغییر کرد؛ مسیرهای list/confirm/reject/block/unblock همگی از یک ثابت مشترک استفاده می‌کنند.
+- fallback پنهان‌کنندهٔ خطا `.catch(() => [])` از دریافت گزارش‌ها حذف شد تا خطای upstream به لایهٔ بالاتر برسد و به «فهرست خالی» تبدیل نشود.
+- تست واحد contract در `apps/server/src/safety/services/reports.service.spec.ts` اضافه شد: مسیر list با/بدون status، propagation خطا، و چهار عملیات تغییر وضعیت/مسدودسازی را پوشش می‌دهد.
+- Commitهای شاخه: `f85e20a1` (اصلاح سرویس)، `8ea27560` (تست contract).
+
+### وضعیت اعتبارسنجی
+
+- **Source review:** اصلاح مسیر با Controller واقعی Backend تطبیق داده شده است؛ Backend prefix برابر `/admin-api/safety/reports` و متدهای list/confirm/reject/block/unblock را دارد.
+- **تست خودکار:** تست به مخزن اضافه شده، اما در این مرحله امکان اجرای Jest/build از طریق GitHub connector وجود نداشت؛ بنابراین هنوز ادعای pass نمی‌کنیم. اجرای CI پس از ایجاد PR باید بررسی شود.
+- **Runtime/integration:** هنوز انجام نشده؛ دسترسی شبکه، API key واقعی و رفتار UI پس از propagation خطا باید در محیط اجرا آزموده شود.
+- **دامنهٔ تغییر:** فقط Admin server تغییر کرده؛ Backend و Mobile دست‌نخورده‌اند. هنوز ادغام با main انجام نشده است.
+
+### اقدام بعدی
+
+1. بازبینی diff و ایجاد PR از شاخهٔ اصلاح به `main)، سپس بررسی نتیجهٔ واقعی CI.
+2. اجرای تست integration در محیط کنترل‌شده برای پنج route و بررسی نمایش خطا در UI.
+3. بررسی مصرف‌کنندگان دیگر و سیاست error handling سایر سرویس‌های Safety؛ اصلاح آن‌ها جداگانه و با تست انجام شود.
+4. بررسی secret و connectivity در runtime بدون چاپ یا افشای مقدار کلید.
